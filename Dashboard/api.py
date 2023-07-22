@@ -30,7 +30,7 @@ def hello():
     horaEstadoAnt = resposta[-2]['createdAt']
     #print ("A ultima vez que ela ficou " + estadoAnt.split(" ")[1] + " foi às " + horaEstadoAnt.split(".")[0] + "GMT")
 
-    return render_template("index.html", estado=estado.split(" ")[1])
+    return render_template("index.html", estado=estado.split(" ")[1], hora=horaEstado)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=3001, debug=True)
