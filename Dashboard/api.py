@@ -1,7 +1,13 @@
 from flask import Flask, render_template, send_file, Response, abort, jsonify, request, url_for, redirect, logging
 from flask_bootstrap import Bootstrap
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__, template_folder="templates")
+
+
+app.wsgi_app = ProxyFix(
+    app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1
+)
 Bootstrap(app)
 
 @app.route('/')
@@ -27,4 +33,4 @@ def hello():
     return render_template("index.html", estado=estado.split(" ")[1])
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=9001, debug=True)
+    app.run(host="0.0.0.0", port=3001, debug=True)
