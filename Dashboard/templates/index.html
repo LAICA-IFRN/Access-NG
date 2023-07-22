@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Dhashboard{% endblock %}
+{% block content %}
+<h1>A porta esta {{ estado }}</h1>
+
+{% if estado == "Aberta" %}
+    <img src="{{ url_for('static', filename='images/Aberta.jpg') }}" class="image"/>
+
+{% elif estado == "Fechada" %}
+
+    <img src="{{ url_for('static', filename='images/Fechada.jpg') }}" class="image"/>
+{% endif %}
+{% endblock %}
