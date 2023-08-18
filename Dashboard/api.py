@@ -29,8 +29,30 @@ def hello():
     estadoAnt = resposta[-2]['message']
     horaEstadoAnt = resposta[-2]['createdAt']
     #print ("A ultima vez que ela ficou " + estadoAnt.split(" ")[1] + " foi às " + horaEstadoAnt.split(".")[0] + "GMT")
-
     return render_template("index.html", estado=estado.split(" ")[1], hora=horaEstado)
 
+@app.route('/Ambiente')
+def hello():
+    import json
+    import requests
+    import statistics
+    api_url_login = "http://laica.ifrn.edu.br/access-ng/auth/login"
+    api_url_log = "http://laica.ifrn.edu.br/access-ng/log/topic/Ambiente/10"
+    todo={"registration": "2568824",  "password": "password"}
+    headers =  {"Content-Type":"application/json"}
+    response = requests.post(api_url_login, data=json.dumps(todo), headers=headers)
+    APIToken = response.json()['accessToken']
+    headers = {'Authorization': 'Token ' + APIToken}
+    response = requests.get(api_url_log, headers=headers)
+    resposta = response.json()
+    listaTemp = []
+    listaHumi = []
+    for item in resposta:
+        listaTemp.append(float(item['message'].split(',')[0].split('=')[1]))
+        listaHumi.append(float(item['message'].split(',')[1].split('=')[1]))
+    mediaTemp = statistics.mean(listaTemp)
+    mediaHumi = statistics.mean(listaHumi)    
+    return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi)
+    
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=3001, debug=True)
+    app.run(host="0.0.0.0", port=3002, debug=True)

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dados do Ambiente (Ultimas 10 Medicoes)</h1>
+
+<h2>Temperatura</h2>
+<p>Media temperatura = {{ mediaTemp }}</p>
+<h2>Umidade</h2>
+<p>Media umidade = {{ mediaHumi }}</p>
+
+{% endif %}
+{% endblock %}
