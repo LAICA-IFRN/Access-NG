@@ -15,7 +15,7 @@ def hello():
     import json
     import requests
     api_url_login = "http://laica.ifrn.edu.br/access-ng/auth/login"
-    api_url_log = "http://laica.ifrn.edu.br/access-ng/log"
+    api_url_log = "http://laica.ifrn.edu.br/access-ng/log/topic/Access/10"
     todo={"registration": "2568824",  "password": "password"}
     headers =  {"Content-Type":"application/json"}
     response = requests.post(api_url_login, data=json.dumps(todo), headers=headers)
