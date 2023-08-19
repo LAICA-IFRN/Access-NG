@@ -81,21 +81,24 @@ def ambiente():
     tempBuffer = io.BytesIO()
     humiBuffer = io.BytesIO()
     df = pandas.json_normalize(json.loads(str(lista)))
+
     plt.clf()
+    plt.title("Temperatura")
     axa = plt.gca()
     df.plot(x='timestamp', y='temperature', ax=axa, color='red', marker='o')
     plt.xticks(rotation=25)
-    plt.title("Temperatura")
     plt.savefig(tempBuffer, format = 'png')
     chartTemp = base64.b64encode(tempBuffer.getvalue()).decode()
-    import matplotlib.pyplot as plt
+
+    
     plt.clf()
     plt.title("Umidade")
     axa = plt.gca()
-    plt.xticks(rotation=25)
     df.plot(x='timestamp', y='humidity', ax=axa,color='green', marker='v')
+    plt.xticks(rotation=25)
     plt.savefig(humiBuffer, format = 'png')
     chartHumi = base64.b64encode(humiBuffer.getvalue()).decode()
+    
     return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi, chartTemp=chartTemp, chartHumi=chartHumi)
 
 class AmbienteTempHumi:
