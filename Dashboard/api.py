@@ -91,7 +91,7 @@ class AmbienteTempHumi:
     def __init__(self, entrada):
         self.temp = float(entrada['message'].split(',')[0].split('=')[1])
         self.humi = float(entrada['message'].split(',')[1].split('=')[1])
-        data = datetime.datetime.strptime(entrada['createdAt'],"%Y-%m-%dT%H:%M:%S.%f%z")
+        data = datetime.datetime.strptime(entrada['createdAt'],"%Y-%m-%dT%H:%M:%S.%fZ")
         self.timestamp = str(str(data.hour) + ':' + str(data.minute) )
     def __str__(self):
         return json.dumps(dict(self), ensure_ascii=False)
