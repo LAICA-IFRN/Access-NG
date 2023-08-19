@@ -1,6 +1,13 @@
 from flask import Flask, render_template, send_file, Response, abort, jsonify, request, url_for, redirect, logging
 from flask_bootstrap import Bootstrap
 from werkzeug.middleware.proxy_fix import ProxyFix
+import json
+import requests
+import statistics
+import datetime
+import pandas
+import io
+import base64
 
 app = Flask(__name__, template_folder="templates")
 
@@ -12,8 +19,6 @@ Bootstrap(app)
 
 @app.route('/')
 def hello():
-    import json
-    import requests
     api_url_login = "http://laica.ifrn.edu.br/access-ng/auth/login"
     api_url_log = "http://laica.ifrn.edu.br/access-ng/log/topic/Access/10"
     todo={"registration": "2568824",  "password": "password"}
@@ -33,8 +38,6 @@ def hello():
 
 @app.route('/Porta')
 def Porta():
-    import json
-    import requests
     api_url_login = "http://laica.ifrn.edu.br/access-ng/auth/login"
     api_url_log = "http://laica.ifrn.edu.br/access-ng/log/topic/Access/10"
     todo={"registration": "2568824",  "password": "password"}
@@ -54,11 +57,8 @@ def Porta():
 
 @app.route('/Ambiente')
 def ambiente():
-    import json
-    import requests
-    import statistics
     api_url_login = "http://laica.ifrn.edu.br/access-ng/auth/login"
-    api_url_log = "http://laica.ifrn.edu.br/access-ng/log/topic/Ambiente/10"
+    api_url_log = "http://laica.ifrn.edu.br/access-ng/log/topic/Ambiente/20"
     todo={"registration": "2568824",  "password": "password"}
     headers =  {"Content-Type":"application/json"}
     response = requests.post(api_url_login, data=json.dumps(todo), headers=headers)
@@ -68,12 +68,47 @@ def ambiente():
     resposta = response.json()
     listaTemp = []
     listaHumi = []
+    lista = []
     for item in resposta:
         listaTemp.append(float(item['message'].split(',')[0].split('=')[1]))
         listaHumi.append(float(item['message'].split(',')[1].split('=')[1]))
+        lista.append(AmbienteTempHumi(item))
     mediaTemp = statistics.mean(listaTemp)
-    mediaHumi = statistics.mean(listaHumi)    
-    return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi)
+    mediaHumi = statistics.mean(listaHumi) 
+    import matplotlib.pyplot as plt
+    tempBuffer = io.BytesIO()
+    plt.clf()
+    df = pandas.json_normalize(json.loads(str(lista)))
+    axa = plt.gca()
+
+    df.plot(x='timestamp', y='temperature', ax=axa)
+    df.plot(x='timestamp', y='humidity', ax=axa)
+    plt.savefig(tempBuffer, format = 'png')
+    chart = base64.b64encode(tempBuffer.getvalue()).decode()
+    return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi, chart=chart)
+
+class AmbienteTempHumi:
+    def __init__(self, entrada):
+        self.temp = float(entrada['message'].split(',')[0].split('=')[1])
+        self.humi = float(entrada['message'].split(',')[1].split('=')[1])
+        data = datetime.datetime.strptime(entrada['createdAt'],"%Y-%m-%dT%H:%M:%S.%f%z")
+        self.timestamp = str(str(data.hour) + ':' + str(data.minute) )
+    def __str__(self):
+        return json.dumps(dict(self), ensure_ascii=False)
+    def __iter__(self):
+        yield from {
+            "temperature": self.temp,
+            "humidity": self.humi,
+            "timestamp": self.timestamp,
+        }.items()
+    def __str__(self):
+        return json.dumps(dict(self), ensure_ascii=False)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def to_json(self):
+        return self.__str__()
     
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=3002, debug=True)
