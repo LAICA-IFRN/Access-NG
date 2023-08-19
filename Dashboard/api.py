@@ -73,26 +73,37 @@ def ambiente():
         listaTemp.append(float(item['message'].split(',')[0].split('=')[1]))
         listaHumi.append(float(item['message'].split(',')[1].split('=')[1]))
         lista.append(AmbienteTempHumi(item))
-    mediaTemp = statistics.mean(listaTemp)
-    mediaHumi = statistics.mean(listaHumi) 
+    import numpy as np
+    np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
+    mediaTemp = np.around(np.nanmean(listaTemp), 2)
+    mediaHumi = np.around(np.nanmean(listaHumi), 2)
     import matplotlib.pyplot as plt
     tempBuffer = io.BytesIO()
-    plt.clf()
+    humiBuffer = io.BytesIO()
     df = pandas.json_normalize(json.loads(str(lista)))
+    plt.clf()
     axa = plt.gca()
-
-    df.plot(x='timestamp', y='temperature', ax=axa)
-    df.plot(x='timestamp', y='humidity', ax=axa)
+    df.plot(x='timestamp', y='temperature', ax=axa, color='red', marker='o')
+    plt.xticks(rotation=25)
+    plt.title("Temperatura")
     plt.savefig(tempBuffer, format = 'png')
-    chart = base64.b64encode(tempBuffer.getvalue()).decode()
-    return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi, chart=chart)
+    chartTemp = base64.b64encode(tempBuffer.getvalue()).decode()
+    import matplotlib.pyplot as plt
+    plt.clf()
+    plt.title("Umidade")
+    axa = plt.gca()
+    plt.xticks(rotation=25)
+    df.plot(x='timestamp', y='humidity', ax=axa,color='green', marker='v')
+    plt.savefig(humiBuffer, format = 'png')
+    chartHumi = base64.b64encode(humiBuffer.getvalue()).decode()
+    return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi, chartTemp=chartTemp, chartHumi=chartHumi)
 
 class AmbienteTempHumi:
     def __init__(self, entrada):
         self.temp = float(entrada['message'].split(',')[0].split('=')[1])
         self.humi = float(entrada['message'].split(',')[1].split('=')[1])
         data = datetime.datetime.strptime(entrada['createdAt'],"%Y-%m-%dT%H:%M:%S.%fZ")
-        self.timestamp = str(str(data.hour) + ':' + str(data.minute) )
+        self.timestamp = str(data.__format__('%Y-%m-%d %H:%M:%S'))
     def __str__(self):
         return json.dumps(dict(self), ensure_ascii=False)
     def __iter__(self):
