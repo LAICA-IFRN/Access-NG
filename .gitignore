@@ -1,5 +1,7 @@
 # Custom #LAICA#
 *.db
+.vscode
+*.Identifier
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
