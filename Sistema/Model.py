@@ -83,22 +83,22 @@ class Ambiente(Base):
     local: Mapped[str] = mapped_column(String(50))
     frequentadores: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes, back_populates="ambientes")
     admins: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes_admins, back_populates="ambientesAdmin")
-    kerberoses: Mapped[List[Kerberos]] = relationship(back_populates="ambiente")
+    cerberoses: Mapped[List[Cerberos]] = relationship(back_populates="ambiente")
     carontes: Mapped[List[Caronte]] = relationship(back_populates="ambiente")
 
-class Kerberos(Base):
-    __tablename__ = 'kerberoses'
+class Cerberos(Base):
+    __tablename__ = 'cerberoses'
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(50))
-    ip: Mapped[str] = mapped_column(String(50))
+    mac: Mapped[str] = mapped_column(String(50))
     chave: Mapped[str] = mapped_column(String(50))
     ambiente_id: Mapped[int] = mapped_column(ForeignKey("ambientes.id"))
-    ambiente: Mapped["Ambiente"] = relationship(back_populates="kerberoses")
+    ambiente: Mapped["Ambiente"] = relationship(back_populates="cerberoses")
 
 class Caronte(Base):
     __tablename__ = 'carontes'
     id: Mapped[int] = mapped_column(primary_key=True)
-    ip: Mapped[str] = mapped_column(String(50))
+    mac: Mapped[str] = mapped_column(String(50))
     chave: Mapped[str] = mapped_column(String(50))
     ambiente_id: Mapped[int] = mapped_column(ForeignKey("ambientes.id"))
     ambiente: Mapped["Ambiente"] = relationship(back_populates="carontes")

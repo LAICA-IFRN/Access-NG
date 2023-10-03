@@ -15,13 +15,27 @@ def hello():
 def autenticar():
     if request.method == 'POST':
         tag = request.form['tag']
-        ip = request.form['ip']
+        mac = request.form['mac']
         chave = request.form['chave']
     else:
         tag = request.args.get('tag')
-        ip = request.args.get('ip')
+        mac = request.args.get('mac')
         chave = request.args.get('chave')
-    return jsonify('Allow : {}'.format(Tartaro().autenticarTAG(tag=tag,senha=chave,ip=ip)))
+        acionar = Tartaro().autenticarTAG(tag=tag,senha=chave,mac=mac)
+        if acionar:
+            Tartaro.acionarCerberos(mac)
+    return jsonify('Allow : {}'.format(acionar))
+
+@app.route('/cerberos/acionar')
+def jobs():
+    mac = request.form['mac']
+    return jsonify('Allow : {}'.format(Tartaro().verificarAcionamento(mac=mac)))
+
+@app.route('/service/microcontrollers/microcontrollers/esp8266/is-alive/')
+def compatibility():
+    mac = request.form['mac']
+    return jsonify('Allow : {}'.format(mac))
+
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=9001, debug=True)
