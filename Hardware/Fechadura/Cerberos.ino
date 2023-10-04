@@ -7,6 +7,7 @@
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
 
 /* this can be run with an emulated server on host:
         cd esp8266-core-root-dir
@@ -23,16 +24,8 @@
 #define STAPSK "deviceiotifrn"
 #endif
 
-const int LDR_PIN = A0; 
-int lightIntensity;
-const int BUTTON_PIN = 4;
-const int GREEN = 12;
-const int RED = 15;
-bool anterior;
-
-
-
 void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
 
   Serial.begin(115200);
 
@@ -49,11 +42,7 @@ void setup() {
   Serial.println("");
   Serial.print("Connected! IP address: ");
   Serial.println(WiFi.localIP());
-
-  pinMode(BUTTON_PIN, INPUT_PULLUP);  // Initialize button pin with built-in pullup.
-  pinMode(GREEN, OUTPUT);
-  pinMode(RED, OUTPUT);
-  anterior = isOpened();
+  coldStart();
 }
 
 void loop() {
@@ -62,59 +51,94 @@ void loop() {
 
     WiFiClient client;
     HTTPClient http;
-    int btn_Status = HIGH;
-    bool atual = isOpened();
-    btn_Status = digitalRead (BUTTON_PIN); 
-    if (anterior != atual || btn_Status == LOW) {
-      Serial.print("Mudanca de estado\n");
-      Serial.print("[HTTP] begin...\n");
-      // configure traged server and url
-      http.begin(client, "http://" SERVER_IP "/access-ng/log/");  // HTTP
-      http.addHeader("Content-Type", "application/json");
 
-      Serial.print("[HTTP] POST...\n");
-      // start connection and send HTTP header and body
-      //lightIntensity = analogRead(LDR_PIN);
-      String valor = atual?"Aberta":"Fechada";
-      if (btn_Status == LOW){
+    Serial.print("Verificando se posso abrir:\n");
+    // configure traged server and url
+    http.begin(client, "http://" SERVER_IP "/service/enviroments/enviroments/access/");  // HTTP
+    http.addHeader("Content-Type", "application/json");
 
-      }
-      String body = "{\"deviceMac\": \"02:F1:95:7C:C2:EC\",\"topic\": \"Access\", \"type\": \"INFO\",\"message\": \"Porta " + valor +" (" + lightIntensity + ")\"}";
-      int httpCode = http.POST(body);
+    //Serial.print("[HTTP] POST...\n");
+    // start connection and send HTTP header and body
+    //lightIntensity = analogRead(LDR_PIN);
+    String body = "{\"mac\": \"" + WiFi.macAddress() + "\"}";
+    int httpCode = http.POST(body);
+    //Serial.println(body);
 
-      // httpCode will be negative on error
-      if (httpCode > 0) {
-        // HTTP header has been send and Server response header has been handled
-        Serial.printf("[HTTP] POST... code: %d\n", httpCode);
+    // httpCode will be negative on error
+    if (httpCode > 0) {
+      // HTTP header has been send and Server response header has been handled
+      //Serial.printf("[HTTP] POST... code: %d\n", httpCode);
 
-        // file found at server
-        if (httpCode == HTTP_CODE_OK ||  httpCode == HTTP_CODE_CREATED) {
-          const String& payload = http.getString();
-          Serial.println("received payload:\n<<");
-          Serial.println(payload);
-          Serial.println(">>");
-          anterior = atual;
+      // file found at server
+      if (httpCode == HTTP_CODE_OK ||  httpCode == HTTP_CODE_CREATED) {
+        const String& payload = http.getString();
+        //Serial.println("received payload:\n<<");
+        //Serial.println(payload);
+        //Serial.println(">>");
+        StaticJsonDocument<200> doc;
+        DeserializationError error = deserializeJson(doc, payload.c_str());
+           if (error) {
+            Serial.print(F("deserializeJson() failed: "));
+            Serial.println(error.f_str());
+            return;
+          }
+        bool response = doc["Allow"];
+        if (response == true) {
+          Serial.println("pode entrar");
+          acionarLED();
         }
-      
-      } else {
-        Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
       }
 
-      http.end();
+    } else {
+      Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
     }
-  }
 
+    http.end();
+    delay(1000);
+
+  }
 }
 
-bool isOpened(){
-  lightIntensity = analogRead(LDR_PIN);
-  if (lightIntensity < 100){
-      digitalWrite(GREEN, HIGH);
-      digitalWrite(RED, LOW);
-      return false;
-  }
-  digitalWrite(GREEN, LOW);
-  digitalWrite(RED, HIGH);
-  return true;
+void acionarLED(){
+  digitalWrite(LED_BUILTIN, LOW);   // Turn the LED on by making the voltage LOW
+  delay(1000);                      // Wait for a second
+  digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED off by making the voltage HIGH
+  delay(2000);                      // Wait for two seconds
+}
+
+void coldStart(){
+  
+    WiFiClient client;
+    HTTPClient http;
+
+    Serial.print("[HTTP] begin...\n");
+    // configure traged server and url
+    http.begin(client, "http://" SERVER_IP "/service/microcontrollers/microcontrollers/esp8266/is-alive/");  // HTTP
+    http.addHeader("Content-Type", "application/json");
+
+    Serial.print("[HTTP] POST...\n");
+    // start connection and send HTTP header and body
+    //lightIntensity = analogRead(LDR_PIN);
+    String body = "{\"mac\": \"" + WiFi.macAddress() + "\"}";
+    int httpCode = http.POST(body);
+    Serial.println(body);
+
+    // httpCode will be negative on error
+    if (httpCode > 0) {
+      // HTTP header has been send and Server response header has been handled
+      Serial.printf("[HTTP] POST... code: %d\n", httpCode);
+
+      // file found at server
+      if (httpCode == HTTP_CODE_OK ||  httpCode == HTTP_CODE_CREATED) {
+        const String& payload = http.getString();
+        Serial.println("received payload:\n<<");
+        Serial.println(payload);
+        Serial.println(">>");
+      }
+
+    } else {
+      Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
 }
 
