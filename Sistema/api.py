@@ -11,30 +11,28 @@ def hello():
     qtd = len(ambientes)
     return render_template("index.html", count=qtd)
 
-@app.route('/caronte/autenticarTag', methods = ['POST', 'GET'])
+@app.route('/caronte/autenticarTag', methods = ['POST'])
 def autenticar():
-    if request.method == 'POST':
-        tag = request.form['tag']
-        mac = request.form['mac']
-        chave = request.form['chave']
-    else:
-        tag = request.args.get('tag')
-        mac = request.args.get('mac')
-        chave = request.args.get('chave')
-        acionar = Tartaro().autenticarTAG(tag=tag,senha=chave,mac=mac)
-        if acionar:
-            Tartaro.acionarCerberos(mac)
+    content = request.json
+    tag = content['tag']
+    mac = content['mac']
+    chave =content['chave']
+    acionar = Tartaro().autenticarTAG(tag=tag,senha=chave,mac=mac)
     return jsonify('Allow : {}'.format(acionar))
 
-@app.route('/cerberos/acionar')
+@app.route('/service/enviroments/enviroments/access/', methods=['POST'])
 def jobs():
-    mac = request.form['mac']
-    return jsonify('Allow : {}'.format(Tartaro().verificarAcionamento(mac=mac)))
+    retorno = {}
+    content = request.json
+    mac = content['mac']
+    retorno['Allow'] = Tartaro().verificarAcionamento(mac=mac)
+    return jsonify(retorno)
 
-@app.route('/service/microcontrollers/microcontrollers/esp8266/is-alive/')
+@app.route('/service/microcontrollers/microcontrollers/esp8266/is-alive/', methods=['POST'])
 def compatibility():
-    mac = request.form['mac']
-    return jsonify('Allow : {}'.format(mac))
+    content = request.json
+    mac = content['mac']
+    return jsonify('Received : {}'.format(mac))
 
 
 if __name__ == '__main__':

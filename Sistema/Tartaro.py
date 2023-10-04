@@ -6,10 +6,14 @@ class Tartaro():
 
     def autenticarTAG(self, tag:str, senha:str, mac:str):
         caronte:Caronte = self.autenticarCaronte(senha,mac)
-        return caronte.receberTAG(TAG(numero=tag)) if caronte is not None else False
+        autenticado = caronte.receberTAG(TAG(numero=tag)) if caronte is not None else False
+        if autenticado:
+            for c in caronte.ambiente.cerberoses:
+                self.acionarCerberos(c.mac)
+        return autenticado
 
-    def autenticarCaronte(self, senha:str, mac:str) -> Caronte:
-        return db.query(Caronte).filter(Caronte.ip == mac and Caronte.senha == senha).first()
+    def autenticarCaronte(self, chave:str, mac:str) -> Caronte:
+        return db.query(Caronte).filter(Caronte.mac == mac and Caronte.chave == chave).first()
     
     def acionarCerberos(self, mac:str):
         if mac not in self.filaAcionamento:
