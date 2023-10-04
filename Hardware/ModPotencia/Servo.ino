@@ -20,24 +20,24 @@ void setup() {
   myservo.attach(9);  // attaches the servo on pin 9 to the servo object
   Serial.begin(115200);
   Serial.println("Inicializando");
+  fechar();
 }
 
 void loop() {
 but = digitalRead(8);
-
+delay(100);
 if (but == 0) {
   abrir();
-  delay(1000);
-} else {
-    fechar();
+  delay(10000);
+  fechar();
 }
 
 }
 
 void abrir() {
-    myservo.write(0);              // tell servo to go to position in variable 'pos'
+    myservo.write(90);              // tell servo to go to position in variable 'pos'
 }
 
 void fechar() {
-    myservo.write(90);              // tell servo to go to position in vari
+    myservo.write(0);              // tell servo to go to position in vari
 }
