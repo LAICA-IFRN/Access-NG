@@ -8,6 +8,7 @@ import datetime
 import pandas
 import io
 import base64
+from Tartaro import *
 
 app = Flask(__name__, template_folder="templates")
 
@@ -90,7 +91,6 @@ def ambiente():
     plt.savefig(tempBuffer, format = 'png')
     chartTemp = base64.b64encode(tempBuffer.getvalue()).decode()
 
-    
     plt.clf()
     plt.title("Umidade")
     axa = plt.gca()
@@ -98,8 +98,31 @@ def ambiente():
     plt.xticks(rotation=25)
     plt.savefig(humiBuffer, format = 'png')
     chartHumi = base64.b64encode(humiBuffer.getvalue()).decode()
-    
+    s
     return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi, chartTemp=chartTemp, chartHumi=chartHumi)
+
+@app.route('/caronte/autenticarTag', methods = ['POST'])
+def autenticar():
+    content = request.json
+    tag = content['tag']
+    mac = content['mac']
+    chave = content['chave']
+    acionar = Tartaro().autenticarTAG(tag=tag,senha=chave,mac=mac)
+    return jsonify('Allow : {}'.format(acionar))
+
+@app.route('/service/enviroments/enviroments/access/', methods=['POST'])
+def jobs():
+    retorno = {}
+    content = request.json
+    mac = content['mac']
+    retorno['Allow'] = Tartaro().verificarAcionamento(mac=mac)
+    return jsonify(retorno)
+
+@app.route('/service/microcontrollers/microcontrollers/esp8266/is-alive/', methods=['POST'])
+def compatibility():
+    content = request.json
+    mac = content['mac']
+    return jsonify('Received : {}'.format(mac))
 
 class AmbienteTempHumi:
     def __init__(self, entrada):
