@@ -23,9 +23,11 @@
 #define STASSID "wIFRN-IoT"
 #define STAPSK "deviceiotifrn"
 #endif
-
+int acionamento = 13;
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
+
+  pinMode(acionamento, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
+  digitalWrite(acionamento, HIGH);
 
   Serial.begin(115200);
 
@@ -54,16 +56,14 @@ void loop() {
 
     Serial.print("Verificando se posso abrir:\n");
     // configure traged server and url
-    http.begin(client, "http://" SERVER_IP "/service/enviroments/enviroments/access/");  // HTTP
+    http.begin(client, "http://" SERVER_IP "/access-control/gateway/devices/microcontrollers/remote-access");  // HTTP
     http.addHeader("Content-Type", "application/json");
 
     //Serial.print("[HTTP] POST...\n");
     // start connection and send HTTP header and body
     //lightIntensity = analogRead(LDR_PIN);
-    String body = "{\"mac\": \"" + WiFi.macAddress() + "\"}";
+    String body = "{\"id\": \"5\"}";
     int httpCode = http.POST(body);
-    //Serial.println(body);
-
     // httpCode will be negative on error
     if (httpCode > 0) {
       // HTTP header has been send and Server response header has been handled
@@ -82,10 +82,10 @@ void loop() {
             Serial.println(error.f_str());
             return;
           }
-        bool response = doc["Allow"];
-        if (response == true) {
-          Serial.println("pode entrar");
-          acionarLED();
+        String response = http.getString();
+        if (response == "true") {
+          acionarRele();
+          Serial.println(response);
         }
       }
 
@@ -99,11 +99,11 @@ void loop() {
   }
 }
 
-void acionarLED(){
-  digitalWrite(LED_BUILTIN, LOW);   // Turn the LED on by making the voltage LOW
-  delay(1000);                      // Wait for a second
-  digitalWrite(LED_BUILTIN, HIGH);  // Turn the LED off by making the voltage HIGH
-  delay(2000);                      // Wait for two seconds
+void acionarRele(){
+  digitalWrite(acionamento, LOW);   // Turn the LED on by making the voltage LOW
+  delay(500);                      // Wait for a second
+  digitalWrite(acionamento, HIGH);  // Turn the LED off by making the voltage HIGH
+  //delay(2000);                      // Wait for two seconds
 }
 
 void coldStart(){
@@ -113,13 +113,13 @@ void coldStart(){
 
     Serial.print("[HTTP] begin...\n");
     // configure traged server and url
-    http.begin(client, "http://" SERVER_IP "/service/microcontrollers/microcontrollers/esp8266/is-alive/");  // HTTP
+    http.begin(client, "http://" SERVER_IP "/access-control/gateway/devices/microcontrollers/cold-start");  // HTTP
     http.addHeader("Content-Type", "application/json");
 
     Serial.print("[HTTP] POST...\n");
     // start connection and send HTTP header and body
     //lightIntensity = analogRead(LDR_PIN);
-    String body = "{\"mac\": \"" + WiFi.macAddress() + "\"}";
+    String body = "{\"id\": \"5\"}";
     int httpCode = http.POST(body);
     Serial.println(body);
 
@@ -141,4 +141,3 @@ void coldStart(){
     }
     http.end();
 }
-
