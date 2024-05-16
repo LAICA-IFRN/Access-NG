@@ -63,7 +63,7 @@ def ambiente():
     #todo={"registration": "2568824",  "password": "password"}
     headers =  {"Content-Type":"application/json"}
     #response = requests.post(api_url_login, data=json.dumps(todo), headers=headers)
-    APIToken = response.json()['accessToken']
+    #APIToken = response.json()['accessToken']
     #headers = {'Authorization': 'Token ' + APIToken}
     response = requests.get(api_url_log, headers=headers)
     resposta = response.json()
