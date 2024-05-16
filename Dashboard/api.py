@@ -58,13 +58,13 @@ def Porta():
 
 @app.route('/Ambiente')
 def ambiente():
-    api_url_login = "http://laica.ifrn.edu.br/access-ng/auth/login"
-    api_url_log = "http://laica.ifrn.edu.br/access-ng/log/topic/Ambiente/20"
-    todo={"registration": "2568824",  "password": "password"}
+    #api_url_login = "http://laica.ifrn.edu.br/access-ng/auth/login"
+    api_url_log = "https://laica.ifrn.edu.br/access-ng/log?previous=0&next=1&pageSize=100&deviceMac=A0%3AB7%3A65%3A64%3A68%3AC8&type=INFO&order=desc"
+    #todo={"registration": "2568824",  "password": "password"}
     headers =  {"Content-Type":"application/json"}
-    response = requests.post(api_url_login, data=json.dumps(todo), headers=headers)
+    #response = requests.post(api_url_login, data=json.dumps(todo), headers=headers)
     APIToken = response.json()['accessToken']
-    headers = {'Authorization': 'Token ' + APIToken}
+    #headers = {'Authorization': 'Token ' + APIToken}
     response = requests.get(api_url_log, headers=headers)
     resposta = response.json()
     listaTemp = []
@@ -98,7 +98,6 @@ def ambiente():
     plt.xticks(rotation=25)
     plt.savefig(humiBuffer, format = 'png')
     chartHumi = base64.b64encode(humiBuffer.getvalue()).decode()
-    s
     return render_template("ambiente.html", mediaTemp=mediaTemp, mediaHumi=mediaHumi, chartTemp=chartTemp, chartHumi=chartHumi)
 
 @app.route('/caronte/autenticarTag', methods = ['POST'])
