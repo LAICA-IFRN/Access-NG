@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <title>{% block title %}Admin{% endblock %} — Tartaro</title>
+  <style>
+    body { background:#0d0d1a; color:#e0e0e0; }
+    .sidebar { min-height:100vh; background:#12122a; border-right:1px solid #2d2d4e; padding-top:1rem; }
+    .sidebar .nav-link { color:#aaa; }
+    .sidebar .nav-link:hover, .sidebar .nav-link.active { color:#c9a227; }
+    .sidebar .brand { color:#c9a227; font-weight:bold; letter-spacing:2px; font-size:1.2rem; padding:0 1rem 1rem; display:block; }
+    .main-content { padding:2rem; }
+    .card { background:#1a1a2e; border:1px solid #2d2d4e; }
+    .card-header { background:#12122a; border-bottom:1px solid #2d2d4e; color:#c9a227; }
+    .table { color:#e0e0e0; }
+    .table thead th { border-bottom:1px solid #2d2d4e; color:#888; font-size:.8rem; text-transform:uppercase; }
+    .table td, .table th { border-top:1px solid #1e1e38; }
+    .form-control { background:#0d0d1a; border:1px solid #2d2d4e; color:#e0e0e0; }
+    .form-control:focus { background:#0d0d1a; border-color:#c9a227; color:#e0e0e0; box-shadow:none; }
+    .form-check-input { margin-top:.2rem; }
+    .btn-gold { background:#c9a227; color:#000; border:none; }
+    .btn-gold:hover { background:#e0b830; color:#000; }
+    .badge-online  { background:#1e7e34; }
+    .badge-offline { background:#7e1e1e; }
+    .badge-unknown { background:#444; }
+    .alert { border-radius:4px; }
+  </style>
+</head>
+<body>
+<div class="d-flex">
+  <div class="sidebar" style="width:200px; flex-shrink:0;">
+    <a class="brand" href="{{ url_for('admin_index') }}">&#9760; TARTARO</a>
+    <nav class="nav flex-column px-2">
+      <a class="nav-link {% if request.endpoint == 'admin_index' %}active{% endif %}"
+         href="{{ url_for('admin_index') }}">Visão Geral</a>
+      <a class="nav-link {% if 'ambiente' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_ambientes') }}">Tartaros</a>
+      <a class="nav-link {% if 'cerberos' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_cerberoses') }}">Cerberoses</a>
+      <a class="nav-link {% if 'caronte' in request.endpoint and 'admin' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_carontes') }}">Carontes</a>
+      <a class="nav-link {% if 'usuario' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_usuarios') }}">Usuários</a>
+      <hr style="border-color:#2d2d4e; margin:.5rem 0;">
+      <a class="nav-link" href="{{ url_for('admin_logout') }}" style="color:#7e1e1e;">Sair</a>
+    </nav>
+  </div>
+  <div class="flex-grow-1 main-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }} alert-dismissible fade show py-2" role="alert">
+          {{ msg }}
+          <button type="button" class="close py-2" data-dismiss="alert">&times;</button>
+        </div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</div>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

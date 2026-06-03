@@ -1,2 +1,680 @@
 # Access-NG
-Repositorio do projeto controle de acesso
+
+Sistema de controle de acesso para ambientes físicos usando ESP32/ESP8266,
+RFID, fechaduras acionadas por relé, API Flask, painel administrativo,
+dashboard de status e uma versão web/mobile do Caronte com geolocalização.
+
+O projeto usa a seguinte nomenclatura:
+
+- **Tartaro**: ambiente físico controlado, modelado como `Ambiente`.
+- **Cerberos**: dispositivo/fechadura que consulta a API para saber se deve abrir.
+- **Caronte fixo**: leitor RFID físico que autentica tags e solicita abertura.
+- **Caronte web**: portal mobile em navegador, com login por matrícula/PIN e validação por geolocalização.
+- **Dashboard**: tela separada de monitoramento de status dos Tartaros, Cerberoses e Carontes.
+
+## Estrutura do repositório
+
+```text
+Access-NG/
+├── Sistema/
+│   ├── api.py                         # API principal, admin, Caronte web e endpoints IoT
+│   ├── Model.py                       # Modelos SQLAlchemy e migrações SQLite automáticas
+│   ├── Tartaro.py                     # Regras de autenticação, filas de abertura e geofence
+│   ├── requirements.txt               # Dependências do Sistema
+│   └── templates/
+│       ├── admin/                     # Painel administrativo
+│       └── caronte/                   # Portal mobile do Caronte web
+├── Dashboard/
+│   ├── api.py                         # Dashboard e proxy de /api/status
+│   ├── requeriments.txt               # Dependências do Dashboard
+│   └── templates/
+│       └── index.html                 # Monitoramento com polling
+└── Hardware/
+    ├── Fechadura/
+    │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID
+    │   ├── Caronte_RFID.ino           # ESP leitor RFID via MFRC522
+    │   └── Cerberos.ino               # Sketch alternativo/legado
+    ├── Ambiente/
+    │   └── TempHumi.ino               # Sensor de temperatura/umidade
+    └── ModPotencia/
+        └── Servo.ino                  # Módulo de potência/servo
+```
+
+## Arquitetura
+
+Fluxo RFID físico:
+
+1. O usuário aproxima uma tag RFID no `Caronte_RFID.ino`.
+2. O Caronte envia o UID da tag por UART para o `Cerberos_UART.ino`.
+3. O Cerberos chama `POST /caronte/autenticarTag` com `tag`, `mac` e `chave`.
+4. O Sistema verifica se o Caronte existe, se a chave confere e se a tag pertence a um usuário autorizado no Tartaro.
+5. Se autorizado, o Sistema coloca um acionamento na fila dos Cerberoses do ambiente.
+6. O Cerberos consulta a fila via `POST /service/enviroments/enviroments/access/`.
+7. Se `Allow` for verdadeiro, o relé é acionado e a porta abre.
+
+Fluxo Caronte web/mobile:
+
+1. O usuário acessa `GET /caronte`.
+2. Faz login com `matricula` e `pin`.
+3. O navegador solicita permissão de geolocalização.
+4. O portal busca ambientes próximos em `GET /caronte/ambientes-proximos?lat=&lon=`.
+5. O usuário toca em **Entrar**.
+6. O servidor valida novamente a localização, confere permissão do usuário e aciona os Cerberoses do ambiente.
+
+Fluxo de status:
+
+1. Cerberos e Carontes informam inicialização em `POST /device/coldstart`.
+2. Dispositivos enviam presença em `POST /device/heartbeat` ou usam endpoints legados, que também atualizam `last_seen`.
+3. Uma thread de background marca como `offline` dispositivos sem contato há mais de 30 segundos.
+4. `GET /api/status` expõe todos os Tartaros com seus dispositivos.
+5. O Dashboard consulta o Sistema e atualiza a tela a cada 10 segundos.
+
+## Requisitos
+
+- Python 3.10+ recomendado.
+- SQLite.
+- Para firmware:
+  - Arduino IDE ou PlatformIO.
+  - Bibliotecas Arduino usadas pelos sketches:
+    - `WiFi`
+    - `HTTPClient`
+    - `ArduinoJson`
+    - `SPI`
+    - `MFRC522`
+
+## Instalação
+
+Crie um ambiente virtual e instale as dependências do Sistema:
+
+```bash
+cd Sistema
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Para o Dashboard:
+
+```bash
+cd Dashboard
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requeriments.txt
+```
+
+Observação: o arquivo do Dashboard se chama `requeriments.txt` no repositório.
+
+## Execução
+
+Execute o Sistema principal:
+
+```bash
+cd Sistema
+python api.py
+```
+
+Por padrão ele sobe em:
+
+```text
+http://0.0.0.0:9001
+```
+
+Execute o Dashboard em outro terminal:
+
+```bash
+cd Dashboard
+python api.py
+```
+
+Por padrão ele sobe em:
+
+```text
+http://0.0.0.0:3002
+```
+
+O Dashboard espera encontrar o Sistema em:
+
+```python
+SISTEMA_URL = "http://127.0.0.1:9001"
+```
+
+Se o Sistema estiver em outro IP/porta, altere `Dashboard/api.py`.
+
+## Banco de dados
+
+O banco é SQLite e é criado automaticamente pelo SQLAlchemy.
+
+Nome do arquivo:
+
+```text
+Acesso.db
+```
+
+Importante: o caminho do banco é relativo ao diretório de execução do processo.
+Se você iniciar o servidor dentro de `Sistema/`, o arquivo será criado em
+`Sistema/Acesso.db`.
+
+### Migrações automáticas
+
+`Sistema/Model.py` executa `meta.create_all(engine)` e depois aplica `ALTER TABLE`
+quando colunas novas não existem. Assim, bancos SQLite existentes não precisam ser
+recriados para os campos adicionados recentemente.
+
+Colunas adicionadas automaticamente em `cerberoses` e `carontes`:
+
+- `status VARCHAR(20)`
+- `last_seen DATETIME`
+- `coldstart_at DATETIME`
+
+Colunas adicionadas automaticamente em `ambientes`:
+
+- `latitude FLOAT`
+- `longitude FLOAT`
+- `raio_metros INTEGER`
+
+## Modelo de dados
+
+### Usuario
+
+Tabela: `usuarios`
+
+- `id`
+- `nome`
+- `matricula`
+- `pin`
+- `admin`
+- relacionamento com `TAG`
+- relacionamento com `MAC`
+- relacionamento muitos-para-muitos com `Ambiente` via `usuarios_ambientes`
+- relacionamento muitos-para-muitos administrativo via `usuarios_ambientesadmin`
+
+### TAG
+
+Tabela: `tags`
+
+- `id`
+- `numero`
+- `usuario_id`
+
+Usada pelo Caronte RFID para autenticação física.
+
+### MAC
+
+Tabela: `macs`
+
+- `id`
+- `endereco`
+- `usuario_id`
+
+### Ambiente/Tartaro
+
+Tabela: `ambientes`
+
+- `id`
+- `nome`
+- `local`
+- `latitude`
+- `longitude`
+- `raio_metros`
+- `frequentadores`
+- `admins`
+- `cerberoses`
+- `carontes`
+
+`latitude`, `longitude` e `raio_metros` são usados pelo Caronte web para validar
+proximidade. O raio padrão usado pelo código é 50 metros quando o campo está vazio.
+
+### Cerberos
+
+Tabela: `cerberoses`
+
+- `id`
+- `nome`
+- `mac`
+- `chave`
+- `ambiente_id`
+- `status`
+- `last_seen`
+- `coldstart_at`
+
+Representa a fechadura/dispositivo acionável.
+
+### Caronte
+
+Tabela: `carontes`
+
+- `id`
+- `mac`
+- `chave`
+- `ambiente_id`
+- `status`
+- `last_seen`
+- `coldstart_at`
+
+Representa o leitor/autenticador fixo.
+
+## Endpoints do Sistema
+
+Base local padrão:
+
+```text
+http://127.0.0.1:9001
+```
+
+### Saúde e tela inicial
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/` | Renderiza a tela inicial simples do Sistema. |
+
+### Endpoints IoT legados
+
+Os endpoints legados foram mantidos para retrocompatibilidade com firmware já
+existente. Todos também atualizam `last_seen` e `status=online` via `_touch_device()`.
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `POST` | `/caronte/autenticarTag` | Autentica tag RFID enviada por um Caronte fixo. |
+| `POST` | `/service/enviroments/enviroments/access/` | Cerberos consulta se há abertura pendente para seu MAC. |
+| `POST` | `/service/microcontrollers/microcontrollers/esp8266/is-alive/` | Endpoint legado de presença/heartbeat. |
+
+Exemplo de autenticação RFID:
+
+```bash
+curl -X POST http://127.0.0.1:9001/caronte/autenticarTag \
+  -H 'Content-Type: application/json' \
+  -d '{"tag":"A1B2C3D4","mac":"24:6F:28:17:CA:90","chave":"123"}'
+```
+
+Resposta:
+
+```json
+{"Allow":"True"}
+```
+
+Exemplo de consulta de abertura:
+
+```bash
+curl -X POST http://127.0.0.1:9001/service/enviroments/enviroments/access/ \
+  -H 'Content-Type: application/json' \
+  -d '{"mac":"AA:BB:CC:DD:EE:FF"}'
+```
+
+Resposta:
+
+```json
+{"Allow":false}
+```
+
+### Endpoints novos de dispositivos
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `POST` | `/device/coldstart` | Dispositivo ligou. Registra `coldstart_at`, `last_seen` e `status=online`. |
+| `POST` | `/device/heartbeat` | Ping periódico. Atualiza `last_seen` e `status=online`. |
+| `GET` | `/api/status` | Lista Tartaros, Cerberoses e Carontes com status. |
+
+Exemplo de coldstart:
+
+```bash
+curl -X POST http://127.0.0.1:9001/device/coldstart \
+  -H 'Content-Type: application/json' \
+  -d '{"mac":"AA:BB:CC:DD:EE:FF","chave":"123"}'
+```
+
+Respostas possíveis:
+
+```json
+{"status":"ok","device":"cerberos","mac":"AA:BB:CC:DD:EE:FF"}
+```
+
+```json
+{"status":"unknown","mac":"AA:BB:CC:DD:EE:FF"}
+```
+
+Exemplo de heartbeat:
+
+```bash
+curl -X POST http://127.0.0.1:9001/device/heartbeat \
+  -H 'Content-Type: application/json' \
+  -d '{"mac":"AA:BB:CC:DD:EE:FF"}'
+```
+
+Resposta:
+
+```json
+{"received":"AA:BB:CC:DD:EE:FF"}
+```
+
+Exemplo de status:
+
+```bash
+curl http://127.0.0.1:9001/api/status
+```
+
+Formato da resposta:
+
+```json
+[
+  {
+    "id": 1,
+    "nome": "Laboratorio",
+    "local": "Bloco A",
+    "cerberoses": [
+      {
+        "id": 1,
+        "nome": "Porta principal",
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "status": "online",
+        "last_seen": "2026-06-03T12:00:00",
+        "coldstart_at": "2026-06-03T11:59:30"
+      }
+    ],
+    "carontes": [
+      {
+        "id": 1,
+        "mac": "11:22:33:44:55:66",
+        "status": "offline",
+        "last_seen": "2026-06-03T11:58:00",
+        "coldstart_at": null
+      }
+    ]
+  }
+]
+```
+
+### Caronte web/mobile
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/caronte` | Tela de login com matrícula e PIN. |
+| `POST` | `/caronte/login` | Autentica usuário e cria sessão. |
+| `GET` | `/caronte/portal` | Portal mobile com geolocalização. |
+| `GET` | `/caronte/ambientes-proximos?lat=&lon=` | Retorna ambientes cujo raio contém as coordenadas. |
+| `POST` | `/caronte/solicitar` | Valida geolocalização e permissão, depois aciona Cerberoses. |
+| `GET` | `/caronte/logout` | Encerra sessão. |
+
+Payload de `/caronte/solicitar`:
+
+```json
+{
+  "ambiente_id": 1,
+  "lat": -5.795,
+  "lon": -35.21
+}
+```
+
+Respostas:
+
+```json
+{"allow":true}
+```
+
+```json
+{"allow":false,"motivo":"Sem permissão para este ambiente"}
+```
+
+```json
+{"allow":false,"motivo":"Fora do raio (120m > 50m)"}
+```
+
+### Painel administrativo
+
+O painel fica em:
+
+```text
+http://127.0.0.1:9001/admin/login
+```
+
+Acesso exige um usuário com `admin=True`.
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET/POST` | `/admin/login` | Login administrativo. |
+| `GET` | `/admin/logout` | Logout administrativo. |
+| `GET` | `/admin/` | Resumo com contagens de ambientes, Cerberoses, Carontes e usuários. |
+| `GET` | `/admin/ambientes` | Lista Tartaros. |
+| `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
+| `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro. |
+| `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
+| `GET` | `/admin/cerberoses` | Lista Cerberoses. |
+| `GET/POST` | `/admin/cerberoses/novo` | Cria Cerberos. |
+| `GET/POST` | `/admin/cerberoses/<id>/editar` | Edita Cerberos. |
+| `POST` | `/admin/cerberoses/<id>/excluir` | Remove Cerberos. |
+| `GET` | `/admin/carontes` | Lista Carontes fixos. |
+| `GET/POST` | `/admin/carontes/novo` | Cria Caronte fixo. |
+| `GET/POST` | `/admin/carontes/<id>/editar` | Edita Caronte fixo. |
+| `POST` | `/admin/carontes/<id>/excluir` | Remove Caronte fixo. |
+| `GET` | `/admin/usuarios` | Lista usuários. |
+| `GET/POST` | `/admin/usuarios/novo` | Cria usuário e define ambientes permitidos. |
+| `GET/POST` | `/admin/usuarios/<id>/editar` | Edita usuário e permissões. |
+| `POST` | `/admin/usuarios/<id>/excluir` | Remove usuário. |
+
+O formulário de Tartaro usa Leaflet/OpenStreetMap para selecionar latitude e
+longitude no mapa e configurar o raio de acesso do Caronte web.
+
+## Dashboard
+
+Base local padrão:
+
+```text
+http://127.0.0.1:3002
+```
+
+Rotas:
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/` | Dashboard com cards por Tartaro e status dos dispositivos. |
+| `GET` | `/api/status` | Proxy para `Sistema /api/status`, evitando CORS no JavaScript. |
+| `GET` | `/Porta` | Tela legada que consulta a API externa `laica.ifrn.edu.br`. |
+| `GET` | `/Ambiente` | Tela legada de temperatura/umidade com dados da API externa. |
+
+Recursos do dashboard atual:
+
+- Consome `GET /api/status` do Sistema.
+- Mostra cards por Tartaro.
+- Exibe Cerberoses e Carontes com badges `online`, `offline` ou `unknown`.
+- Mostra `last_seen` em formato relativo, como `agora`, `20s atrás`, `3min atrás`.
+- Atualiza a cada 10 segundos com `fetch`, sem recarregar a página.
+- Mantém `/api/status` local como proxy para evitar problemas de CORS.
+
+## Status online/offline
+
+Campos usados:
+
+- `status`: `online`, `offline` ou `unknown`.
+- `last_seen`: último contato recebido.
+- `coldstart_at`: último boot informado pelo dispositivo.
+
+Regras:
+
+- `POST /device/coldstart` marca o dispositivo como `online`.
+- `POST /device/heartbeat` marca o dispositivo como `online`.
+- Endpoints legados também chamam `_touch_device()` e marcam como `online`.
+- Uma thread em background roda a cada 15 segundos.
+- Dispositivos `online` sem contato por mais de 30 segundos viram `offline`.
+- Dispositivos sem histórico aparecem como `unknown`.
+
+## Firmware
+
+### Configuração de IP
+
+No sketch `Hardware/Fechadura/Cerberos_UART.ino`, ajuste:
+
+```cpp
+#define SERVER_IP "192.168.0.100:9001"
+```
+
+Use o IP e porta onde o `Sistema/api.py` está rodando.
+
+### Atualização necessária do coldstart
+
+O backend novo espera:
+
+```text
+POST /device/coldstart
+```
+
+O sketch atual ainda usa o endpoint legado:
+
+```cpp
+http.begin(client, "http://" SERVER_IP "/access-control/gateway/devices/microcontrollers/cold-start");
+String body = "{\"id\": \"5\"}";
+```
+
+Atualize a função `coldStart()` do `Cerberos_UART.ino` para enviar o MAC real:
+
+```cpp
+void coldStart(){
+  WiFiClient client;
+  HTTPClient http;
+
+  http.begin(client, "http://" SERVER_IP "/device/coldstart");
+  http.addHeader("Content-Type", "application/json");
+
+  String body = "{\"mac\": \"" + WiFi.macAddress() + "\", \"chave\": \"123\"}";
+  int httpCode = http.POST(body);
+  Serial.println(body);
+
+  if (httpCode > 0) {
+    Serial.printf("[HTTP] POST... code: %d\n", httpCode);
+    if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_CREATED) {
+      const String& payload = http.getString();
+      Serial.println(payload);
+    }
+  } else {
+    Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+  }
+
+  http.end();
+}
+```
+
+### Heartbeat periódico
+
+Para que o status não fique `offline`, Carontes e Cerberoses devem chamar
+`/device/heartbeat` periodicamente, por exemplo a cada 10 segundos.
+
+Exemplo:
+
+```cpp
+void heartbeat(){
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClient client;
+  HTTPClient http;
+
+  http.begin(client, "http://" SERVER_IP "/device/heartbeat");
+  http.addHeader("Content-Type", "application/json");
+
+  String body = "{\"mac\": \"" + WiFi.macAddress() + "\"}";
+  int httpCode = http.POST(body);
+  Serial.printf("[HEARTBEAT] code: %d\n", httpCode);
+
+  http.end();
+}
+```
+
+Exemplo de uso no `loop()`:
+
+```cpp
+unsigned long lastHeartbeat = 0;
+
+void loop() {
+  if (millis() - lastHeartbeat > 10000) {
+    lastHeartbeat = millis();
+    heartbeat();
+  }
+
+  // restante da lógica do dispositivo...
+}
+```
+
+### MAC hardcoded no sketch atual
+
+O `Cerberos_UART.ino` atual envia um MAC fixo em `/caronte/autenticarTag`:
+
+```cpp
+String body = "{\"tag\":\""+ tag.substring(0, 8) + "\", \"mac\": \"24:6F:28:17:CA:90\", \"chave\": \"123\"}";
+```
+
+Para produção, prefira `WiFi.macAddress()` ou garanta que o MAC cadastrado no banco
+seja exatamente o mesmo do firmware.
+
+Exemplo:
+
+```cpp
+String body = "{\"tag\":\"" + tag.substring(0, 8) +
+              "\", \"mac\": \"" + WiFi.macAddress() +
+              "\", \"chave\": \"123\"}";
+```
+
+## Observações de segurança
+
+- A chave Flask padrão é `tartaro-dev-key-change-in-prod`.
+- Em produção, defina `SECRET_KEY` no ambiente antes de iniciar o Sistema.
+- PINs são armazenados em texto puro no modelo atual.
+- `chave` de Cerberos/Caronte também é armazenada em texto puro.
+- O Caronte web valida geolocalização no cliente e novamente no servidor, mas GPS de navegador pode ser impreciso ou falsificado.
+- Use HTTPS em produção; navegadores modernos normalmente exigem contexto seguro para geolocalização fora de `localhost`.
+- Restrinja acesso ao painel `/admin`.
+
+Exemplo:
+
+```bash
+export SECRET_KEY='troque-esta-chave'
+python Sistema/api.py
+```
+
+## Dicas de operação
+
+- Cadastre primeiro um usuário admin diretamente no banco ou por script, pois o
+  painel `/admin` exige login administrativo para acessar o CRUD.
+- Cadastre Tartaros com latitude, longitude e raio para habilitar o Caronte web.
+- Cadastre Cerberoses e Carontes com os mesmos MACs enviados pelo firmware.
+- Associe usuários aos Tartaros permitidos.
+- Para RFID, associe uma `TAG.numero` ao usuário.
+- Mantenha heartbeats em intervalo menor que 30 segundos. O recomendado é cerca de 10 segundos.
+
+## Problemas comuns
+
+### Dashboard vazio
+
+Verifique se o Sistema está rodando em `127.0.0.1:9001` ou altere `SISTEMA_URL` em
+`Dashboard/api.py`.
+
+### Dispositivo aparece como unknown
+
+O dispositivo existe no banco, mas ainda não enviou `coldstart`, `heartbeat` ou
+chamou um endpoint legado que atualize `last_seen`.
+
+### Dispositivo fica offline rapidamente
+
+O monitor marca offline após mais de 30 segundos sem contato. Implemente heartbeat
+periódico no firmware.
+
+### Coldstart retorna unknown
+
+O MAC enviado não está cadastrado em `cerberoses` nem em `carontes`.
+
+### Caronte web não mostra ambientes próximos
+
+Verifique:
+
+- se o navegador recebeu permissão de localização;
+- se o Tartaro possui latitude e longitude;
+- se o raio em metros cobre a localização atual;
+- se o usuário está autenticado.
+
+### Caronte web mostra ambiente, mas nega acesso
+
+O usuário logado provavelmente não está associado ao Tartaro em `usuarios_ambientes`.
+
+## Estado atual importante
+
+- O backend do Sistema já possui endpoints novos de coldstart, heartbeat e status.
+- O Dashboard já consome o status local do Sistema.
+- O painel admin e o Caronte web estão presentes em `Sistema/templates/`.
+- O firmware ainda precisa ser ajustado para usar `/device/coldstart` com MAC real.
+- Carontes fixos precisam de heartbeat periódico para status online confiável.

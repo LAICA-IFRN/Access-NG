@@ -1,13 +1,169 @@
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}Tartaro — Dashboard{% endblock %}
 {% block content %}
-<h1>A porta esta {{ estado }} desde {{ hora }} GMT</h1>
 
-{% if estado == "Aberta" %}
-    <img src="{{ url_for('static', filename='images/Aberta.jpg') }}" class="image"/>
+<style>
+  body { background: #0d0d1a; color: #e0e0e0; }
+  .navbar-tartaro { background: #1a1a2e; border-bottom: 1px solid #2d2d4e; }
+  .navbar-brand { color: #c9a227 !important; font-weight: bold; letter-spacing: 2px; font-size: 1.3rem; }
+  .tartaro-card {
+    background: #1a1a2e;
+    border: 1px solid #2d2d4e;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+  }
+  .tartaro-card .card-header {
+    background: #12122a;
+    border-bottom: 1px solid #2d2d4e;
+    color: #c9a227;
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .tartaro-card .card-header small { color: #888; font-weight: normal; font-size: 0.8rem; }
+  .device-row { padding: 0.6rem 0; border-bottom: 1px solid #22223a; }
+  .device-row:last-child { border-bottom: none; }
+  .badge-online  { background: #1e7e34; color: #fff; }
+  .badge-offline { background: #7e1e1e; color: #fff; }
+  .badge-unknown { background: #444; color: #ccc; }
+  .device-type-label { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+  .device-mac { font-family: monospace; font-size: 0.9rem; color: #aaa; }
+  .device-meta { font-size: 0.75rem; color: #666; }
+  .section-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: #555; margin: 0.5rem 0 0.25rem; }
+  .no-devices { color: #555; font-size: 0.85rem; font-style: italic; }
+  #last-updated { font-size: 0.75rem; color: #555; }
+</style>
 
-{% elif estado == "Fechada" %}
+<nav class="navbar navbar-tartaro mb-4">
+  <span class="navbar-brand">&#9760; TARTARO</span>
+  <span id="last-updated" class="ml-auto">Atualizando...</span>
+</nav>
 
-    <img src="{{ url_for('static', filename='images/Fechada.jpg') }}" class="image"/>
-{% endif %}
+<div class="container-fluid px-4">
+
+  {% if not tartaros %}
+  <div class="text-center mt-5" style="color:#555;">
+    <h4>Nenhum Tartaro cadastrado</h4>
+    <p>Adicione Ambientes e dispositivos no Sistema.</p>
+  </div>
+  {% endif %}
+
+  <div id="dashboard-root">
+    {% for t in tartaros %}
+    <div class="tartaro-card" id="tartaro-{{ t.id }}">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>{{ t.nome }} <small>/ {{ t.local }}</small></span>
+        <small>{{ t.cerberoses|length }} Cerberus &nbsp;|&nbsp; {{ t.carontes|length }} Caronte</small>
+      </div>
+      <div class="card-body py-2">
+
+        {% if t.cerberoses %}
+        <div class="section-title">Cerberoses</div>
+        {% for c in t.cerberoses %}
+        <div class="device-row d-flex align-items-center" id="cerberos-{{ c.id }}">
+          <div class="mr-3">
+            <span class="badge badge-{{ c.status }} px-2 py-1">{{ c.status }}</span>
+          </div>
+          <div class="flex-grow-1">
+            <div><strong>{{ c.nome }}</strong> <span class="device-mac ml-2">{{ c.mac }}</span></div>
+            <div class="device-meta">
+              {% if c.last_seen %}
+                Visto: <span class="last-seen" data-ts="{{ c.last_seen }}">{{ c.last_seen }}</span>
+              {% else %}
+                Nunca visto
+              {% endif %}
+              {% if c.coldstart_at %}
+                &nbsp;·&nbsp; Boot: {{ c.coldstart_at }}
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="no-devices mt-1">Sem Cerberoses cadastrados</div>
+        {% endif %}
+
+        {% if t.carontes %}
+        <div class="section-title mt-3">Carontes</div>
+        {% for c in t.carontes %}
+        <div class="device-row d-flex align-items-center" id="caronte-{{ c.id }}">
+          <div class="mr-3">
+            <span class="badge badge-{{ c.status }} px-2 py-1">{{ c.status }}</span>
+          </div>
+          <div class="flex-grow-1">
+            <div class="device-type-label">caronte</div>
+            <div class="device-mac">{{ c.mac }}</div>
+            <div class="device-meta">
+              {% if c.last_seen %}
+                Visto: <span class="last-seen" data-ts="{{ c.last_seen }}">{{ c.last_seen }}</span>
+              {% else %}
+                Nunca visto
+              {% endif %}
+              {% if c.coldstart_at %}
+                &nbsp;·&nbsp; Boot: {{ c.coldstart_at }}
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="no-devices mt-1">Sem Carontes cadastrados</div>
+        {% endif %}
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<script>
+  function statusBadgeClass(status) {
+    if (status === 'online')  return 'badge badge-online px-2 py-1';
+    if (status === 'offline') return 'badge badge-offline px-2 py-1';
+    return 'badge badge-unknown px-2 py-1';
+  }
+
+  function relativeTime(isoStr) {
+    if (!isoStr) return 'nunca';
+    const diff = Math.floor((Date.now() - new Date(isoStr + 'Z')) / 1000);
+    if (diff < 5)   return 'agora';
+    if (diff < 60)  return diff + 's atrás';
+    if (diff < 3600) return Math.floor(diff / 60) + 'min atrás';
+    return Math.floor(diff / 3600) + 'h atrás';
+  }
+
+  function renderDevice(device, type) {
+    const el = document.getElementById(type + '-' + device.id);
+    if (!el) return;
+    el.querySelector('.badge').className = statusBadgeClass(device.status);
+    el.querySelector('.badge').textContent = device.status;
+    const lsEl = el.querySelector('.last-seen');
+    if (lsEl) lsEl.textContent = relativeTime(device.last_seen);
+  }
+
+  function poll() {
+    fetch('/api/status')
+      .then(r => r.json())
+      .then(tartaros => {
+        tartaros.forEach(t => {
+          (t.cerberoses || []).forEach(c => renderDevice(c, 'cerberos'));
+          (t.carontes   || []).forEach(c => renderDevice(c, 'caronte'));
+        });
+        document.getElementById('last-updated').textContent =
+          'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
+      })
+      .catch(() => {
+        document.getElementById('last-updated').textContent = 'Erro ao atualizar';
+      });
+  }
+
+  // Humanize timestamps already rendered on page load
+  document.querySelectorAll('.last-seen[data-ts]').forEach(el => {
+    el.textContent = relativeTime(el.dataset.ts);
+  });
+
+  poll();
+  setInterval(poll, 10000);
+</script>
+
 {% endblock %}

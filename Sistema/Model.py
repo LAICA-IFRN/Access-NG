@@ -1,35 +1,20 @@
 from __future__ import annotations
-from typing import List
+from typing import List, Optional
+import datetime
 
-from sqlalchemy import ForeignKey
-from sqlalchemy import Integer
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.orm import relationship
-class Base(DeclarativeBase):
-    pass
-
-from sqlalchemy import Column
-from sqlalchemy import Table
-
-
-
+from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase, relationship
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import create_engine, MetaData, ForeignKey, Column, Integer, String, Float, DateTime, Boolean, engine
-from sqlalchemy.orm import sessionmaker, Relationship
+from sqlalchemy import (
+    create_engine, MetaData, ForeignKey, Column, Integer, String,
+    DateTime, Boolean, Float, Table, text
+)
+from sqlalchemy.orm import sessionmaker
 
 
 DBName = "Acesso.db"
-fileEngine = create_engine('sqlite:///' + DBName, connect_args={'check_same_thread': False}, echo = False)
-
-DBMemory = ":memory:"
-memEngine = create_engine('sqlite:///' + DBMemory, connect_args={'check_same_thread': False}, echo = False)
-memConnection = memEngine.raw_connection().connection
-engine = fileEngine
+engine = create_engine('sqlite:///' + DBName, connect_args={'check_same_thread': False}, echo=False)
 
 meta = MetaData()
-meta.bind = engine
 Base = declarative_base(metadata=meta)
 Session = sessionmaker(bind=engine)
 db = Session()
@@ -49,7 +34,8 @@ usuarios_ambientes_admins = Table(
     Column("ambienteADM_id", ForeignKey("ambientes.id"), primary_key=True),
 )
 
-class Usuario (Base):
+
+class Usuario(Base):
     __tablename__ = 'usuarios'
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(50))
@@ -62,29 +48,35 @@ class Usuario (Base):
     ambientesAdmin: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes_admins, back_populates="admins")
 
 
-class TAG (Base):
+class TAG(Base):
     __tablename__ = 'tags'
     id: Mapped[int] = mapped_column(primary_key=True)
     numero: Mapped[str] = mapped_column(String(50))
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     usuario: Mapped["Usuario"] = relationship(back_populates="tag")
 
-class MAC (Base):
-    id: Mapped[int] = mapped_column(primary_key=True)
+
+class MAC(Base):
     __tablename__ = 'macs'
+    id: Mapped[int] = mapped_column(primary_key=True)
     endereco = Column(String(50), nullable=False)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     usuario: Mapped["Usuario"] = relationship(back_populates="mac")
+
 
 class Ambiente(Base):
     __tablename__ = 'ambientes'
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(50))
     local: Mapped[str] = mapped_column(String(50))
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    raio_metros: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     frequentadores: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes, back_populates="ambientes")
     admins: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes_admins, back_populates="ambientesAdmin")
     cerberoses: Mapped[List[Cerberos]] = relationship(back_populates="ambiente")
     carontes: Mapped[List[Caronte]] = relationship(back_populates="ambiente")
+
 
 class Cerberos(Base):
     __tablename__ = 'cerberoses'
@@ -94,6 +86,10 @@ class Cerberos(Base):
     chave: Mapped[str] = mapped_column(String(50))
     ambiente_id: Mapped[int] = mapped_column(ForeignKey("ambientes.id"))
     ambiente: Mapped["Ambiente"] = relationship(back_populates="cerberoses")
+    status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    last_seen: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    coldstart_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+
 
 class Caronte(Base):
     __tablename__ = 'carontes'
@@ -102,8 +98,11 @@ class Caronte(Base):
     chave: Mapped[str] = mapped_column(String(50))
     ambiente_id: Mapped[int] = mapped_column(ForeignKey("ambientes.id"))
     ambiente: Mapped["Ambiente"] = relationship(back_populates="carontes")
+    status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    last_seen: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    coldstart_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
-    def receberTAG(self, tag:TAG) -> bool:
+    def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
             try:
                 if user.tag.numero == tag.numero and user.tag.numero is not None:
@@ -111,6 +110,25 @@ class Caronte(Base):
             except AttributeError:
                 return False
         return False
-        
+
 
 meta.create_all(engine)
+
+
+def _add_column_if_missing(table: str, column: str, col_type: str):
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        existing = [r[1] for r in rows]
+        if column not in existing:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+            conn.commit()
+
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'status', 'VARCHAR(20)')
+    _add_column_if_missing(_table, 'last_seen', 'DATETIME')
+    _add_column_if_missing(_table, 'coldstart_at', 'DATETIME')
+
+_add_column_if_missing('ambientes', 'latitude', 'FLOAT')
+_add_column_if_missing('ambientes', 'longitude', 'FLOAT')
+_add_column_if_missing('ambientes', 'raio_metros', 'INTEGER')

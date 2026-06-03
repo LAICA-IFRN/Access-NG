@@ -1,0 +1,38 @@
+{% extends "admin/base.html" %}
+{% block title %}Usuários{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#c9a227; margin:0;">Usuários</h5>
+  <a href="{{ url_for('admin_usuario_novo') }}" class="btn btn-gold btn-sm">+ Novo</a>
+</div>
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr>
+        <th>Nome</th><th>Matrícula</th><th>Admin</th><th>Ambientes</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for u in usuarios %}
+      <tr>
+        <td>{{ u.nome }}</td>
+        <td style="font-family:monospace; font-size:.85rem;">{{ u.matricula }}</td>
+        <td>{% if u.admin %}<span class="badge" style="background:#c9a227; color:#000;">admin</span>{% endif %}</td>
+        <td style="font-size:.8rem; color:#888;">
+          {{ u.ambientes|map(attribute='nome')|join(', ') or '—' }}
+        </td>
+        <td class="text-right">
+          <a href="{{ url_for('admin_usuario_editar', id=u.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
+          <form method="POST" action="{{ url_for('admin_usuario_excluir', id=u.id) }}" style="display:inline;"
+                onsubmit="return confirm('Remover {{ u.nome }}?')">
+            <button class="btn btn-sm btn-outline-danger py-0 px-2">Excluir</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-center" style="color:#555;">Nenhum usuário cadastrado.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

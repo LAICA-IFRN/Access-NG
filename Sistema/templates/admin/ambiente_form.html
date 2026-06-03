@@ -1,0 +1,87 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ 'Editar' if ambiente else 'Novo' }} Tartaro{% endblock %}
+
+{% block extra_js %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var lat  = parseFloat(document.getElementById('latitude').value)  || -5.795;
+  var lon  = parseFloat(document.getElementById('longitude').value) || -35.21;
+  var zoom = document.getElementById('latitude').value ? 17 : 13;
+
+  var map = L.map('map').setView([lat, lon], zoom);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  var marker = null;
+  if (document.getElementById('latitude').value) {
+    marker = L.marker([lat, lon]).addTo(map);
+  }
+
+  map.on('click', function(e) {
+    document.getElementById('latitude').value  = e.latlng.lat.toFixed(7);
+    document.getElementById('longitude').value = e.latlng.lng.toFixed(7);
+    if (marker) map.removeLayer(marker);
+    marker = L.marker(e.latlng).addTo(map);
+  });
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#c9a227; margin:0;">{{ 'Editar' if ambiente else 'Novo' }} Tartaro</h5>
+  <a href="{{ url_for('admin_ambientes') }}" style="color:#888; font-size:.85rem;">← Voltar</a>
+</div>
+<div class="card">
+  <div class="card-body">
+    <form method="POST">
+      <div class="form-row">
+        <div class="form-group col-md-6">
+          <label>Nome</label>
+          <input name="nome" type="text" class="form-control"
+                 value="{{ ambiente.nome if ambiente else '' }}" required>
+        </div>
+        <div class="form-group col-md-6">
+          <label>Local</label>
+          <input name="local" type="text" class="form-control"
+                 value="{{ ambiente.local if ambiente else '' }}" required>
+        </div>
+      </div>
+
+      <hr style="border-color:#2d2d4e;">
+      <p style="color:#888; font-size:.85rem;">
+        Clique no mapa para definir a posição do ambiente.
+        A geolocalização é usada pelo Caronte web para verificar proximidade.
+      </p>
+
+      <div id="map" style="height:300px; border-radius:6px; border:1px solid #2d2d4e; margin-bottom:1rem;
+                            filter:invert(90%) hue-rotate(180deg);"></div>
+
+      <div class="form-row">
+        <div class="form-group col-md-4">
+          <label>Latitude</label>
+          <input id="latitude" name="latitude" type="text" class="form-control" readonly
+                 value="{{ '%.7f'|format(ambiente.latitude) if ambiente and ambiente.latitude else '' }}"
+                 placeholder="Clique no mapa">
+        </div>
+        <div class="form-group col-md-4">
+          <label>Longitude</label>
+          <input id="longitude" name="longitude" type="text" class="form-control" readonly
+                 value="{{ '%.7f'|format(ambiente.longitude) if ambiente and ambiente.longitude else '' }}"
+                 placeholder="Clique no mapa">
+        </div>
+        <div class="form-group col-md-4">
+          <label>Raio (metros)</label>
+          <input name="raio_metros" type="number" class="form-control" min="5" max="5000"
+                 value="{{ ambiente.raio_metros if ambiente and ambiente.raio_metros else 50 }}">
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-gold">Salvar</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

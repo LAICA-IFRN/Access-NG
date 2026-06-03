@@ -1,0 +1,37 @@
+{% extends "admin/base.html" %}
+{% block title %}Carontes{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#c9a227; margin:0;">Carontes Fixos</h5>
+  <a href="{{ url_for('admin_caronte_novo') }}" class="btn btn-gold btn-sm">+ Novo</a>
+</div>
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr>
+        <th>MAC</th><th>Chave</th><th>Tartaro</th><th>Status</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for c in carontes %}
+      <tr>
+        <td style="font-family:monospace; font-size:.8rem;">{{ c.mac }}</td>
+        <td style="font-family:monospace; font-size:.8rem; color:#555;">{{ c.chave }}</td>
+        <td>{{ c.ambiente.nome }}</td>
+        <td><span class="badge badge-{{ c.status or 'unknown' }}">{{ c.status or 'unknown' }}</span></td>
+        <td class="text-right">
+          <a href="{{ url_for('admin_caronte_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
+          <form method="POST" action="{{ url_for('admin_caronte_excluir', id=c.id) }}" style="display:inline;"
+                onsubmit="return confirm('Remover este Caronte?')">
+            <button class="btn btn-sm btn-outline-danger py-0 px-2">Excluir</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-center" style="color:#555;">Nenhum caronte cadastrado.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<style>.badge-online{background:#1e7e34}.badge-offline{background:#7e1e1e}.badge-unknown{background:#444}</style>
+{% endblock %}

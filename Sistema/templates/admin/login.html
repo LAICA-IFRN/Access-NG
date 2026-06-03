@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <title>Admin Login — Tartaro</title>
+  <style>
+    body { background:#0d0d1a; color:#e0e0e0; display:flex; align-items:center; justify-content:center; min-height:100vh; }
+    .login-card { background:#1a1a2e; border:1px solid #2d2d4e; border-radius:8px; padding:2rem; width:100%; max-width:360px; }
+    .brand { color:#c9a227; font-weight:bold; letter-spacing:3px; font-size:1.5rem; text-align:center; margin-bottom:1.5rem; }
+    .form-control { background:#0d0d1a; border:1px solid #2d2d4e; color:#e0e0e0; }
+    .form-control:focus { background:#0d0d1a; border-color:#c9a227; color:#e0e0e0; box-shadow:none; }
+    label { font-size:.85rem; color:#888; }
+    .btn-gold { background:#c9a227; color:#000; border:none; width:100%; }
+    .btn-gold:hover { background:#e0b830; }
+    .sub { font-size:.75rem; color:#555; text-align:center; margin-top:1rem; }
+  </style>
+</head>
+<body>
+<div class="login-card">
+  <div class="brand">&#9760; TARTARO</div>
+  <p class="text-center" style="color:#666; font-size:.85rem; margin-bottom:1.5rem;">Painel Administrativo</p>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }} py-2" style="font-size:.85rem;">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+  <form method="POST" action="{{ url_for('admin_login') }}">
+    <div class="form-group">
+      <label>Matrícula</label>
+      <input name="matricula" type="text" class="form-control" required autofocus>
+    </div>
+    <div class="form-group">
+      <label>PIN</label>
+      <input name="pin" type="password" class="form-control" maxlength="4" required>
+    </div>
+    <button type="submit" class="btn btn-gold mt-2">Entrar</button>
+  </form>
+  <div class="sub"><a href="{{ url_for('caronte_login') }}" style="color:#555;">← Ir para o Caronte</a></div>
+</div>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% block title %}Tartaros{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#c9a227; margin:0;">Tartaros (Ambientes)</h5>
+  <a href="{{ url_for('admin_ambiente_novo') }}" class="btn btn-gold btn-sm">+ Novo</a>
+</div>
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr>
+        <th>Nome</th><th>Local</th><th>Lat / Lon</th><th>Raio</th>
+        <th>Cerberoses</th><th>Carontes</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for a in ambientes %}
+      <tr>
+        <td>{{ a.nome }}</td>
+        <td>{{ a.local }}</td>
+        <td style="font-family:monospace; font-size:.8rem; color:#888;">
+          {% if a.latitude %}{{ "%.5f"|format(a.latitude) }}, {{ "%.5f"|format(a.longitude) }}{% else %}<span style="color:#444;">—</span>{% endif %}
+        </td>
+        <td>{{ a.raio_metros or 50 }}m</td>
+        <td>{{ a.cerberoses|length }}</td>
+        <td>{{ a.carontes|length }}</td>
+        <td class="text-right">
+          <a href="{{ url_for('admin_ambiente_editar', id=a.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
+          <form method="POST" action="{{ url_for('admin_ambiente_excluir', id=a.id) }}" style="display:inline;"
+                onsubmit="return confirm('Remover {{ a.nome }}?')">
+            <button class="btn btn-sm btn-outline-danger py-0 px-2">Excluir</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center" style="color:#555;">Nenhum ambiente cadastrado.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

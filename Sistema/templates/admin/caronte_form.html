@@ -1,0 +1,36 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ 'Editar' if caronte else 'Novo' }} Caronte{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#c9a227; margin:0;">{{ 'Editar' if caronte else 'Novo' }} Caronte Fixo</h5>
+  <a href="{{ url_for('admin_carontes') }}" style="color:#888; font-size:.85rem;">← Voltar</a>
+</div>
+<div class="card" style="max-width:500px;">
+  <div class="card-body">
+    <form method="POST">
+      <div class="form-group">
+        <label>MAC Address</label>
+        <input name="mac" type="text" class="form-control" placeholder="AA:BB:CC:DD:EE:FF"
+               value="{{ caronte.mac if caronte else '' }}" required>
+      </div>
+      <div class="form-group">
+        <label>Chave</label>
+        <input name="chave" type="text" class="form-control"
+               value="{{ caronte.chave if caronte else '' }}" required>
+      </div>
+      <div class="form-group">
+        <label>Tartaro (Ambiente)</label>
+        <select name="ambiente_id" class="form-control" required>
+          {% for a in ambientes %}
+          <option value="{{ a.id }}"
+            {% if caronte and caronte.ambiente_id == a.id %}selected{% endif %}>
+            {{ a.nome }} — {{ a.local }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-gold">Salvar</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

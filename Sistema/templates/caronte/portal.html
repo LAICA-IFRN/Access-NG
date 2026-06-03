@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <title>Caronte — Portal</title>
+  <style>
+    * { box-sizing:border-box; }
+    body { background:#0d0d1a; color:#e0e0e0; min-height:100vh; font-size:16px; }
+    .topbar { background:#12122a; border-bottom:1px solid #2d2d4e;
+              padding:.75rem 1rem; display:flex; justify-content:space-between; align-items:center; }
+    .topbar .brand { color:#c9a227; font-weight:bold; letter-spacing:2px; }
+    .topbar .user  { color:#888; font-size:.85rem; }
+    .topbar a      { color:#555; font-size:.8rem; }
+    .container-portal { max-width:480px; margin:0 auto; padding:1.25rem 1rem; }
+    .status-bar { display:flex; align-items:center; gap:.5rem; margin-bottom:1.5rem;
+                  background:#1a1a2e; border:1px solid #2d2d4e; border-radius:8px; padding:.75rem 1rem; }
+    .status-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .status-dot.searching { background:#c9a227; animation:pulse 1s infinite; }
+    .status-dot.ok        { background:#1e7e34; }
+    .status-dot.error     { background:#7e1e1e; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .status-text { font-size:.85rem; color:#888; }
+
+    .ambiente-card {
+      background:#1a1a2e; border:1px solid #2d2d4e; border-radius:10px;
+      padding:1rem; margin-bottom:.75rem; display:flex; align-items:center; gap:1rem;
+    }
+    .ambiente-icon { font-size:1.8rem; flex-shrink:0; }
+    .ambiente-info { flex-grow:1; }
+    .ambiente-nome { font-weight:600; color:#e0e0e0; }
+    .ambiente-local { font-size:.8rem; color:#666; }
+    .btn-access {
+      background:#c9a227; color:#000; border:none; border-radius:8px;
+      padding:.5rem 1rem; font-weight:600; font-size:.9rem; flex-shrink:0; cursor:pointer;
+    }
+    .btn-access:disabled { background:#3a3a2e; color:#666; cursor:not-allowed; }
+    .btn-access.loading { background:#3a3a2e; color:#888; }
+    .btn-access.success { background:#1e7e34; color:#fff; }
+    .btn-access.denied  { background:#7e1e1e; color:#fff; }
+
+    .empty-state { text-align:center; color:#444; padding:3rem 1rem; }
+    .empty-state .icon { font-size:3rem; margin-bottom:.5rem; }
+    .empty-state p { font-size:.9rem; }
+
+    .geo-denied { background:#1a1218; border:1px solid #7e1e1e; border-radius:8px;
+                  padding:1rem; text-align:center; color:#c88; font-size:.85rem; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">&#9760; CARONTE</span>
+  <span>
+    <span class="user">{{ user_nome }}</span>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('caronte_logout') }}">Sair</a>
+  </span>
+</div>
+
+<div class="container-portal">
+
+  <div class="status-bar" id="status-bar">
+    <div class="status-dot searching" id="status-dot"></div>
+    <span class="status-text" id="status-text">Obtendo localização...</span>
+  </div>
+
+  <div id="geo-denied" class="geo-denied d-none">
+    <p style="margin:0;">
+      &#128683; Permissão de localização negada.<br>
+      <small>Habilite a localização no navegador e recarregue a página.</small>
+    </p>
+  </div>
+
+  <div id="ambientes-list"></div>
+
+</div>
+
+<script>
+var userLat = null;
+var userLon = null;
+
+function setStatus(type, text) {
+  var dot  = document.getElementById('status-dot');
+  var span = document.getElementById('status-text');
+  dot.className = 'status-dot ' + type;
+  span.textContent = text;
+}
+
+function renderAmbientes(ambientes) {
+  var list = document.getElementById('ambientes-list');
+  if (!ambientes.length) {
+    list.innerHTML = '<div class="empty-state">'
+      + '<div class="icon">&#128682;</div>'
+      + '<p>Nenhum ambiente encontrado na sua localização atual.</p></div>';
+    return;
+  }
+  list.innerHTML = ambientes.map(function(a) {
+    return '<div class="ambiente-card">'
+      + '<div class="ambiente-icon">&#128682;</div>'
+      + '<div class="ambiente-info">'
+      + '<div class="ambiente-nome">' + escHtml(a.nome) + '</div>'
+      + '<div class="ambiente-local">' + escHtml(a.local) + '</div>'
+      + '</div>'
+      + '<button class="btn-access" id="btn-' + a.id + '" onclick="solicitarAcesso(' + a.id + ', this)">'
+      + 'Entrar'
+      + '</button>'
+      + '</div>';
+  }).join('');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function buscarAmbientes(lat, lon) {
+  setStatus('searching', 'Procurando ambientes próximos...');
+  fetch('/caronte/ambientes-proximos?lat=' + lat + '&lon=' + lon)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) { setStatus('error', data.error); return; }
+      setStatus('ok', 'Localização obtida · ' + data.length + ' ambiente(s) próximo(s)');
+      renderAmbientes(data);
+    })
+    .catch(function() { setStatus('error', 'Erro ao buscar ambientes.'); });
+}
+
+function solicitarAcesso(ambienteId, btn) {
+  if (!userLat) { setStatus('error', 'Localização não disponível.'); return; }
+  btn.disabled = true;
+  btn.classList.add('loading');
+  btn.textContent = '...';
+
+  fetch('/caronte/solicitar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ambiente_id: ambienteId, lat: userLat, lon: userLon })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.allow) {
+      btn.classList.remove('loading');
+      btn.classList.add('success');
+      btn.textContent = '&#10003; Aberto';
+      setTimeout(function() {
+        btn.classList.remove('success');
+        btn.disabled = false;
+        btn.textContent = 'Entrar';
+      }, 5000);
+    } else {
+      btn.classList.remove('loading');
+      btn.classList.add('denied');
+      btn.textContent = 'Negado';
+      setTimeout(function() {
+        btn.classList.remove('denied');
+        btn.disabled = false;
+        btn.textContent = 'Entrar';
+      }, 3000);
+    }
+  })
+  .catch(function() {
+    btn.classList.remove('loading');
+    btn.disabled = false;
+    btn.textContent = 'Erro';
+  });
+}
+
+// Request geolocation
+if ('geolocation' in navigator) {
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      userLat = pos.coords.latitude;
+      userLon = pos.coords.longitude;
+      buscarAmbientes(userLat, userLon);
+    },
+    function(err) {
+      setStatus('error', 'Localização negada');
+      document.getElementById('geo-denied').classList.remove('d-none');
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+} else {
+  setStatus('error', 'Geolocalização não suportada neste navegador.');
+}
+</script>
+
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>
