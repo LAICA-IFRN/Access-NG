@@ -23,7 +23,18 @@
 #define STASSID "wIFRN-IoT"
 #define STAPSK "deviceiotifrn"
 #endif
+
+const char* COLDSTART_ENDPOINT = "/device/coldstart";
+const char* HEARTBEAT_ENDPOINT = "/device/heartbeat";
+const char* COMMAND_ENDPOINT = "/device/command";
+const unsigned long HEARTBEAT_INTERVAL_MS = 30000;
+const unsigned long COMMAND_POLL_WAIT_SECONDS = 20;
+const uint16_t API_TIMEOUT_MS = 10000;
+const uint16_t COMMAND_TIMEOUT_MS = 30000;
+
 int acionamento = 13;
+unsigned long lastHeartbeat = 0;
+
 void setup() {
 
   pinMode(acionamento, OUTPUT);     // Initialize the LED_BUILTIN pin as an output
@@ -44,58 +55,72 @@ void setup() {
   Serial.println("");
   Serial.print("Connected! IP address: ");
   Serial.println(WiFi.localIP());
+  Serial.print("MAC address: ");
+  Serial.println(WiFi.macAddress());
   coldStart();
 }
 
 void loop() {
   // wait for WiFi connection
   if ((WiFi.status() == WL_CONNECTED)) {
-
-    WiFiClient client;
-    HTTPClient http;
-
-    Serial.print("Verificando se posso abrir:\n");
-    // configure traged server and url
-    http.begin(client, "http://" SERVER_IP "/access-control/gateway/devices/microcontrollers/remote-access");  // HTTP
-    http.addHeader("Content-Type", "application/json");
-
-    //Serial.print("[HTTP] POST...\n");
-    // start connection and send HTTP header and body
-    //lightIntensity = analogRead(LDR_PIN);
-    String body = "{\"id\": \"5\"}";
-    int httpCode = http.POST(body);
-    // httpCode will be negative on error
-    if (httpCode > 0) {
-      // HTTP header has been send and Server response header has been handled
-      //Serial.printf("[HTTP] POST... code: %d\n", httpCode);
-
-      // file found at server
-      if (httpCode == HTTP_CODE_OK ||  httpCode == HTTP_CODE_CREATED) {
-        const String& payload = http.getString();
-        //Serial.println("received payload:\n<<");
-        //Serial.println(payload);
-        //Serial.println(">>");
-        StaticJsonDocument<200> doc;
-        DeserializationError error = deserializeJson(doc, payload.c_str());
-           if (error) {
-            Serial.print(F("deserializeJson() failed: "));
-            Serial.println(error.f_str());
-            return;
-          }
-        String response = http.getString();
-        if (response == "true") {
-          acionarRele();
-          Serial.println(response);
-        }
-      }
-
-    } else {
-      Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    unsigned long now = millis();
+    if (now - lastHeartbeat > HEARTBEAT_INTERVAL_MS) {
+      heartbeat();
+      lastHeartbeat = now;
     }
 
-    http.end();
-    delay(1000);
+    pollCommand();
+  } else {
+    reconnectWiFi();
+  }
+}
 
+String deviceBody() {
+  return "{\"mac\":\"" + WiFi.macAddress() + "\"}";
+}
+
+int postJson(const char* endpoint, const String& body, uint16_t timeoutMs, String& payload) {
+  WiFiClient client;
+  HTTPClient http;
+  String url = String("http://") + SERVER_IP + endpoint;
+
+  http.setTimeout(timeoutMs);
+  http.begin(client, url);
+  http.addHeader("Content-Type", "application/json");
+
+  Serial.print("[HTTP] POST ");
+  Serial.println(endpoint);
+  Serial.println(body);
+
+  int httpCode = http.POST(body);
+  if (httpCode > 0) {
+    payload = http.getString();
+    Serial.printf("[HTTP] code: %d\n", httpCode);
+    Serial.println(payload);
+  } else {
+    Serial.printf("[HTTP] failed: %s\n", http.errorToString(httpCode).c_str());
+  }
+
+  http.end();
+  return httpCode;
+}
+
+void reconnectWiFi() {
+  Serial.println("[WiFi] Reconectando...");
+  WiFi.disconnect();
+  WiFi.begin(STASSID, STAPSK);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("[WiFi] Reconectado. IP: ");
+    Serial.println(WiFi.localIP());
+    coldStart();
   }
 }
 
@@ -107,37 +132,39 @@ void acionarRele(){
 }
 
 void coldStart(){
-  
-    WiFiClient client;
-    HTTPClient http;
+  String payload;
+  postJson(COLDSTART_ENDPOINT, deviceBody(), API_TIMEOUT_MS, payload);
+}
 
-    Serial.print("[HTTP] begin...\n");
-    // configure traged server and url
-    http.begin(client, "http://" SERVER_IP "/access-control/gateway/devices/microcontrollers/cold-start");  // HTTP
-    http.addHeader("Content-Type", "application/json");
+void heartbeat(){
+  String payload;
+  postJson(HEARTBEAT_ENDPOINT, deviceBody(), API_TIMEOUT_MS, payload);
+}
 
-    Serial.print("[HTTP] POST...\n");
-    // start connection and send HTTP header and body
-    //lightIntensity = analogRead(LDR_PIN);
-    String body = "{\"id\": \"5\"}";
-    int httpCode = http.POST(body);
-    Serial.println(body);
+void pollCommand(){
+  Serial.println("[Command] Aguardando comando do servidor...");
 
-    // httpCode will be negative on error
-    if (httpCode > 0) {
-      // HTTP header has been send and Server response header has been handled
-      Serial.printf("[HTTP] POST... code: %d\n", httpCode);
+  String body = "{\"mac\":\"" + WiFi.macAddress() + "\",\"wait\":" + String(COMMAND_POLL_WAIT_SECONDS) + "}";
+  String payload;
+  int httpCode = postJson(COMMAND_ENDPOINT, body, COMMAND_TIMEOUT_MS, payload);
 
-      // file found at server
-      if (httpCode == HTTP_CODE_OK ||  httpCode == HTTP_CODE_CREATED) {
-        const String& payload = http.getString();
-        Serial.println("received payload:\n<<");
-        Serial.println(payload);
-        Serial.println(">>");
-      }
+  if (httpCode != HTTP_CODE_OK) {
+    return;
+  }
 
-    } else {
-      Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
-    }
-    http.end();
+  StaticJsonDocument<200> doc;
+  DeserializationError error = deserializeJson(doc, payload.c_str());
+  if (error) {
+    Serial.print(F("[Command] deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+  const char* command = doc["command"] | "";
+  if (strcmp(command, "unlock") == 0 || strcmp(command, "open") == 0 || strcmp(command, "abrir") == 0) {
+    Serial.println("[Command] Comando de abertura recebido!");
+    acionarRele();
+  } else {
+    Serial.println("[Command] Nenhum comando pendente");
+  }
 }

@@ -114,9 +114,9 @@ def caronte_required(f):
 
 def _touch_device(mac: str):
     now = datetime.datetime.utcnow()
-    device = db.query(Cerberos).filter(Cerberos.mac == mac).first()
+    device = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
     if device is None:
-        device = db.query(Caronte).filter(Caronte.mac == mac).first()
+        device = db.query(Caronte).filter(Caronte.mac.ilike(mac)).first()
     if device:
         device.last_seen = now
         device.status = 'online'
@@ -199,10 +199,10 @@ def coldstart():
     if not mac:
         return jsonify({'error': 'mac required'}), 400
     now = datetime.datetime.utcnow()
-    device = db.query(Cerberos).filter(Cerberos.mac == mac).first()
+    device = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
     device_type = 'cerberos'
     if device is None:
-        device = db.query(Caronte).filter(Caronte.mac == mac).first()
+        device = db.query(Caronte).filter(Caronte.mac.ilike(mac)).first()
         device_type = 'caronte'
     if device is None:
         return jsonify({'status': 'unknown', 'mac': mac}), 404
@@ -229,7 +229,7 @@ def device_command():
     if not mac:
         return jsonify({'error': 'mac required'}), 400
 
-    cerberos = db.query(Cerberos).filter(Cerberos.mac == mac).first()
+    cerberos = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
     if cerberos is None:
         return jsonify({'error': 'unknown cerberos', 'mac': mac}), 404
 
@@ -240,7 +240,7 @@ def device_command():
         wait = 20
     wait = max(0, min(wait, 25))
 
-    if Tartaro().verificarAcionamento(mac=mac, timeout=wait):
+    if Tartaro().verificarAcionamento(mac=cerberos.mac, timeout=wait):
         return jsonify({'command': 'unlock'})
     return jsonify({'command': None})
 
