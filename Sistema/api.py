@@ -8,6 +8,7 @@ import datetime
 import threading
 import time
 import os
+import json
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get('SECRET_KEY', 'tartaro-dev-key-change-in-prod')
@@ -172,7 +173,7 @@ def autenticar():
     c = request.json
     _touch_device(c['mac'])
     acionar = Tartaro().autenticarTAG(tag=c['tag'], senha=c['chave'], mac=c['mac'])
-    return jsonify({'Allow': str(acionar)})
+    return jsonify({'Allow': acionar})
 
 
 @app.route('/service/enviroments/enviroments/access/', methods=['POST'])

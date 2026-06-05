@@ -62,7 +62,7 @@ API_TIMEOUT = int(_cfg('API_TIMEOUT'))
 
 # Identidade do dispositivo
 DEVICE_ID = str(_cfg('DEVICE_ID'))
-DEVICE_MAC = None  # Será obtido automaticamente
+DEVICE_MAC = None  # Será obtido do hardware, não do config.json
 
 # Endpoints da API
 COLDSTART_ENDPOINT = _cfg('COLDSTART_ENDPOINT')
@@ -85,12 +85,37 @@ LED_BLUE_PIN = 12
 
 # ─── INICIALIZAÇÃO ───────────────────────────────────────────────────────────
 
+def is_valid_mac(mac):
+    """Valida se o valor é um MAC address real."""
+    if not isinstance(mac, str):
+        return False
+    parts = mac.split(':')
+    if len(parts) != 6:
+        return False
+    if all(part == '00' for part in parts):
+        return False
+    for part in parts:
+        if len(part) != 2:
+            return False
+        try:
+            int(part, 16)
+        except ValueError:
+            return False
+    return True
+
+
 def get_device_mac():
-    """Obtém o MAC address do dispositivo Pico W"""
+    """Obtém o MAC address do dispositivo Pico W."""
     import network
     wlan = network.WLAN(network.STA_IF)
-    mac = ubinascii.hexlify(wlan.config('mac'), ':').decode()
+    if not wlan.active():
+        wlan.active(True)
+    raw_mac = wlan.config('mac')
+    if not raw_mac:
+        return None
+    mac = ubinascii.hexlify(raw_mac, ':').decode()
     return mac
+
 
 def initialize_gpio():
     """Inicializa os pinos GPIO"""
@@ -219,8 +244,11 @@ def http_post(endpoint, data):
         sock.close()
         
         # Parse resposta
-        response_str = response.decode('utf-8', errors='ignore')
-        
+        try:
+            response_str = response.decode('utf-8')
+        except Exception:
+            response_str = response.decode('latin-1')
+
         # Separa header do body
         parts = response_str.split('\r\n\r\n', 1)
         status_line = parts[0].split('\r\n')[0]
@@ -288,7 +316,7 @@ def heartbeat():
 
 # ─── AUTENTICAÇÃO ──────────────────────────────────────────────────────────────
 
-def authenticate_tag(tag="caronte", password=""):
+def authenticate_tag(tag="caronte", password=DEVICE_ID):
     """
     Autentica um tag/credencial no sistema
     Se autorizado, retorna True e aciona a fechadura
@@ -307,6 +335,10 @@ def authenticate_tag(tag="caronte", password=""):
         try:
             response_json = json.loads(response)
             allow = response_json.get("Allow", False)
+            
+            # Converte string "True"/"False" para booleano se necessário
+            if isinstance(allow, str):
+                allow = allow.lower() in ('true', '1', 'yes')
             
             if allow:
                 print("[Auth] Autorização concedida!")
@@ -357,7 +389,7 @@ def button_handler():
                 
                 # Simula credenciais do "caronte"
                 # Em um sistema real, isso poderia vir de um cartão RFID
-                authenticate_tag(tag="caronte_button", password="")
+                authenticate_tag(tag="caronte_button", password=DEVICE_ID)
             
             time.sleep(0.1)
         except Exception as e:
@@ -378,8 +410,12 @@ def main():
     # Inicializa GPIO
     initialize_gpio()
     
-    # Obtém MAC address
+    # Obtém MAC address do hardware
     DEVICE_MAC = get_device_mac()
+    if not is_valid_mac(DEVICE_MAC):
+        print(f"[Device] MAC inválido: {DEVICE_MAC}")
+        blink_led_error(2000)
+        return
     print(f"[Device] MAC Address: {DEVICE_MAC}")
     print(f"[Device] ID: {DEVICE_ID}")
     
