@@ -20,6 +20,9 @@
         <td>{{ c.ambiente.nome }}</td>
         <td><span class="badge badge-{{ c.status or 'unknown' }}">{{ c.status or 'unknown' }}</span></td>
         <td class="text-right">
+          <form method="POST" action="{{ url_for('admin_cerberos_abrir', id=c.id) }}" style="display:inline;">
+            <button class="btn btn-sm btn-gold py-0 px-2">Abrir</button>
+          </form>
           <a href="{{ url_for('admin_cerberos_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
           <form method="POST" action="{{ url_for('admin_cerberos_excluir', id=c.id) }}" style="display:inline;"
                 onsubmit="return confirm('Remover {{ c.nome }}?')">

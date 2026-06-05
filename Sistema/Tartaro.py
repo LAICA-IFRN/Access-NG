@@ -25,17 +25,20 @@ class Tartaro():
         return autenticado
 
     def autenticarCaronte(self, chave: str, mac: str) -> Caronte:
-        return db.query(Caronte).filter(Caronte.mac == mac and Caronte.chave == chave).first()
+        return db.query(Caronte).filter(Caronte.mac == mac, Caronte.chave == chave).first()
 
     def acionarCerberos(self, mac: str):
         if mac not in self.filaAcionamento:
             self.filaAcionamento[mac] = queue.Queue()
         return self.filaAcionamento[mac].put(True)
 
-    def verificarAcionamento(self, mac: str) -> bool:
-        if mac in self.filaAcionamento and not self.filaAcionamento[mac].empty():
-            return self.filaAcionamento[mac].get()
-        return False
+    def verificarAcionamento(self, mac: str, timeout: float = 0) -> bool:
+        if mac not in self.filaAcionamento:
+            self.filaAcionamento[mac] = queue.Queue()
+        try:
+            return self.filaAcionamento[mac].get(timeout=timeout)
+        except queue.Empty:
+            return False
 
     def autenticarWeb(self, matricula: str, pin: str, ambiente_id: int) -> bool:
         """Authenticate a user via browser (web Caronte) and trigger the ambiente's Cerberoses."""

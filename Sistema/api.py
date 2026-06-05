@@ -222,6 +222,29 @@ def heartbeat():
     return jsonify({'received': mac})
 
 
+@app.route('/device/command', methods=['POST'])
+def device_command():
+    content = request.json or {}
+    mac = content.get('mac')
+    if not mac:
+        return jsonify({'error': 'mac required'}), 400
+
+    cerberos = db.query(Cerberos).filter(Cerberos.mac == mac).first()
+    if cerberos is None:
+        return jsonify({'error': 'unknown cerberos', 'mac': mac}), 404
+
+    _touch_device(mac)
+    try:
+        wait = float(content.get('wait', 20))
+    except (TypeError, ValueError):
+        wait = 20
+    wait = max(0, min(wait, 25))
+
+    if Tartaro().verificarAcionamento(mac=mac, timeout=wait):
+        return jsonify({'command': 'unlock'})
+    return jsonify({'command': None})
+
+
 @app.route('/api/status', methods=['GET'])
 def api_status():
     ambientes = db.query(Ambiente).all()
@@ -478,6 +501,17 @@ def admin_cerberos_editar(id):
         flash('Cerberos atualizado.', 'success')
         return redirect(url_for('admin_cerberoses'))
     return render_template('admin/cerberos_form.html', cerberos=c, ambientes=ambientes)
+
+
+@app.route('/admin/cerberoses/<int:id>/abrir', methods=['POST'])
+@admin_required
+def admin_cerberos_abrir(id):
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    Tartaro().acionarCerberos(c.mac)
+    flash(f'Comando de abertura enviado para {c.nome}.', 'success')
+    return redirect(url_for('admin_cerberoses'))
 
 
 @app.route('/admin/cerberoses/<int:id>/excluir', methods=['POST'])

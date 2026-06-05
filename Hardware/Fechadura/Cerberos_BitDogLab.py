@@ -30,6 +30,9 @@ _DEFAULTS = {
     "LED_BLUE_PIN": 12,
     "COLDSTART_ENDPOINT": "/device/coldstart",
     "HEARTBEAT_ENDPOINT": "/device/heartbeat",
+    "COMMAND_ENDPOINT": "/device/command",
+    "COMMAND_POLL_WAIT": 20,
+    "COMMAND_POLL_TIMEOUT": 30,
     "AUTH_ENDPOINT": "/caronte/autenticarTag",
 }
 
@@ -67,11 +70,14 @@ DEVICE_MAC = None  # Será obtido do hardware, não do config.json
 # Endpoints da API
 COLDSTART_ENDPOINT = _cfg('COLDSTART_ENDPOINT')
 HEARTBEAT_ENDPOINT = _cfg('HEARTBEAT_ENDPOINT')
+COMMAND_ENDPOINT = _cfg('COMMAND_ENDPOINT')
 AUTH_ENDPOINT = _cfg('AUTH_ENDPOINT')
 
 # Timings
 HEARTBEAT_INTERVAL = int(_cfg('HEARTBEAT_INTERVAL'))  # segundos
 BUTTON_DEBOUNCE = int(_cfg('BUTTON_DEBOUNCE'))     # milissegundos
+COMMAND_POLL_WAIT = int(_cfg('COMMAND_POLL_WAIT'))  # segundos
+COMMAND_POLL_TIMEOUT = int(_cfg('COMMAND_POLL_TIMEOUT'))  # segundos
 
 # ─── HARDWARE - GPIO PINS ────────────────────────────────────────────────────
 
@@ -200,7 +206,7 @@ def connect_wifi():
 
 # ─── HTTP CLIENT ──────────────────────────────────────────────────────────────
 
-def http_post(endpoint, data):
+def http_post(endpoint, data, timeout=None):
     """
     Faz uma requisição POST HTTP
     Retorna: (status_code, response_text) ou (None, None) se erro
@@ -208,7 +214,7 @@ def http_post(endpoint, data):
     try:
         # Cria socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(API_TIMEOUT)
+        sock.settimeout(timeout if timeout is not None else API_TIMEOUT)
         
         # Conecta ao servidor
         print(f"[HTTP] Conectando em {API_HOST}:{API_PORT}...")
@@ -315,6 +321,44 @@ def heartbeat():
         return False
 
 # ─── AUTENTICAÇÃO ──────────────────────────────────────────────────────────────
+
+def poll_command():
+    """
+    Mantem uma conexao HTTP aguardando comando de abertura.
+    O servidor responde imediatamente quando houver um unlock pendente.
+    """
+    print("[Command] Aguardando comando do servidor...")
+
+    data = {
+        "mac": DEVICE_MAC,
+        "wait": COMMAND_POLL_WAIT
+    }
+
+    status_code, response = http_post(
+        COMMAND_ENDPOINT,
+        data,
+        timeout=COMMAND_POLL_TIMEOUT
+    )
+
+    if status_code == 200:
+        try:
+            response_json = json.loads(response)
+            command = response_json.get("command")
+            if command in ("unlock", "open", "abrir"):
+                print("[Command] Comando de abertura recebido!")
+                blink_led_unlock()
+                acionamento_fechadura()
+                return True
+            print("[Command] Nenhum comando pendente")
+            return False
+        except Exception as e:
+            print(f"[Command] Erro ao parsear comando: {e}")
+            return False
+
+    if status_code is not None:
+        print(f"[Command] Falha ao buscar comando: HTTP {status_code}")
+    return False
+
 
 def authenticate_tag(tag="caronte", password=DEVICE_ID):
     """
@@ -433,7 +477,7 @@ def main():
     last_heartbeat = time.time()
     
     print("\n[Main] Sistema pronto para operação")
-    print("[Main] Aguardando entrada do botão A...\n")
+    print("[Main] Aguardando comandos do servidor...\n")
     
     # Loop principal
     while True:
@@ -444,7 +488,7 @@ def main():
                 heartbeat()
                 last_heartbeat = now
             
-            # Verifica botão
+            # Verifica botao local antes de aguardar o servidor
             check_button_a()
             if button_a.value() == 0:
                 # Aguarda soltura
@@ -454,8 +498,8 @@ def main():
                 
                 # Autenticação
                 authenticate_tag(tag="caronte_button", password="")
-            
-            time.sleep(0.1)
+
+            poll_command()
             
         except Exception as e:
             print(f"[Main] Erro no loop principal: {e}")
