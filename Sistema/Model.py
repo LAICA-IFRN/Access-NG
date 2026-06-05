@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import List, Optional
 import datetime
 
+import os
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import (
@@ -11,8 +12,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import sessionmaker
 
 
-DBName = "Acesso.db"
-engine = create_engine('sqlite:///' + DBName, connect_args={'check_same_thread': False}, echo=False)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DBPath = os.path.join(BASE_DIR, "Acesso.db")
+engine = create_engine('sqlite:///' + DBPath, connect_args={'check_same_thread': False}, echo=False)
 
 meta = MetaData()
 Base = declarative_base(metadata=meta)
