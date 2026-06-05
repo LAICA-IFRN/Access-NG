@@ -1,8 +1,9 @@
 from Tartaro import *
 from flask import (Flask, render_template, jsonify, request,
-                   session, redirect, url_for, flash)
+                   session, redirect, url_for, flash, abort)
 from flask_bootstrap import Bootstrap
 from functools import wraps
+from sqlalchemy import or_
 import datetime
 import threading
 import time
@@ -13,6 +14,74 @@ app.secret_key = os.environ.get('SECRET_KEY', 'tartaro-dev-key-change-in-prod')
 Bootstrap(app)
 
 OFFLINE_THRESHOLD = 30  # seconds without contact → device is offline
+
+
+def _serialize_payload():
+    """Retorna o payload da requisição para fins de log."""
+    payload = None
+    if request.method in ('POST', 'PUT', 'PATCH'):
+        try:
+            payload = request.get_json(silent=True)
+        except Exception:
+            payload = None
+    if payload is None:
+        if request.form:
+            payload = request.form.to_dict()
+        elif request.args:
+            payload = request.args.to_dict()
+    return payload
+
+
+def _create_log_entry(status_code=None, message=None):
+    payload = _serialize_payload()
+    mac = None
+    tag = None
+    if isinstance(payload, dict):
+        mac = payload.get('mac')
+        tag = payload.get('tag')
+    try:
+        log = AccessLog(
+            timestamp=datetime.datetime.utcnow(),
+            path=request.path,
+            method=request.method,
+            ip=request.remote_addr,
+            mac=mac,
+            tag=tag,
+            status_code=status_code,
+            payload=json.dumps(payload, default=str) if payload is not None else None,
+            message=(str(message)[:2000] if message is not None else None)
+        )
+        db.add(log)
+        db.commit()
+        return log
+    except Exception as e:
+        print(f"[Log] Falha ao criar log: {e}")
+        db.rollback()
+        return None
+
+
+@app.before_request
+def log_request():
+    if request.path.startswith('/static'):
+        return
+    log = _create_log_entry()
+    if log is not None:
+        request.api_log_id = log.id
+
+
+@app.after_request
+def log_response(response):
+    if hasattr(request, 'api_log_id'):
+        try:
+            log = db.query(AccessLog).get(request.api_log_id)
+            if log:
+                log.status_code = response.status_code
+                log.message = response.get_data(as_text=True)[:2000]
+                db.commit()
+        except Exception as e:
+            print(f"[Log] Falha ao atualizar log: {e}")
+            db.rollback()
+    return response
 
 
 # ── Auth decorators ──────────────────────────────────────────────────────────
@@ -56,7 +125,7 @@ def _touch_device(mac: str):
 def _offline_monitor():
     while True:
         time.sleep(15)
-        threshold = datetime.datetime.utcnow() - datetime.timedelta(seconds=OFFLINE_THRESHOLD)
+        threshold = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=OFFLINE_THRESHOLD)
         try:
             for model in (Cerberos, Caronte):
                 stale = db.query(model).filter(
@@ -72,6 +141,22 @@ def _offline_monitor():
 
 
 threading.Thread(target=_offline_monitor, daemon=True).start()
+
+
+def ensure_default_admin():
+    """Cria um usuário admin padrão se nenhum admin existir."""
+    try:
+        admin_count = db.query(Usuario).filter(Usuario.admin == True).count()
+    except Exception:
+        admin_count = 0
+    if admin_count == 0:
+        print('[Admin] Nenhum administrador encontrado. Criando usuário admin padrão.')
+        admin = Usuario(nome='Administrador', matricula='admin', pin='0000', admin=True)
+        db.add(admin)
+        db.commit()
+        print('[Admin] Usuário admin criado: matricula="admin", pin="0000"')
+
+ensure_default_admin()
 
 
 # ── Existing IoT endpoints (backward-compatible) ─────────────────────────────
@@ -287,6 +372,7 @@ def admin_index():
         'cerberoses': db.query(Cerberos).count(),
         'carontes': db.query(Caronte).count(),
         'usuarios': db.query(Usuario).count(),
+        'logs': db.query(AccessLog).count(),
     }
     return render_template('admin/index.html', stats=stats)
 
@@ -322,7 +408,9 @@ def admin_ambiente_novo():
 @app.route('/admin/ambientes/<int:id>/editar', methods=['GET', 'POST'])
 @admin_required
 def admin_ambiente_editar(id):
-    amb = db.query(Ambiente).filter(Ambiente.id == id).first_or_404()
+    amb = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if amb is None:
+        abort(404)
     if request.method == 'POST':
         f = request.form
         amb.nome = f['nome']
@@ -339,7 +427,9 @@ def admin_ambiente_editar(id):
 @app.route('/admin/ambientes/<int:id>/excluir', methods=['POST'])
 @admin_required
 def admin_ambiente_excluir(id):
-    amb = db.query(Ambiente).filter(Ambiente.id == id).first_or_404()
+    amb = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if amb is None:
+        abort(404)
     db.delete(amb)
     db.commit()
     flash('Ambiente removido.', 'success')
@@ -373,7 +463,9 @@ def admin_cerberos_novo():
 @app.route('/admin/cerberoses/<int:id>/editar', methods=['GET', 'POST'])
 @admin_required
 def admin_cerberos_editar(id):
-    c = db.query(Cerberos).filter(Cerberos.id == id).first_or_404()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
     ambientes = db.query(Ambiente).all()
     if request.method == 'POST':
         f = request.form
@@ -390,7 +482,9 @@ def admin_cerberos_editar(id):
 @app.route('/admin/cerberoses/<int:id>/excluir', methods=['POST'])
 @admin_required
 def admin_cerberos_excluir(id):
-    c = db.query(Cerberos).filter(Cerberos.id == id).first_or_404()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
     db.delete(c)
     db.commit()
     flash('Cerberos removido.', 'success')
@@ -423,7 +517,9 @@ def admin_caronte_novo():
 @app.route('/admin/carontes/<int:id>/editar', methods=['GET', 'POST'])
 @admin_required
 def admin_caronte_editar(id):
-    c = db.query(Caronte).filter(Caronte.id == id).first_or_404()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
     ambientes = db.query(Ambiente).all()
     if request.method == 'POST':
         f = request.form
@@ -439,7 +535,9 @@ def admin_caronte_editar(id):
 @app.route('/admin/carontes/<int:id>/excluir', methods=['POST'])
 @admin_required
 def admin_caronte_excluir(id):
-    c = db.query(Caronte).filter(Caronte.id == id).first_or_404()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
     db.delete(c)
     db.commit()
     flash('Caronte removido.', 'success')
@@ -447,6 +545,24 @@ def admin_caronte_excluir(id):
 
 
 # Usuários ───────────────────────────────────
+
+@app.route('/admin/logs')
+@admin_required
+def admin_logs():
+    search = request.args.get('search', '').strip()
+    query = db.query(AccessLog).order_by(AccessLog.timestamp.desc())
+    if search:
+        query = query.filter(or_(
+            AccessLog.path.contains(search),
+            AccessLog.ip.contains(search),
+            AccessLog.mac.contains(search),
+            AccessLog.tag.contains(search),
+            AccessLog.payload.contains(search),
+            AccessLog.message.contains(search),
+        ))
+    logs = query.limit(200).all()
+    return render_template('admin/logs.html', logs=logs, search=search)
+
 
 @app.route('/admin/usuarios')
 @admin_required
@@ -478,7 +594,9 @@ def admin_usuario_novo():
 @app.route('/admin/usuarios/<int:id>/editar', methods=['GET', 'POST'])
 @admin_required
 def admin_usuario_editar(id):
-    u = db.query(Usuario).filter(Usuario.id == id).first_or_404()
+    u = db.query(Usuario).filter(Usuario.id == id).first()
+    if u is None:
+        abort(404)
     ambientes = db.query(Ambiente).all()
     if request.method == 'POST':
         f = request.form
@@ -501,7 +619,9 @@ def admin_usuario_editar(id):
 @app.route('/admin/usuarios/<int:id>/excluir', methods=['POST'])
 @admin_required
 def admin_usuario_excluir(id):
-    u = db.query(Usuario).filter(Usuario.id == id).first_or_404()
+    u = db.query(Usuario).filter(Usuario.id == id).first()
+    if u is None:
+        abort(404)
     db.delete(u)
     db.commit()
     flash('Usuário removido.', 'success')

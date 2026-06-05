@@ -43,6 +43,8 @@
          href="{{ url_for('admin_carontes') }}">Carontes</a>
       <a class="nav-link {% if 'usuario' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_usuarios') }}">Usuários</a>
+      <a class="nav-link {% if 'logs' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_logs') }}">Logs</a>
       <hr style="border-color:#2d2d4e; margin:.5rem 0;">
       <a class="nav-link" href="{{ url_for('admin_logout') }}" style="color:#7e1e1e;">Sair</a>
     </nav>

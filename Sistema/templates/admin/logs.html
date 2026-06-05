@@ -1,0 +1,60 @@
+{% extends "admin/base.html" %}
+{% block title %}Logs da API{% endblock %}
+{% block content %}
+<h5 style="color:#c9a227; margin-bottom:1.5rem;">Logs da API</h5>
+<form method="GET" class="form-inline mb-3">
+  <div class="form-group mr-2" style="flex:1;">
+    <input name="search" class="form-control w-100" placeholder="Buscar por MAC, Tag, caminho, IP ou mensagem" value="{{ search }}">
+  </div>
+  <button type="submit" class="btn btn-gold">Filtrar</button>
+</form>
+{% if logs %}
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table mb-0">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Rota</th>
+            <th>Método</th>
+            <th>IP</th>
+            <th>MAC</th>
+            <th>Tag</th>
+            <th>Status</th>
+            <th>Payload</th>
+            <th>Resposta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in logs %}
+          <tr>
+            <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td>{{ log.path }}</td>
+            <td>{{ log.method }}</td>
+            <td>{{ log.ip or '-' }}</td>
+            <td>{{ log.mac or '-' }}</td>
+            <td>{{ log.tag or '-' }}</td>
+            <td>{{ log.status_code or '-' }}</td>
+            <td style="max-width:200px; white-space:pre-wrap; word-break:break-all;">{{ log.payload or '' }}</td>
+            <td style="max-width:200px;">
+              {% if log.message %}
+              <details style="white-space:pre-wrap; word-break:break-all;">
+                <summary style="cursor:pointer; color:#c9a227; font-weight:600;">+ Ver resposta</summary>
+                <div style="margin-top:.5rem; font-size:.85rem; color:#111;">{{ log.message }}</div>
+              </details>
+              {% else %}
+              –
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-info">Nenhum log encontrado.</div>
+{% endif %}
+{% endblock %}

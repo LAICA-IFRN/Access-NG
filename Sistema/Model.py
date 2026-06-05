@@ -112,6 +112,20 @@ class Caronte(Base):
         return False
 
 
+class AccessLog(Base):
+    __tablename__ = 'access_logs'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    path: Mapped[str] = mapped_column(String(200), nullable=False)
+    method: Mapped[str] = mapped_column(String(10), nullable=False)
+    ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    mac: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    payload: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    message: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+
+
 meta.create_all(engine)
 
 

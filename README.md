@@ -434,6 +434,28 @@ Acesso exige um usuário com `admin=True`.
 | `GET` | `/admin/logout` | Logout administrativo. |
 | `GET` | `/admin/` | Resumo com contagens de ambientes, Cerberoses, Carontes e usuários. |
 | `GET` | `/admin/ambientes` | Lista Tartaros. |
+
+> Se não houver um administrador cadastrado, o sistema agora cria um usuário padrão automaticamente na primeira execução:
+> - Matrícula: `admin`
+> - PIN: `0000`
+> Use essas credenciais para entrar em `/admin/login` e depois altere o PIN.
+
+## Log de acessos da API
+
+A API agora registra todos os acessos em uma nova tabela `access_logs` no banco `Acesso.db`. Cada entrada guarda:
+
+- `timestamp` — data e hora do acesso
+- `path` — rota acessada
+- `method` — método HTTP
+- `ip` — origem da requisição
+- `mac` — endereço MAC do dispositivo, se presente
+- `tag` — tag usada na tentativa, se presente
+- `status_code` — código HTTP retornado
+- `payload` — corpo da requisição
+- `message` — resposta ou mensagem retornada pela API
+
+Isso permite auditar verdadeiramente o que acontece na API, incluindo tentativas de dispositivos cadastrados ou não.
+
 | `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
 | `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro. |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
@@ -449,6 +471,7 @@ Acesso exige um usuário com `admin=True`.
 | `GET/POST` | `/admin/usuarios/novo` | Cria usuário e define ambientes permitidos. |
 | `GET/POST` | `/admin/usuarios/<id>/editar` | Edita usuário e permissões. |
 | `POST` | `/admin/usuarios/<id>/excluir` | Remove usuário. |
+| `GET` | `/admin/logs` | Visualiza logs de acesso à API e tentativas de dispositivos. |
 
 O formulário de Tartaro usa Leaflet/OpenStreetMap para selecionar latitude e
 longitude no mapa e configurar o raio de acesso do Caronte web.
