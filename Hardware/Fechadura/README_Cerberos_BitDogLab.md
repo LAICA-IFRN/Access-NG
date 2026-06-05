@@ -37,6 +37,21 @@ WIFI_PASS = "deviceiotifrn"
 
 Modifique no início do arquivo `Cerberos_BitDogLab.py` conforme sua rede.
 
+### Configuração via config.json
+
+Você também pode parametrizar a placa usando um arquivo `config.json` colocado no mesmo diretório do script (ou copiado para a placa). Um `config.json` de exemplo foi incluído e contém chaves como `WIFI_SSID`, `WIFI_PASS`, `API_HOST`, `API_PORT`, `DEVICE_ID` e pinos. O script `Cerberos_BitDogLab.py` carrega esse arquivo automaticamente, caindo em valores padrão quando o arquivo não existir.
+
+Exemplo de uso (já presente no template `config.json`):
+
+```json
+{
+  "WIFI_SSID": "wIFRN-IoT",
+  "WIFI_PASS": "deviceiotifrn",
+  "API_HOST": "laica.ifrn.edu.br",
+  "DEVICE_ID": "5"
+}
+```
+
 ### API
 
 ```python

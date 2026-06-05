@@ -12,29 +12,66 @@ import json
 import ubinascii
 import os
 
-# ─── CONFIGURAÇÃO ────────────────────────────────────────────────────────────
+# ─── CONFIGURAÇÃO (carregada de config.json quando disponível) ──────────────
+
+# Valores padrão (usados se config.json não estiver presente)
+_DEFAULTS = {
+    "WIFI_SSID": "wIFRN-IoT",
+    "WIFI_PASS": "deviceiotifrn",
+    "API_HOST": "laica.ifrn.edu.br",
+    "API_PORT": 80,
+    "API_TIMEOUT": 10,
+    "DEVICE_ID": "5",
+    "HEARTBEAT_INTERVAL": 30,
+    "BUTTON_DEBOUNCE": 50,
+    "BUTTON_A_PIN": 5,
+    "LED_RED_PIN": 13,
+    "LED_GREEN_PIN": 11,
+    "LED_BLUE_PIN": 12,
+    "COLDSTART_ENDPOINT": "/device/coldstart",
+    "HEARTBEAT_ENDPOINT": "/device/heartbeat",
+    "AUTH_ENDPOINT": "/caronte/autenticarTag",
+}
+
+# Tenta carregar arquivo config.json (opcional)
+config = {}
+try:
+    with open('config.json', 'r') as f:
+        try:
+            config = json.load(f)
+            print("[Config] Carregado config.json")
+        except Exception as e:
+            print(f"[Config] Erro ao parsear config.json: {e}")
+            config = {}
+except Exception:
+    # Arquivo ausente — usará valores padrão
+    config = {}
+
+# Função helper para obter valores com fallback
+def _cfg(key):
+    return config.get(key, _DEFAULTS.get(key))
 
 # WiFi
-WIFI_SSID = "wIFRN-IoT"
-WIFI_PASS = "deviceiotifrn"
+WIFI_SSID = _cfg('WIFI_SSID')
+WIFI_PASS = _cfg('WIFI_PASS')
 
 # API
-API_HOST = "laica.ifrn.edu.br"
-API_PORT = 80
-API_TIMEOUT = 10
+API_HOST = _cfg('API_HOST')
+API_PORT = int(_cfg('API_PORT'))
+API_TIMEOUT = int(_cfg('API_TIMEOUT'))
 
 # Identidade do dispositivo
-DEVICE_ID = "5"
+DEVICE_ID = str(_cfg('DEVICE_ID'))
 DEVICE_MAC = None  # Será obtido automaticamente
 
 # Endpoints da API
-COLDSTART_ENDPOINT = "/device/coldstart"
-HEARTBEAT_ENDPOINT = "/device/heartbeat"
-AUTH_ENDPOINT = "/caronte/autenticarTag"
+COLDSTART_ENDPOINT = _cfg('COLDSTART_ENDPOINT')
+HEARTBEAT_ENDPOINT = _cfg('HEARTBEAT_ENDPOINT')
+AUTH_ENDPOINT = _cfg('AUTH_ENDPOINT')
 
 # Timings
-HEARTBEAT_INTERVAL = 30  # segundos
-BUTTON_DEBOUNCE = 50     # milissegundos
+HEARTBEAT_INTERVAL = int(_cfg('HEARTBEAT_INTERVAL'))  # segundos
+BUTTON_DEBOUNCE = int(_cfg('BUTTON_DEBOUNCE'))     # milissegundos
 
 # ─── HARDWARE - GPIO PINS ────────────────────────────────────────────────────
 
