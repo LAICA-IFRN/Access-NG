@@ -17,15 +17,39 @@ class Tartaro():
     filaAcionamento = {}
 
     def autenticarTAG(self, tag: str, senha: str, mac: str):
+        return self.autenticarTAGDetalhado(tag=tag, senha=senha, mac=mac)['allow']
+
+    def autenticarTAGDetalhado(self, tag: str, senha: str, mac: str):
         caronte: Caronte = self.autenticarCaronte(senha, mac)
-        autenticado = caronte.receberTAG(TAG(numero=tag)) if caronte is not None else False
-        if autenticado:
+        result = {
+            'allow': False,
+            'caronte': caronte,
+            'ambiente': caronte.ambiente if caronte is not None else None,
+            'usuario': None,
+            'motivo': None,
+        }
+        if caronte is None:
+            result['motivo'] = 'Caronte nao encontrado ou chave invalida'
+            return result
+
+        for user in caronte.ambiente.frequentadores:
+            try:
+                if user.tag.numero == tag and user.tag.numero is not None:
+                    result['allow'] = True
+                    result['usuario'] = user
+                    break
+            except AttributeError:
+                continue
+
+        if result['allow']:
             for c in caronte.ambiente.cerberoses:
                 self.acionarCerberos(c.mac)
-        return autenticado
+        else:
+            result['motivo'] = 'Tag sem permissao para este ambiente'
+        return result
 
     def autenticarCaronte(self, chave: str, mac: str) -> Caronte:
-        return db.query(Caronte).filter(Caronte.mac == mac, Caronte.chave == chave).first()
+        return db.query(Caronte).filter(Caronte.mac.ilike(mac), Caronte.chave == chave).first()
 
     def acionarCerberos(self, mac: str):
         if mac not in self.filaAcionamento:

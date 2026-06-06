@@ -48,6 +48,7 @@ def _create_log_entry(status_code=None, message=None):
             ip=request.remote_addr,
             mac=mac,
             tag=tag,
+            event_type='api_request',
             status_code=status_code,
             payload=json.dumps(payload, default=str) if payload is not None else None,
             message=(str(message)[:2000] if message is not None else None)
@@ -57,6 +58,34 @@ def _create_log_entry(status_code=None, message=None):
         return log
     except Exception as e:
         print(f"[Log] Falha ao criar log: {e}")
+        db.rollback()
+        return None
+
+
+def _create_audit_log(event_type, result, message=None, mac=None, tag=None,
+                      ambiente=None, usuario=None, payload=None):
+    try:
+        log = AccessLog(
+            timestamp=datetime.datetime.utcnow(),
+            path=request.path,
+            method=request.method,
+            ip=request.remote_addr,
+            mac=mac,
+            tag=tag,
+            event_type=event_type,
+            result=result,
+            ambiente_id=ambiente.id if ambiente is not None else None,
+            ambiente_nome=ambiente.nome if ambiente is not None else None,
+            usuario_id=usuario.id if usuario is not None else None,
+            usuario_nome=usuario.nome if usuario is not None else None,
+            payload=json.dumps(payload, default=str) if payload is not None else None,
+            message=(str(message)[:2000] if message is not None else None)
+        )
+        db.add(log)
+        db.commit()
+        return log
+    except Exception as e:
+        print(f"[Audit] Falha ao criar log: {e}")
         db.rollback()
         return None
 
@@ -172,8 +201,18 @@ def hello():
 def autenticar():
     c = request.json
     _touch_device(c['mac'])
-    acionar = Tartaro().autenticarTAG(tag=c['tag'], senha=c['chave'], mac=c['mac'])
-    return jsonify({'Allow': acionar})
+    auth = Tartaro().autenticarTAGDetalhado(tag=c['tag'], senha=c['chave'], mac=c['mac'])
+    _create_audit_log(
+        event_type='tentativa_tag',
+        result='sucesso' if auth['allow'] else 'falha',
+        message=auth.get('motivo') or 'Acesso autorizado por tag',
+        mac=c.get('mac'),
+        tag=c.get('tag'),
+        ambiente=auth.get('ambiente'),
+        usuario=auth.get('usuario'),
+        payload={'tag': c.get('tag'), 'mac': c.get('mac')}
+    )
+    return jsonify({'Allow': auth['allow']})
 
 
 @app.route('/service/enviroments/enviroments/access/', methods=['POST'])
@@ -241,6 +280,13 @@ def device_command():
     wait = max(0, min(wait, 25))
 
     if Tartaro().verificarAcionamento(mac=cerberos.mac, timeout=wait):
+        _create_audit_log(
+            event_type='comando_abertura',
+            result='sucesso',
+            message='Comando de abertura entregue ao Cerberos',
+            mac=cerberos.mac,
+            ambiente=cerberos.ambiente
+        )
         return jsonify({'command': 'unlock'})
     return jsonify({'command': None})
 
@@ -290,8 +336,21 @@ def caronte_login_post():
         Usuario.pin == pin
     ).first()
     if not usuario:
+        _create_audit_log(
+            event_type='login_caronte',
+            result='falha',
+            message='Matricula ou PIN incorretos',
+            payload={'matricula': matricula}
+        )
         flash('Matrícula ou PIN incorretos.', 'danger')
         return redirect(url_for('caronte_login'))
+    _create_audit_log(
+        event_type='login_caronte',
+        result='sucesso',
+        message='Login no portal Caronte',
+        usuario=usuario,
+        payload={'matricula': matricula}
+    )
     session['user_id'] = usuario.id
     session['user_nome'] = usuario.nome
     return redirect(url_for('caronte_portal'))
@@ -331,11 +390,24 @@ def caronte_solicitar():
 
     usuario = db.query(Usuario).filter(Usuario.id == session['user_id']).first()
     if not usuario:
+        _create_audit_log(
+            event_type='tentativa_web',
+            result='falha',
+            message='Sessao invalida',
+            payload=content
+        )
         return jsonify({'error': 'sessão inválida'}), 401
 
     # Validate geolocation again server-side
     ambiente = db.query(Ambiente).filter(Ambiente.id == ambiente_id).first()
     if not ambiente:
+        _create_audit_log(
+            event_type='tentativa_web',
+            result='falha',
+            message='Ambiente nao encontrado',
+            usuario=usuario,
+            payload=content
+        )
         return jsonify({'allow': False, 'motivo': 'Ambiente não encontrado'}), 404
 
     if ambiente.latitude is not None and ambiente.longitude is not None:
@@ -343,6 +415,14 @@ def caronte_solicitar():
         raio = ambiente.raio_metros or 50
         dist = _distancia_metros(lat, lon, ambiente.latitude, ambiente.longitude)
         if dist > raio:
+            _create_audit_log(
+                event_type='tentativa_web',
+                result='falha',
+                message=f'Fora do raio ({dist:.0f}m > {raio}m)',
+                ambiente=ambiente,
+                usuario=usuario,
+                payload=content
+            )
             return jsonify({'allow': False, 'motivo': f'Fora do raio ({dist:.0f}m > {raio}m)'})
 
     ok = Tartaro().autenticarWeb(
@@ -351,12 +431,37 @@ def caronte_solicitar():
         ambiente_id=ambiente_id
     )
     if ok:
+        _create_audit_log(
+            event_type='tentativa_web',
+            result='sucesso',
+            message='Acesso autorizado pelo portal',
+            ambiente=ambiente,
+            usuario=usuario,
+            payload=content
+        )
         return jsonify({'allow': True})
+    _create_audit_log(
+        event_type='tentativa_web',
+        result='falha',
+        message='Sem permissao para este ambiente',
+        ambiente=ambiente,
+        usuario=usuario,
+        payload=content
+    )
     return jsonify({'allow': False, 'motivo': 'Sem permissão para este ambiente'})
 
 
 @app.route('/caronte/logout')
 def caronte_logout():
+    usuario = None
+    if session.get('user_id'):
+        usuario = db.query(Usuario).filter(Usuario.id == session.get('user_id')).first()
+    _create_audit_log(
+        event_type='logout_caronte',
+        result='sucesso',
+        message='Logout do portal Caronte',
+        usuario=usuario
+    )
     session.pop('user_id', None)
     session.pop('user_nome', None)
     return redirect(url_for('caronte_login'))
@@ -375,8 +480,21 @@ def admin_login():
             Usuario.admin == True
         ).first()
         if not usuario:
+            _create_audit_log(
+                event_type='login_admin',
+                result='falha',
+                message='Credenciais invalidas ou sem permissao de admin',
+                payload={'matricula': matricula}
+            )
             flash('Credenciais inválidas ou sem permissão de admin.', 'danger')
             return redirect(url_for('admin_login'))
+        _create_audit_log(
+            event_type='login_admin',
+            result='sucesso',
+            message='Login administrativo',
+            usuario=usuario,
+            payload={'matricula': matricula}
+        )
         session['admin_id'] = usuario.id
         return redirect(url_for('admin_index'))
     return render_template('admin/login.html')
@@ -384,6 +502,15 @@ def admin_login():
 
 @app.route('/admin/logout')
 def admin_logout():
+    usuario = None
+    if session.get('admin_id'):
+        usuario = db.query(Usuario).filter(Usuario.id == session.get('admin_id')).first()
+    _create_audit_log(
+        event_type='logout_admin',
+        result='sucesso',
+        message='Logout administrativo',
+        usuario=usuario
+    )
     session.pop('admin_id', None)
     return redirect(url_for('admin_login'))
 
@@ -510,6 +637,17 @@ def admin_cerberos_abrir(id):
     if c is None:
         abort(404)
     Tartaro().acionarCerberos(c.mac)
+    usuario = None
+    if session.get('admin_id'):
+        usuario = db.query(Usuario).filter(Usuario.id == session.get('admin_id')).first()
+    _create_audit_log(
+        event_type='comando_abertura',
+        result='sucesso',
+        message=f'Comando manual de abertura enviado para {c.nome}',
+        mac=c.mac,
+        ambiente=c.ambiente,
+        usuario=usuario
+    )
     flash(f'Comando de abertura enviado para {c.nome}.', 'success')
     return redirect(url_for('admin_cerberoses'))
 
@@ -585,20 +723,58 @@ def admin_caronte_excluir(id):
 @admin_required
 def admin_logs():
     search = request.args.get('search', '').strip()
-    query = _logs_query(search).order_by(AccessLog.timestamp.desc())
+    event_type = request.args.get('event_type', '').strip()
+    result = request.args.get('result', '').strip()
+    ambiente_id = request.args.get('ambiente_id', '').strip()
+    query = _logs_query(search, event_type, result, ambiente_id).order_by(AccessLog.timestamp.desc())
     total = query.count()
     logs = query.limit(200).all()
-    return render_template('admin/logs.html', logs=logs, search=search, total=total)
+    ambientes = db.query(Ambiente).order_by(Ambiente.nome).all()
+    event_types = [
+        ('', 'Todos os eventos'),
+        ('tentativa_tag', 'Tentativas por tag'),
+        ('tentativa_web', 'Tentativas pelo portal'),
+        ('comando_abertura', 'Comandos de abertura'),
+        ('login_admin', 'Login admin'),
+        ('logout_admin', 'Logout admin'),
+        ('login_caronte', 'Login Caronte'),
+        ('logout_caronte', 'Logout Caronte'),
+        ('api_request', 'Requisicoes da API'),
+    ]
+    return render_template(
+        'admin/logs.html',
+        logs=logs,
+        search=search,
+        event_type=event_type,
+        result=result,
+        ambiente_id=ambiente_id,
+        event_types=event_types,
+        ambientes=ambientes,
+        total=total
+    )
 
 
-def _logs_query(search=''):
+def _logs_query(search='', event_type='', result='', ambiente_id=''):
     query = db.query(AccessLog)
+    if event_type:
+        query = query.filter(AccessLog.event_type == event_type)
+    if result:
+        query = query.filter(AccessLog.result == result)
+    if ambiente_id:
+        try:
+            query = query.filter(AccessLog.ambiente_id == int(ambiente_id))
+        except (TypeError, ValueError):
+            pass
     if search:
         query = query.filter(or_(
             AccessLog.path.contains(search),
             AccessLog.ip.contains(search),
             AccessLog.mac.contains(search),
             AccessLog.tag.contains(search),
+            AccessLog.event_type.contains(search),
+            AccessLog.result.contains(search),
+            AccessLog.ambiente_nome.contains(search),
+            AccessLog.usuario_nome.contains(search),
             AccessLog.payload.contains(search),
             AccessLog.message.contains(search),
         ))
@@ -617,26 +793,38 @@ def admin_logs_excluir():
 
     if not ids:
         flash('Selecione ao menos um log para apagar.', 'warning')
-        return redirect(url_for('admin_logs', search=request.form.get('search', '').strip()))
+        return redirect(url_for(
+            'admin_logs',
+            search=request.form.get('search', '').strip(),
+            event_type=request.form.get('event_type', '').strip(),
+            result=request.form.get('result', '').strip(),
+            ambiente_id=request.form.get('ambiente_id', '').strip()
+        ))
 
     deleted = db.query(AccessLog).filter(AccessLog.id.in_(ids)).delete(synchronize_session=False)
     db.commit()
     flash(f'{deleted} log(s) apagado(s).', 'success')
-    return redirect(url_for('admin_logs', search=request.form.get('search', '').strip()))
+    return redirect(url_for(
+        'admin_logs',
+        search=request.form.get('search', '').strip(),
+        event_type=request.form.get('event_type', '').strip(),
+        result=request.form.get('result', '').strip(),
+        ambiente_id=request.form.get('ambiente_id', '').strip()
+    ))
 
 
 @app.route('/admin/logs/limpar', methods=['POST'])
 @admin_required
 def admin_logs_limpar():
     search = request.form.get('search', '').strip()
-    query = _logs_query(search)
+    event_type = request.form.get('event_type', '').strip()
+    result = request.form.get('result', '').strip()
+    ambiente_id = request.form.get('ambiente_id', '').strip()
+    query = _logs_query(search, event_type, result, ambiente_id)
     total = query.count()
     query.delete(synchronize_session=False)
     db.commit()
-    if search:
-        flash(f'{total} log(s) filtrado(s) apagado(s).', 'success')
-    else:
-        flash(f'{total} log(s) apagado(s).', 'success')
+    flash(f'{total} log(s) apagado(s).', 'success')
     return redirect(url_for('admin_logs'))
 
 

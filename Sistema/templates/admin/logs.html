@@ -1,37 +1,66 @@
 {% extends "admin/base.html" %}
-{% block title %}Logs da API{% endblock %}
+{% block title %}Auditoria{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h5 style="color:#c9a227; margin:0;">Logs da API</h5>
-    <small style="color:#888;">
-      {{ total }} registro(s){% if search %} para "{{ search }}"{% endif %}; exibindo ate 200.
-    </small>
+    <h5 style="color:#c9a227; margin:0;">Auditoria</h5>
+    <small style="color:#888;">{{ total }} registro(s); exibindo ate 200.</small>
   </div>
   <form method="POST" action="{{ url_for('admin_logs_limpar') }}"
-        onsubmit="return confirm('{% if search %}Apagar todos os logs filtrados?{% else %}Apagar todos os logs?{% endif %}')">
+        onsubmit="return confirm('Apagar todos os logs conforme os filtros atuais?')">
     <input type="hidden" name="search" value="{{ search }}">
-    <button class="btn btn-sm btn-outline-danger">
-      {% if search %}Apagar filtrados{% else %}Apagar todos{% endif %}
-    </button>
+    <input type="hidden" name="event_type" value="{{ event_type }}">
+    <input type="hidden" name="result" value="{{ result }}">
+    <input type="hidden" name="ambiente_id" value="{{ ambiente_id }}">
+    <button class="btn btn-sm btn-outline-danger">Apagar filtrados</button>
   </form>
 </div>
 
-<form method="GET" class="form-inline mb-3">
-  <div class="form-group mr-2" style="flex:1;">
-    <input name="search" class="form-control w-100" placeholder="Buscar por MAC, Tag, caminho, IP ou mensagem" value="{{ search }}">
+<form method="GET" class="mb-3">
+  <div class="form-row">
+    <div class="form-group col-md-3">
+      <input name="search" class="form-control" placeholder="Buscar por usuario, MAC, tag, rota ou mensagem" value="{{ search }}">
+    </div>
+    <div class="form-group col-md-3">
+      <select name="ambiente_id" class="form-control">
+        <option value="">Todos os Tartaros</option>
+        {% for ambiente in ambientes %}
+        <option value="{{ ambiente.id }}" {% if ambiente_id|string == ambiente.id|string %}selected{% endif %}>
+          {{ ambiente.nome }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group col-md-2">
+      <select name="result" class="form-control">
+        <option value="">Todos os resultados</option>
+        <option value="sucesso" {% if result == 'sucesso' %}selected{% endif %}>Sucesso</option>
+        <option value="falha" {% if result == 'falha' %}selected{% endif %}>Falha</option>
+      </select>
+    </div>
+    <div class="form-group col-md-2">
+      <select name="event_type" class="form-control">
+        {% for value, label in event_types %}
+        <option value="{{ value }}" {% if event_type == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group col-md-2 d-flex">
+      <button type="submit" class="btn btn-gold mr-2">Filtrar</button>
+      <a href="{{ url_for('admin_logs') }}" class="btn btn-outline-secondary">Limpar</a>
+    </div>
   </div>
-  <button type="submit" class="btn btn-gold mr-2">Filtrar</button>
-  {% if search %}
-  <a href="{{ url_for('admin_logs') }}" class="btn btn-outline-secondary">Limpar filtro</a>
-  {% endif %}
 </form>
 
 {% if logs %}
 <form method="POST" action="{{ url_for('admin_logs_excluir') }}"
       onsubmit="return confirm('Apagar os logs selecionados?')">
   <input type="hidden" name="search" value="{{ search }}">
-  <div class="d-flex justify-content-end mb-2">
+  <input type="hidden" name="event_type" value="{{ event_type }}">
+  <input type="hidden" name="result" value="{{ result }}">
+  <input type="hidden" name="ambiente_id" value="{{ ambiente_id }}">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <small style="color:#888;">Use os filtros para ver acessos por Tartaro, tentativas negadas e logins.</small>
     <button class="btn btn-sm btn-outline-danger">Apagar selecionados</button>
   </div>
   <div class="card">
@@ -40,18 +69,16 @@
         <table class="table mb-0">
           <thead>
             <tr>
-              <th style="width:36px;">
-                <input type="checkbox" id="select-all-logs" title="Selecionar todos">
-              </th>
-              <th>Timestamp</th>
-              <th>Rota</th>
-              <th>Metodo</th>
-              <th>IP</th>
+              <th style="width:36px;"><input type="checkbox" id="select-all-logs" title="Selecionar todos"></th>
+              <th>Data</th>
+              <th>Evento</th>
+              <th>Resultado</th>
+              <th>Tartaro</th>
+              <th>Usuario</th>
               <th>MAC</th>
               <th>Tag</th>
-              <th>Status</th>
-              <th>Payload</th>
-              <th>Resposta</th>
+              <th>Rota</th>
+              <th>Mensagem</th>
             </tr>
           </thead>
           <tbody>
@@ -59,18 +86,37 @@
             <tr>
               <td><input type="checkbox" name="log_ids" value="{{ log.id }}" class="log-check"></td>
               <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-              <td>{{ log.path }}</td>
-              <td>{{ log.method }}</td>
-              <td>{{ log.ip or '-' }}</td>
-              <td>{{ log.mac or '-' }}</td>
+              <td>{{ log.event_type or 'api_request' }}</td>
+              <td>
+                {% if log.result == 'sucesso' %}
+                <span class="badge badge-online">sucesso</span>
+                {% elif log.result == 'falha' %}
+                <span class="badge badge-offline">falha</span>
+                {% else %}
+                <span class="badge badge-unknown">-</span>
+                {% endif %}
+              </td>
+              <td>{{ log.ambiente_nome or '-' }}</td>
+              <td>{{ log.usuario_nome or '-' }}</td>
+              <td style="font-family:monospace; font-size:.8rem;">{{ log.mac or '-' }}</td>
               <td>{{ log.tag or '-' }}</td>
-              <td>{{ log.status_code or '-' }}</td>
-              <td style="max-width:200px; white-space:pre-wrap; word-break:break-all;">{{ log.payload or '' }}</td>
-              <td style="max-width:200px;">
+              <td>
+                <div>{{ log.method }} {{ log.path }}</div>
+                <small style="color:#888;">{{ log.status_code or '-' }} | {{ log.ip or '-' }}</small>
+              </td>
+              <td style="max-width:260px;">
                 {% if log.message %}
                 <details style="white-space:pre-wrap; word-break:break-all;">
-                  <summary style="cursor:pointer; color:#c9a227; font-weight:600;">+ Ver resposta</summary>
-                  <div style="margin-top:.5rem; font-size:.85rem; color:#111;">{{ log.message }}</div>
+                  <summary style="cursor:pointer; color:#c9a227; font-weight:600;">Ver detalhe</summary>
+                  <div style="margin-top:.5rem;">{{ log.message }}</div>
+                  {% if log.payload %}
+                  <div style="margin-top:.5rem; color:#888;">{{ log.payload }}</div>
+                  {% endif %}
+                </details>
+                {% elif log.payload %}
+                <details style="white-space:pre-wrap; word-break:break-all;">
+                  <summary style="cursor:pointer; color:#c9a227; font-weight:600;">Ver payload</summary>
+                  <div style="margin-top:.5rem; color:#888;">{{ log.payload }}</div>
                 </details>
                 {% else %}
                 -
