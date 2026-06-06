@@ -585,7 +585,14 @@ def admin_caronte_excluir(id):
 @admin_required
 def admin_logs():
     search = request.args.get('search', '').strip()
-    query = db.query(AccessLog).order_by(AccessLog.timestamp.desc())
+    query = _logs_query(search).order_by(AccessLog.timestamp.desc())
+    total = query.count()
+    logs = query.limit(200).all()
+    return render_template('admin/logs.html', logs=logs, search=search, total=total)
+
+
+def _logs_query(search=''):
+    query = db.query(AccessLog)
     if search:
         query = query.filter(or_(
             AccessLog.path.contains(search),
@@ -595,8 +602,42 @@ def admin_logs():
             AccessLog.payload.contains(search),
             AccessLog.message.contains(search),
         ))
-    logs = query.limit(200).all()
-    return render_template('admin/logs.html', logs=logs, search=search)
+    return query
+
+
+@app.route('/admin/logs/excluir', methods=['POST'])
+@admin_required
+def admin_logs_excluir():
+    ids = []
+    for raw_id in request.form.getlist('log_ids'):
+        try:
+            ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            pass
+
+    if not ids:
+        flash('Selecione ao menos um log para apagar.', 'warning')
+        return redirect(url_for('admin_logs', search=request.form.get('search', '').strip()))
+
+    deleted = db.query(AccessLog).filter(AccessLog.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    flash(f'{deleted} log(s) apagado(s).', 'success')
+    return redirect(url_for('admin_logs', search=request.form.get('search', '').strip()))
+
+
+@app.route('/admin/logs/limpar', methods=['POST'])
+@admin_required
+def admin_logs_limpar():
+    search = request.form.get('search', '').strip()
+    query = _logs_query(search)
+    total = query.count()
+    query.delete(synchronize_session=False)
+    db.commit()
+    if search:
+        flash(f'{total} log(s) filtrado(s) apagado(s).', 'success')
+    else:
+        flash(f'{total} log(s) apagado(s).', 'success')
+    return redirect(url_for('admin_logs'))
 
 
 @app.route('/admin/usuarios')

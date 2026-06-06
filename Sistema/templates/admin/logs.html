@@ -1,60 +1,103 @@
 {% extends "admin/base.html" %}
 {% block title %}Logs da API{% endblock %}
 {% block content %}
-<h5 style="color:#c9a227; margin-bottom:1.5rem;">Logs da API</h5>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 style="color:#c9a227; margin:0;">Logs da API</h5>
+    <small style="color:#888;">
+      {{ total }} registro(s){% if search %} para "{{ search }}"{% endif %}; exibindo ate 200.
+    </small>
+  </div>
+  <form method="POST" action="{{ url_for('admin_logs_limpar') }}"
+        onsubmit="return confirm('{% if search %}Apagar todos os logs filtrados?{% else %}Apagar todos os logs?{% endif %}')">
+    <input type="hidden" name="search" value="{{ search }}">
+    <button class="btn btn-sm btn-outline-danger">
+      {% if search %}Apagar filtrados{% else %}Apagar todos{% endif %}
+    </button>
+  </form>
+</div>
+
 <form method="GET" class="form-inline mb-3">
   <div class="form-group mr-2" style="flex:1;">
     <input name="search" class="form-control w-100" placeholder="Buscar por MAC, Tag, caminho, IP ou mensagem" value="{{ search }}">
   </div>
-  <button type="submit" class="btn btn-gold">Filtrar</button>
+  <button type="submit" class="btn btn-gold mr-2">Filtrar</button>
+  {% if search %}
+  <a href="{{ url_for('admin_logs') }}" class="btn btn-outline-secondary">Limpar filtro</a>
+  {% endif %}
 </form>
+
 {% if logs %}
-<div class="card">
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table mb-0">
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Rota</th>
-            <th>Método</th>
-            <th>IP</th>
-            <th>MAC</th>
-            <th>Tag</th>
-            <th>Status</th>
-            <th>Payload</th>
-            <th>Resposta</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for log in logs %}
-          <tr>
-            <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-            <td>{{ log.path }}</td>
-            <td>{{ log.method }}</td>
-            <td>{{ log.ip or '-' }}</td>
-            <td>{{ log.mac or '-' }}</td>
-            <td>{{ log.tag or '-' }}</td>
-            <td>{{ log.status_code or '-' }}</td>
-            <td style="max-width:200px; white-space:pre-wrap; word-break:break-all;">{{ log.payload or '' }}</td>
-            <td style="max-width:200px;">
-              {% if log.message %}
-              <details style="white-space:pre-wrap; word-break:break-all;">
-                <summary style="cursor:pointer; color:#c9a227; font-weight:600;">+ Ver resposta</summary>
-                <div style="margin-top:.5rem; font-size:.85rem; color:#111;">{{ log.message }}</div>
-              </details>
-              {% else %}
-              –
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+<form method="POST" action="{{ url_for('admin_logs_excluir') }}"
+      onsubmit="return confirm('Apagar os logs selecionados?')">
+  <input type="hidden" name="search" value="{{ search }}">
+  <div class="d-flex justify-content-end mb-2">
+    <button class="btn btn-sm btn-outline-danger">Apagar selecionados</button>
+  </div>
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table mb-0">
+          <thead>
+            <tr>
+              <th style="width:36px;">
+                <input type="checkbox" id="select-all-logs" title="Selecionar todos">
+              </th>
+              <th>Timestamp</th>
+              <th>Rota</th>
+              <th>Metodo</th>
+              <th>IP</th>
+              <th>MAC</th>
+              <th>Tag</th>
+              <th>Status</th>
+              <th>Payload</th>
+              <th>Resposta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for log in logs %}
+            <tr>
+              <td><input type="checkbox" name="log_ids" value="{{ log.id }}" class="log-check"></td>
+              <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+              <td>{{ log.path }}</td>
+              <td>{{ log.method }}</td>
+              <td>{{ log.ip or '-' }}</td>
+              <td>{{ log.mac or '-' }}</td>
+              <td>{{ log.tag or '-' }}</td>
+              <td>{{ log.status_code or '-' }}</td>
+              <td style="max-width:200px; white-space:pre-wrap; word-break:break-all;">{{ log.payload or '' }}</td>
+              <td style="max-width:200px;">
+                {% if log.message %}
+                <details style="white-space:pre-wrap; word-break:break-all;">
+                  <summary style="cursor:pointer; color:#c9a227; font-weight:600;">+ Ver resposta</summary>
+                  <div style="margin-top:.5rem; font-size:.85rem; color:#111;">{{ log.message }}</div>
+                </details>
+                {% else %}
+                -
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
-</div>
+</form>
 {% else %}
 <div class="alert alert-info">Nenhum log encontrado.</div>
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const selectAllLogs = document.getElementById('select-all-logs');
+  if (selectAllLogs) {
+    selectAllLogs.addEventListener('change', function () {
+      document.querySelectorAll('.log-check').forEach(function (checkbox) {
+        checkbox.checked = selectAllLogs.checked;
+      });
+    });
+  }
+</script>
 {% endblock %}
