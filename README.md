@@ -90,7 +90,8 @@ Crie um ambiente virtual e instale as dependências do Sistema:
 cd Sistema
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
 Para o Dashboard:
@@ -99,10 +100,12 @@ Para o Dashboard:
 cd Dashboard
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requeriments.txt
+python -m pip install --upgrade pip
+python -m pip install -r requeriments.txt
 ```
 
 Observação: o arquivo do Dashboard se chama `requeriments.txt` no repositório.
+No Windows, use `.venv\Scripts\activate` no lugar de `source .venv/bin/activate`.
 
 ## Execução
 
@@ -147,12 +150,12 @@ O banco é SQLite e é criado automaticamente pelo SQLAlchemy.
 Nome do arquivo:
 
 ```text
-Acesso.db
+Sistema/Acesso.db
 ```
 
-Importante: o caminho do banco é relativo ao diretório de execução do processo.
-Se você iniciar o servidor dentro de `Sistema/`, o arquivo será criado em
-`Sistema/Acesso.db`.
+O caminho é definido em `Sistema/Model.py` com base no diretório do próprio arquivo.
+Assim, o banco do Sistema fica em `Sistema/Acesso.db` mesmo quando o servidor é
+iniciado pela raiz do repositório.
 
 ### Migrações automáticas
 
@@ -312,6 +315,7 @@ Resposta:
 | --- | --- | --- |
 | `POST` | `/device/coldstart` | Dispositivo ligou. Registra `coldstart_at`, `last_seen` e `status=online`. |
 | `POST` | `/device/heartbeat` | Ping periódico. Atualiza `last_seen` e `status=online`. |
+| `POST` | `/device/command` | Cerberos consulta comando de abertura com espera curta configurável. |
 | `GET` | `/api/status` | Lista Tartaros, Cerberoses e Carontes com status. |
 
 Exemplo de coldstart:
@@ -344,6 +348,24 @@ Resposta:
 
 ```json
 {"received":"AA:BB:CC:DD:EE:FF"}
+```
+
+Exemplo de comando para Cerberos:
+
+```bash
+curl -X POST http://127.0.0.1:9001/device/command \
+  -H 'Content-Type: application/json' \
+  -d '{"mac":"AA:BB:CC:DD:EE:FF","wait":20}'
+```
+
+Respostas:
+
+```json
+{"command":"unlock"}
+```
+
+```json
+{"command":null}
 ```
 
 Exemplo de status:
@@ -434,34 +456,13 @@ Acesso exige um usuário com `admin=True`.
 | `GET` | `/admin/logout` | Logout administrativo. |
 | `GET` | `/admin/` | Resumo com contagens de ambientes, Cerberoses, Carontes e usuários. |
 | `GET` | `/admin/ambientes` | Lista Tartaros. |
-
-> Se não houver um administrador cadastrado, o sistema agora cria um usuário padrão automaticamente na primeira execução:
-> - Matrícula: `admin`
-> - PIN: `0000`
-> Use essas credenciais para entrar em `/admin/login` e depois altere o PIN.
-
-## Log de acessos da API
-
-A API agora registra todos os acessos em uma nova tabela `access_logs` no banco `Acesso.db`. Cada entrada guarda:
-
-- `timestamp` — data e hora do acesso
-- `path` — rota acessada
-- `method` — método HTTP
-- `ip` — origem da requisição
-- `mac` — endereço MAC do dispositivo, se presente
-- `tag` — tag usada na tentativa, se presente
-- `status_code` — código HTTP retornado
-- `payload` — corpo da requisição
-- `message` — resposta ou mensagem retornada pela API
-
-Isso permite auditar verdadeiramente o que acontece na API, incluindo tentativas de dispositivos cadastrados ou não.
-
 | `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
 | `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro. |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
 | `GET` | `/admin/cerberoses` | Lista Cerberoses. |
 | `GET/POST` | `/admin/cerberoses/novo` | Cria Cerberos. |
 | `GET/POST` | `/admin/cerberoses/<id>/editar` | Edita Cerberos. |
+| `POST` | `/admin/cerberoses/<id>/abrir` | Envia comando manual de abertura para o Cerberos. |
 | `POST` | `/admin/cerberoses/<id>/excluir` | Remove Cerberos. |
 | `GET` | `/admin/carontes` | Lista Carontes fixos. |
 | `GET/POST` | `/admin/carontes/novo` | Cria Caronte fixo. |
@@ -472,6 +473,34 @@ Isso permite auditar verdadeiramente o que acontece na API, incluindo tentativas
 | `GET/POST` | `/admin/usuarios/<id>/editar` | Edita usuário e permissões. |
 | `POST` | `/admin/usuarios/<id>/excluir` | Remove usuário. |
 | `GET` | `/admin/logs` | Visualiza logs de acesso à API e tentativas de dispositivos. |
+| `POST` | `/admin/logs/excluir` | Exclui logs selecionados. |
+| `POST` | `/admin/logs/limpar` | Limpa logs conforme filtros aplicados. |
+
+> Se não houver um administrador cadastrado, o sistema agora cria um usuário padrão automaticamente na primeira execução:
+> - Matrícula: `admin`
+> - PIN: `0000`
+> Use essas credenciais para entrar em `/admin/login` e depois altere o PIN.
+
+## Log de acessos da API
+
+A API registra todos os acessos em `access_logs`, no banco `Sistema/Acesso.db`. Cada entrada guarda:
+
+- `timestamp` — data e hora do acesso
+- `path` — rota acessada
+- `method` — método HTTP
+- `ip` — origem da requisição
+- `mac` — endereço MAC do dispositivo, se presente
+- `tag` — tag usada na tentativa, se presente
+- `event_type` — tipo do evento, como `api_request`, `login_admin` ou `comando_abertura`
+- `result` — resultado resumido do evento, como `sucesso` ou `negado`
+- `ambiente_id` e `ambiente_nome` — Tartaro relacionado, quando identificado
+- `usuario_id` e `usuario_nome` — usuário relacionado, quando identificado
+- `status_code` — código HTTP retornado
+- `payload` — corpo da requisição
+- `message` — resposta ou mensagem retornada pela API
+
+Isso permite auditar o que acontece na API, incluindo tentativas de dispositivos
+cadastrados ou não, logins administrativos, logouts e comandos manuais de abertura.
 
 O formulário de Tartaro usa Leaflet/OpenStreetMap para selecionar latitude e
 longitude no mapa e configurar o raio de acesso do Caronte web.
@@ -518,6 +547,20 @@ Regras:
 - Uma thread em background roda a cada 15 segundos.
 - Dispositivos `online` sem contato por mais de 30 segundos viram `offline`.
 - Dispositivos sem histórico aparecem como `unknown`.
+
+## GitHub Actions
+
+O workflow principal fica em `.github/workflows/python-app.yml` e roda a cada `push`.
+
+Ele possui duas verificações:
+
+- `build`: valida a instalação de várias versões de Python configuradas na matrix.
+- `install-dependencies`: instala `Sistema/requirements.txt` e `Dashboard/requeriments.txt`,
+  depois executa `python -m compileall Sistema Dashboard`.
+
+Não use `pip test`: esse comando não existe no `pip`. Se o projeto passar a ter
+testes automatizados com `pytest` ou `unittest`, adicione uma etapa específica para
+esse runner no workflow.
 
 ## Firmware
 
@@ -652,8 +695,8 @@ python Sistema/api.py
 
 ## Dicas de operação
 
-- Cadastre primeiro um usuário admin diretamente no banco ou por script, pois o
-  painel `/admin` exige login administrativo para acessar o CRUD.
+- Na primeira execução, se não houver administrador, o Sistema cria automaticamente
+  `matricula=admin` e `pin=0000`. Entre em `/admin/login` e altere esses dados.
 - Cadastre Tartaros com latitude, longitude e raio para habilitar o Caronte web.
 - Cadastre Cerberoses e Carontes com os mesmos MACs enviados pelo firmware.
 - Associe usuários aos Tartaros permitidos.
