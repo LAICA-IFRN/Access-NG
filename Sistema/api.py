@@ -33,6 +33,30 @@ def _serialize_payload():
     return payload
 
 
+def _current_session_usuario():
+    user_id = session.get('admin_id') or session.get('user_id')
+    if not user_id:
+        return None
+    try:
+        return db.query(Usuario).filter(Usuario.id == user_id).first()
+    except Exception:
+        db.rollback()
+        return None
+
+
+def _ambiente_from_mac(mac):
+    if not mac:
+        return None
+    try:
+        device = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
+        if device is None:
+            device = db.query(Caronte).filter(Caronte.mac.ilike(mac)).first()
+        return device.ambiente if device is not None else None
+    except Exception:
+        db.rollback()
+        return None
+
+
 def _create_log_entry(status_code=None, message=None):
     payload = _serialize_payload()
     mac = None
@@ -40,15 +64,21 @@ def _create_log_entry(status_code=None, message=None):
     if isinstance(payload, dict):
         mac = payload.get('mac')
         tag = payload.get('tag')
+    usuario = _current_session_usuario()
+    ambiente = _ambiente_from_mac(mac)
     try:
         log = AccessLog(
-            timestamp=datetime.datetime.utcnow(),
+            timestamp=datetime.datetime.now(datetime.UTC),
             path=request.path,
             method=request.method,
             ip=request.remote_addr,
             mac=mac,
             tag=tag,
             event_type='api_request',
+            ambiente_id=ambiente.id if ambiente is not None else None,
+            ambiente_nome=ambiente.nome if ambiente is not None else None,
+            usuario_id=usuario.id if usuario is not None else None,
+            usuario_nome=usuario.nome if usuario is not None else None,
             status_code=status_code,
             payload=json.dumps(payload, default=str) if payload is not None else None,
             message=(str(message)[:2000] if message is not None else None)
@@ -66,7 +96,7 @@ def _create_audit_log(event_type, result, message=None, mac=None, tag=None,
                       ambiente=None, usuario=None, payload=None):
     try:
         log = AccessLog(
-            timestamp=datetime.datetime.utcnow(),
+            timestamp=datetime.datetime.now(datetime.UTC),
             path=request.path,
             method=request.method,
             ip=request.remote_addr,
@@ -103,7 +133,7 @@ def log_request():
 def log_response(response):
     if hasattr(request, 'api_log_id'):
         try:
-            log = db.query(AccessLog).get(request.api_log_id)
+            log = db.get(AccessLog, request.api_log_id)
             if log:
                 log.status_code = response.status_code
                 log.message = response.get_data(as_text=True)[:2000]
@@ -115,6 +145,11 @@ def log_response(response):
 
 
 # ── Auth decorators ──────────────────────────────────────────────────────────
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db.remove()
+
 
 def admin_required(f):
     @wraps(f)
@@ -142,7 +177,7 @@ def caronte_required(f):
 # ── Device helpers ───────────────────────────────────────────────────────────
 
 def _touch_device(mac: str):
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.UTC)
     device = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
     if device is None:
         device = db.query(Caronte).filter(Caronte.mac.ilike(mac)).first()
@@ -168,6 +203,8 @@ def _offline_monitor():
             db.commit()
         except Exception:
             db.rollback()
+        finally:
+            db.remove()
 
 
 threading.Thread(target=_offline_monitor, daemon=True).start()

@@ -9,7 +9,7 @@ from sqlalchemy import (
     create_engine, MetaData, ForeignKey, Column, Integer, String,
     DateTime, Boolean, Float, Table, text
 )
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,8 +18,8 @@ engine = create_engine('sqlite:///' + DBPath, connect_args={'check_same_thread':
 
 meta = MetaData()
 Base = declarative_base(metadata=meta)
-Session = sessionmaker(bind=engine)
-db = Session()
+Session = scoped_session(sessionmaker(bind=engine))
+db = Session
 
 
 usuarios_ambientes = Table(
