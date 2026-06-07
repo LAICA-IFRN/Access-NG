@@ -20,17 +20,23 @@ class Tartaro():
         return self.autenticarTAGDetalhado(tag=tag, senha=senha, mac=mac)['allow']
 
     def autenticarTAGDetalhado(self, tag: str, senha: str, mac: str):
-        caronte: Caronte = self.autenticarCaronte(senha, mac)
+        caronte_by_mac = db.query(Caronte).filter(Caronte.mac.ilike(mac)).first()
         result = {
             'allow': False,
-            'caronte': caronte,
-            'ambiente': caronte.ambiente if caronte is not None else None,
+            'caronte': None,
+            'ambiente': None,
             'usuario': None,
             'motivo': None,
         }
-        if caronte is None:
-            result['motivo'] = 'Caronte nao encontrado ou chave invalida'
+        if caronte_by_mac is None:
+            result['motivo'] = f'Caronte nao cadastrado para o MAC {mac}'
             return result
+        if caronte_by_mac.chave != senha:
+            result['motivo'] = f'Chave invalida para o Caronte {mac}'
+            return result
+        caronte = caronte_by_mac
+        result['caronte'] = caronte
+        result['ambiente'] = caronte.ambiente
 
         for user in caronte.ambiente.frequentadores:
             try:

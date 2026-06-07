@@ -199,12 +199,14 @@ def caronte_required(f):
 
 def _touch_device(mac: str):
     now = datetime.datetime.now(datetime.UTC)
-    device = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
-    if device is None:
-        device = db.query(Caronte).filter(Caronte.mac.ilike(mac)).first()
-    if device:
-        device.last_seen = now
-        device.status = 'online'
+    updated = False
+    for model in (Cerberos, Caronte):
+        device = db.query(model).filter(model.mac.ilike(mac)).first()
+        if device:
+            device.last_seen = now
+            device.status = 'online'
+            updated = True
+    if updated:
         db.commit()
 
 

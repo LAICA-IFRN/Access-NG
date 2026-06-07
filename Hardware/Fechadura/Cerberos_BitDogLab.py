@@ -224,6 +224,9 @@ def caronte_button():
             if allow:
                 print("[Caronte] Acesso autorizado!")
                 unlock_door()
+                # Drena o comando que o servidor enfileirou para este Cerberos
+                # evitando abertura dupla no próximo poll.
+                http_post('/device/command', {'mac': DEVICE_MAC, 'wait': 0}, timeout=3)
                 return
         except Exception:
             pass
