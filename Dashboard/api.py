@@ -3,12 +3,10 @@ from flask_bootstrap import Bootstrap
 from werkzeug.middleware.proxy_fix import ProxyFix
 import json
 import requests
-import statistics
 import datetime
-import pandas
 import io
 import base64
-from Tartaro import *
+import time
 
 app = Flask(__name__, template_folder="templates")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -19,17 +17,26 @@ SISTEMA_URL = "http://127.0.0.1:9001"
 
 @app.route('/')
 def hello():
+    return render_template("index.html")
+
+
+@app.route('/api/dashboard')
+def proxy_dashboard():
+    t0 = time.time()
     try:
-        resp = requests.get(f"{SISTEMA_URL}/api/status", timeout=3)
-        tartaros = resp.json()
+        resp = requests.get(f"{SISTEMA_URL}/api/dashboard", timeout=5)
+        data = resp.json()
+        data['response_ms'] = round((time.time() - t0) * 1000)
+        return jsonify(data)
     except Exception:
-        tartaros = []
-    return render_template("index.html", tartaros=tartaros)
+        return jsonify({'error': 'Sistema offline', 'response_ms': None,
+                        'devices': {'total': 0, 'online': 0, 'offline': 0, 'unknown': 0},
+                        'accesses': {'today': 0, 'sucesso': 0, 'falha': 0, 'last_at': None},
+                        'tartaros': [], 'recent_events': [], 'device_events': []})
 
 
 @app.route('/api/status')
 def proxy_status():
-    """Proxies /api/status from Sistema so the frontend can poll it."""
     try:
         resp = requests.get(f"{SISTEMA_URL}/api/status", timeout=3)
         return jsonify(resp.json())

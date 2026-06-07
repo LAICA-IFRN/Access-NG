@@ -1,169 +1,396 @@
-{% extends "base.html" %}
-{% block title %}Tartaro — Dashboard{% endblock %}
-{% block content %}
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <title>Tartaro — Dashboard</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #0d0d1a; color: #e0e0e0; font-size: 14px; }
 
-<style>
-  body { background: #0d0d1a; color: #e0e0e0; }
-  .navbar-tartaro { background: #1a1a2e; border-bottom: 1px solid #2d2d4e; }
-  .navbar-brand { color: #c9a227 !important; font-weight: bold; letter-spacing: 2px; font-size: 1.3rem; }
-  .tartaro-card {
-    background: #1a1a2e;
-    border: 1px solid #2d2d4e;
-    border-radius: 8px;
-    margin-bottom: 1.5rem;
-  }
-  .tartaro-card .card-header {
-    background: #12122a;
-    border-bottom: 1px solid #2d2d4e;
-    color: #c9a227;
-    font-size: 1.1rem;
-    font-weight: 600;
-  }
-  .tartaro-card .card-header small { color: #888; font-weight: normal; font-size: 0.8rem; }
-  .device-row { padding: 0.6rem 0; border-bottom: 1px solid #22223a; }
-  .device-row:last-child { border-bottom: none; }
-  .badge-online  { background: #1e7e34; color: #fff; }
-  .badge-offline { background: #7e1e1e; color: #fff; }
-  .badge-unknown { background: #444; color: #ccc; }
-  .device-type-label { font-size: 0.7rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
-  .device-mac { font-family: monospace; font-size: 0.9rem; color: #aaa; }
-  .device-meta { font-size: 0.75rem; color: #666; }
-  .section-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: #555; margin: 0.5rem 0 0.25rem; }
-  .no-devices { color: #555; font-size: 0.85rem; font-style: italic; }
-  #last-updated { font-size: 0.75rem; color: #555; }
-</style>
+    /* ── Topbar ── */
+    .topbar {
+      background: #12122a; border-bottom: 1px solid #2d2d4e;
+      padding: .6rem 1.25rem; display: flex; align-items: center; justify-content: space-between;
+    }
+    .topbar .brand { color: #c9a227; font-weight: bold; letter-spacing: 2px; font-size: 1.1rem; }
+    .topbar .meta  { font-size: .75rem; color: #555; }
+    .topbar .meta span { margin-left: .75rem; }
+    .dot-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+                background: #1e7e34; animation: blink 2s infinite; margin-right: 4px; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-<nav class="navbar navbar-tartaro mb-4">
-  <span class="navbar-brand">&#9760; TARTARO</span>
-  <span id="last-updated" class="ml-auto">Atualizando...</span>
-</nav>
+    /* ── Stats cards ── */
+    .stats-row { padding: 1rem 1.25rem .5rem; display: flex; gap: .75rem; flex-wrap: wrap; }
+    .stat-card {
+      background: #1a1a2e; border: 1px solid #2d2d4e; border-radius: 10px;
+      padding: .75rem 1.1rem; flex: 1; min-width: 140px;
+    }
+    .stat-label { font-size: .7rem; text-transform: uppercase; letter-spacing: 1px; color: #555; margin-bottom: .2rem; }
+    .stat-value { font-size: 1.8rem; font-weight: bold; line-height: 1; }
+    .stat-sub   { font-size: .72rem; color: #666; margin-top: .2rem; }
+    .stat-online  { color: #2ecc71; }
+    .stat-offline { color: #e74c3c; }
+    .stat-access  { color: #c9a227; }
+    .stat-ms      { color: #5dade2; }
+    .stat-ms.slow { color: #e74c3c; }
 
-<div class="container-fluid px-4">
+    /* ── Main layout ── */
+    .main-grid { display: grid; grid-template-columns: 1fr 340px; gap: .75rem;
+                 padding: .5rem 1.25rem 1.25rem; }
+    @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
 
-  {% if not tartaros %}
-  <div class="text-center mt-5" style="color:#555;">
-    <h4>Nenhum Tartaro cadastrado</h4>
-    <p>Adicione Ambientes e dispositivos no Sistema.</p>
+    /* ── Ambiente cards ── */
+    .amb-card {
+      background: #1a1a2e; border: 1px solid #2d2d4e; border-radius: 10px;
+      margin-bottom: .75rem; overflow: hidden;
+    }
+    .amb-header {
+      background: #12122a; padding: .55rem .9rem;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .amb-nome  { color: #c9a227; font-weight: 600; font-size: .9rem; }
+    .amb-local { color: #555; font-size: .75rem; }
+    .amb-counters { font-size: .72rem; color: #444; }
+
+    .device-row {
+      display: flex; align-items: center; gap: .65rem;
+      padding: .5rem .9rem; border-bottom: 1px solid #111127;
+    }
+    .device-row:last-child { border-bottom: none; }
+
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.online  { background: #2ecc71; box-shadow: 0 0 5px #2ecc7180; }
+    .status-dot.offline { background: #e74c3c; }
+    .status-dot.unknown { background: #555; }
+
+    .device-info { flex: 1; min-width: 0; }
+    .device-name { font-weight: 600; font-size: .85rem;
+                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .device-mac  { font-family: monospace; font-size: .75rem; color: #555; }
+    .device-time { font-size: .72rem; color: #555; text-align: right; white-space: nowrap; }
+
+    .section-sep { font-size: .65rem; text-transform: uppercase; letter-spacing: 1px;
+                   color: #333; padding: .3rem .9rem .1rem; }
+    .empty-amb { padding: .6rem .9rem; color: #444; font-size: .8rem; font-style: italic; }
+
+    /* ── Right panel ── */
+    .panel-card {
+      background: #1a1a2e; border: 1px solid #2d2d4e; border-radius: 10px;
+      overflow: hidden; margin-bottom: .75rem;
+    }
+    .panel-header {
+      background: #12122a; padding: .5rem .9rem;
+      font-size: .75rem; text-transform: uppercase; letter-spacing: 1px; color: #666;
+      border-bottom: 1px solid #2d2d4e;
+    }
+    .event-row {
+      padding: .45rem .9rem; border-bottom: 1px solid #111127;
+      display: flex; align-items: flex-start; gap: .5rem;
+    }
+    .event-row:last-child { border-bottom: none; }
+
+    .ev-time  { font-size: .7rem; color: #555; white-space: nowrap; min-width: 38px; padding-top: 2px; }
+    .ev-body  { flex: 1; min-width: 0; }
+    .ev-who   { font-size: .82rem; font-weight: 600;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ev-where { font-size: .72rem; color: #666; }
+
+    .badge-ok  { background: #1e4d2b; color: #2ecc71; border: 1px solid #2a6b3a;
+                 padding: 1px 7px; border-radius: 10px; font-size: .68rem; white-space: nowrap; flex-shrink: 0; }
+    .badge-no  { background: #4d1e1e; color: #e74c3c; border: 1px solid #6b2a2a;
+                 padding: 1px 7px; border-radius: 10px; font-size: .68rem; white-space: nowrap; flex-shrink: 0; }
+    .badge-dev-on  { background: #1e3a4d; color: #5dade2; border: 1px solid #2a5b6b;
+                     padding: 1px 7px; border-radius: 10px; font-size: .68rem; flex-shrink: 0; }
+    .badge-dev-off { background: #2e1e1e; color: #888; border: 1px solid #4a2a2a;
+                     padding: 1px 7px; border-radius: 10px; font-size: .68rem; flex-shrink: 0; }
+
+    .no-events { padding: .8rem .9rem; color: #444; font-size: .8rem; font-style: italic; }
+
+    .sistema-error {
+      margin: 2rem auto; max-width: 420px; text-align: center;
+      background: #1a1218; border: 1px solid #7e1e1e; border-radius: 10px; padding: 2rem;
+      color: #c88;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <span class="brand">&#9760; TARTARO</span>
+  <span class="meta">
+    <span><span class="dot-live"></span>Ao vivo</span>
+    <span id="meta-devices">—</span>
+    <span id="meta-updated">Atualizando...</span>
+  </span>
+</div>
+
+<!-- Stats cards -->
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-label">Online</div>
+    <div class="stat-value stat-online" id="stat-online">—</div>
+    <div class="stat-sub" id="stat-online-sub">de — dispositivos</div>
   </div>
-  {% endif %}
+  <div class="stat-card">
+    <div class="stat-label">Offline</div>
+    <div class="stat-value stat-offline" id="stat-offline">—</div>
+    <div class="stat-sub" id="stat-offline-sub">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Acessos hoje</div>
+    <div class="stat-value stat-access" id="stat-accesses">—</div>
+    <div class="stat-sub" id="stat-accesses-sub">— autorizado · — negado</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Último acesso</div>
+    <div class="stat-value stat-access" style="font-size:1.1rem;padding-top:.35rem;" id="stat-last-access">—</div>
+    <div class="stat-sub" id="stat-last-access-sub">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Resposta API</div>
+    <div class="stat-value stat-ms" id="stat-ms">—</div>
+    <div class="stat-sub">ms</div>
+  </div>
+</div>
 
-  <div id="dashboard-root">
-    {% for t in tartaros %}
-    <div class="tartaro-card" id="tartaro-{{ t.id }}">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <span>{{ t.nome }} <small>/ {{ t.local }}</small></span>
-        <small>{{ t.cerberoses|length }} Cerberus &nbsp;|&nbsp; {{ t.carontes|length }} Caronte</small>
-      </div>
-      <div class="card-body py-2">
+<!-- Main grid -->
+<div class="main-grid">
 
-        {% if t.cerberoses %}
-        <div class="section-title">Cerberoses</div>
-        {% for c in t.cerberoses %}
-        <div class="device-row d-flex align-items-center" id="cerberos-{{ c.id }}">
-          <div class="mr-3">
-            <span class="badge badge-{{ c.status }} px-2 py-1">{{ c.status }}</span>
-          </div>
-          <div class="flex-grow-1">
-            <div><strong>{{ c.nome }}</strong> <span class="device-mac ml-2">{{ c.mac }}</span></div>
-            <div class="device-meta">
-              {% if c.last_seen %}
-                Visto: <span class="last-seen" data-ts="{{ c.last_seen }}">{{ c.last_seen }}</span>
-              {% else %}
-                Nunca visto
-              {% endif %}
-              {% if c.coldstart_at %}
-                &nbsp;·&nbsp; Boot: {{ c.coldstart_at }}
-              {% endif %}
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-        {% else %}
-        <div class="no-devices mt-1">Sem Cerberoses cadastrados</div>
-        {% endif %}
+  <!-- Left: device grid -->
+  <div id="device-grid">
+    <div style="color:#555; padding:1rem;">Carregando dispositivos...</div>
+  </div>
 
-        {% if t.carontes %}
-        <div class="section-title mt-3">Carontes</div>
-        {% for c in t.carontes %}
-        <div class="device-row d-flex align-items-center" id="caronte-{{ c.id }}">
-          <div class="mr-3">
-            <span class="badge badge-{{ c.status }} px-2 py-1">{{ c.status }}</span>
-          </div>
-          <div class="flex-grow-1">
-            <div class="device-type-label">caronte</div>
-            <div class="device-mac">{{ c.mac }}</div>
-            <div class="device-meta">
-              {% if c.last_seen %}
-                Visto: <span class="last-seen" data-ts="{{ c.last_seen }}">{{ c.last_seen }}</span>
-              {% else %}
-                Nunca visto
-              {% endif %}
-              {% if c.coldstart_at %}
-                &nbsp;·&nbsp; Boot: {{ c.coldstart_at }}
-              {% endif %}
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-        {% else %}
-        <div class="no-devices mt-1">Sem Carontes cadastrados</div>
-        {% endif %}
-
+  <!-- Right: events panel -->
+  <div>
+    <div class="panel-card">
+      <div class="panel-header">Últimos Acessos</div>
+      <div id="events-list">
+        <div class="no-events">Aguardando eventos...</div>
       </div>
     </div>
-    {% endfor %}
+    <div class="panel-card">
+      <div class="panel-header">Eventos de Dispositivo</div>
+      <div id="device-events-list">
+        <div class="no-events">Aguardando eventos...</div>
+      </div>
+    </div>
   </div>
 
 </div>
 
 <script>
-  function statusBadgeClass(status) {
-    if (status === 'online')  return 'badge badge-online px-2 py-1';
-    if (status === 'offline') return 'badge badge-offline px-2 py-1';
-    return 'badge badge-unknown px-2 py-1';
-  }
+  var _lastData = null;
 
-  function relativeTime(isoStr) {
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  function relTime(isoStr) {
     if (!isoStr) return 'nunca';
-    const diff = Math.floor((Date.now() - new Date(isoStr + 'Z')) / 1000);
-    if (diff < 5)   return 'agora';
-    if (diff < 60)  return diff + 's atrás';
-    if (diff < 3600) return Math.floor(diff / 60) + 'min atrás';
-    return Math.floor(diff / 3600) + 'h atrás';
+    var diff = Math.floor((Date.now() - new Date(isoStr + 'Z')) / 1000);
+    if (diff < 5)     return 'agora';
+    if (diff < 60)    return diff + 's';
+    if (diff < 3600)  return Math.floor(diff / 60) + 'min';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+    return Math.floor(diff / 86400) + 'd';
   }
 
-  function renderDevice(device, type) {
-    const el = document.getElementById(type + '-' + device.id);
-    if (!el) return;
-    el.querySelector('.badge').className = statusBadgeClass(device.status);
-    el.querySelector('.badge').textContent = device.status;
-    const lsEl = el.querySelector('.last-seen');
-    if (lsEl) lsEl.textContent = relativeTime(device.last_seen);
+  function fmtTime(isoStr) {
+    if (!isoStr) return '—';
+    return new Date(isoStr + 'Z').toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
   }
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Stats ────────────────────────────────────────────────────────────────────
+
+  function updateStats(data) {
+    var d = data.devices  || {};
+    var a = data.accesses || {};
+    var ms = data.response_ms;
+
+    document.getElementById('stat-online').textContent = d.online != null ? d.online : '—';
+    document.getElementById('stat-online-sub').textContent = 'de ' + (d.total || 0) + ' dispositivos';
+
+    document.getElementById('stat-offline').textContent = d.offline != null ? d.offline : '—';
+    var unk = d.unknown || 0;
+    document.getElementById('stat-offline-sub').textContent =
+      unk > 0 ? unk + ' desconhecido(s)' : (d.offline === 0 ? 'tudo operacional' : '—');
+
+    document.getElementById('stat-accesses').textContent = a.today != null ? a.today : '—';
+    document.getElementById('stat-accesses-sub').textContent =
+      (a.sucesso || 0) + ' autorizado · ' + (a.falha || 0) + ' negado';
+
+    if (a.last_at) {
+      document.getElementById('stat-last-access').textContent = fmtTime(a.last_at);
+      document.getElementById('stat-last-access-sub').textContent = relTime(a.last_at) + ' atrás';
+    } else {
+      document.getElementById('stat-last-access').textContent = '—';
+      document.getElementById('stat-last-access-sub').textContent = 'nenhum registrado';
+    }
+
+    var msEl = document.getElementById('stat-ms');
+    if (ms != null) {
+      msEl.textContent = ms;
+      msEl.className = 'stat-value stat-ms' + (ms > 500 ? ' slow' : '');
+    }
+
+    document.getElementById('meta-devices').textContent =
+      (d.online || 0) + ' online · ' + (d.offline || 0) + ' offline';
+    document.getElementById('meta-updated').textContent =
+      'Atualizado ' + new Date().toLocaleTimeString('pt-BR');
+  }
+
+  // ── Device grid ──────────────────────────────────────────────────────────────
+
+  function deviceRow(device, type) {
+    var s    = device.status || 'unknown';
+    var name = type === 'cerberos' ? esc(device.nome || device.mac) : '';
+    var mac  = esc(device.mac || '—');
+    var t    = relTime(device.last_seen);
+    var boot = device.coldstart_at
+      ? '<div class="device-mac">boot ' + relTime(device.coldstart_at) + ' atrás</div>'
+      : '';
+    return '<div class="device-row">'
+      + '<div class="status-dot ' + s + '"></div>'
+      + '<div class="device-info">'
+      + (name ? '<div class="device-name">' + name + '</div>' : '')
+      + '<div class="device-mac">' + mac + '</div>'
+      + boot
+      + '</div>'
+      + '<div class="device-time">' + t + '</div>'
+      + '</div>';
+  }
+
+  function renderDevices(tartaros) {
+    var el = document.getElementById('device-grid');
+    if (!tartaros || !tartaros.length) {
+      el.innerHTML = '<div style="color:#555;padding:1rem;">Nenhum Tartaro cadastrado.</div>';
+      return;
+    }
+    var html = '';
+    tartaros.forEach(function(t) {
+      html += '<div class="amb-card">'
+        + '<div class="amb-header">'
+        + '<span><span class="amb-nome">' + esc(t.nome) + '</span>'
+        + ' <span class="amb-local">/ ' + esc(t.local) + '</span></span>'
+        + '<span class="amb-counters">'
+        + t.cerberoses.length + ' cerberos · ' + t.carontes.length + ' caronte'
+        + '</span></div>';
+
+      if (t.cerberoses.length) {
+        html += '<div class="section-sep">Cerberoses</div>';
+        t.cerberoses.forEach(function(c) { html += deviceRow(c, 'cerberos'); });
+      }
+      if (t.carontes.length) {
+        html += '<div class="section-sep">Carontes</div>';
+        t.carontes.forEach(function(c) { html += deviceRow(c, 'caronte'); });
+      }
+      if (!t.cerberoses.length && !t.carontes.length) {
+        html += '<div class="empty-amb">Nenhum dispositivo cadastrado.</div>';
+      }
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  }
+
+  // ── Events feed ──────────────────────────────────────────────────────────────
+
+  var EV_TYPE = {
+    'tentativa_web'   : 'Portal web',
+    'tentativa_tag'   : 'Tag RFID',
+    'comando_abertura': 'Abertura manual',
+  };
+
+  function renderEvents(events) {
+    var el = document.getElementById('events-list');
+    if (!events || !events.length) {
+      el.innerHTML = '<div class="no-events">Nenhum evento registrado.</div>';
+      return;
+    }
+    var html = '';
+    events.forEach(function(e) {
+      var who   = esc(e.usuario_nome || e.tag || e.mac || EV_TYPE[e.event_type] || e.event_type);
+      var where = esc(e.ambiente_nome || '—');
+      var badge = e.result === 'sucesso'
+        ? '<span class="badge-ok">autorizado</span>'
+        : '<span class="badge-no">negado</span>';
+      html += '<div class="event-row">'
+        + '<div class="ev-time">' + fmtTime(e.timestamp) + '</div>'
+        + '<div class="ev-body">'
+        + '<div class="ev-who">' + who + '</div>'
+        + '<div class="ev-where">' + where + '</div>'
+        + '</div>' + badge + '</div>';
+    });
+    el.innerHTML = html;
+  }
+
+  function renderDeviceEvents(events) {
+    var el = document.getElementById('device-events-list');
+    if (!events || !events.length) {
+      el.innerHTML = '<div class="no-events">Nenhum evento registrado.</div>';
+      return;
+    }
+    var html = '';
+    events.forEach(function(e) {
+      var isOn  = e.event_type === 'device_coldstart';
+      var badge = isOn
+        ? '<span class="badge-dev-on">online</span>'
+        : '<span class="badge-dev-off">offline</span>';
+      html += '<div class="event-row">'
+        + '<div class="ev-time">' + fmtTime(e.timestamp) + '</div>'
+        + '<div class="ev-body">'
+        + '<div class="ev-who" style="font-family:monospace;font-size:.78rem;">'
+        + esc(e.mac || '—') + '</div>'
+        + '<div class="ev-where">' + esc(e.ambiente_nome || '—') + '</div>'
+        + '</div>' + badge + '</div>';
+    });
+    el.innerHTML = html;
+  }
+
+  // ── Relative time refresh (no re-fetch) ──────────────────────────────────────
+
+  function refreshTimes() {
+    if (!_lastData) return;
+    renderDevices(_lastData.tartaros);
+    if (_lastData.accesses && _lastData.accesses.last_at) {
+      document.getElementById('stat-last-access-sub').textContent =
+        relTime(_lastData.accesses.last_at) + ' atrás';
+    }
+  }
+
+  // ── Poll ─────────────────────────────────────────────────────────────────────
 
   function poll() {
-    fetch('/api/status')
-      .then(r => r.json())
-      .then(tartaros => {
-        tartaros.forEach(t => {
-          (t.cerberoses || []).forEach(c => renderDevice(c, 'cerberos'));
-          (t.carontes   || []).forEach(c => renderDevice(c, 'caronte'));
-        });
-        document.getElementById('last-updated').textContent =
-          'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
+    fetch('/api/dashboard')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        _lastData = data;
+        if (data.error && !data.tartaros.length) {
+          document.getElementById('device-grid').innerHTML =
+            '<div class="sistema-error"><strong>Sistema offline</strong><br>'
+            + '<small>' + esc(data.error) + '</small></div>';
+          document.getElementById('meta-updated').textContent = 'Sem conexão com Sistema';
+          return;
+        }
+        updateStats(data);
+        renderDevices(data.tartaros);
+        renderEvents(data.recent_events);
+        renderDeviceEvents(data.device_events);
       })
-      .catch(() => {
-        document.getElementById('last-updated').textContent = 'Erro ao atualizar';
+      .catch(function() {
+        document.getElementById('meta-updated').textContent = 'Erro ao atualizar';
       });
   }
 
-  // Humanize timestamps already rendered on page load
-  document.querySelectorAll('.last-seen[data-ts]').forEach(el => {
-    el.textContent = relativeTime(el.dataset.ts);
-  });
-
   poll();
-  setInterval(poll, 10000);
+  setInterval(poll, 10000);          // atualiza dados a cada 10s
+  setInterval(refreshTimes, 5000);   // atualiza tempos relativos a cada 5s
 </script>
 
-{% endblock %}
+</body>
+</html>

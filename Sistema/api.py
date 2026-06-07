@@ -368,6 +368,94 @@ def device_command():
     return jsonify({'command': None})
 
 
+@app.route('/api/dashboard', methods=['GET'])
+def api_dashboard():
+    now = datetime.datetime.now(datetime.UTC)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    access_types = ['tentativa_tag', 'tentativa_web', 'comando_abertura']
+
+    cerberoses = db.query(Cerberos).all()
+    carontes   = db.query(Caronte).all()
+    all_devices = list(cerberoses) + list(carontes)
+
+    online  = sum(1 for d in all_devices if d.status == 'online')
+    offline = sum(1 for d in all_devices if d.status == 'offline')
+    unknown = len(all_devices) - online - offline
+
+    accesses_today = db.query(AccessLog).filter(
+        AccessLog.event_type.in_(access_types),
+        AccessLog.timestamp >= today_start
+    ).count()
+    sucesso_today = db.query(AccessLog).filter(
+        AccessLog.event_type.in_(access_types),
+        AccessLog.result == 'sucesso',
+        AccessLog.timestamp >= today_start
+    ).count()
+    last_access = db.query(AccessLog).filter(
+        AccessLog.event_type.in_(access_types)
+    ).order_by(AccessLog.timestamp.desc()).first()
+
+    recent_events = db.query(AccessLog).filter(
+        AccessLog.event_type.in_(access_types)
+    ).order_by(AccessLog.timestamp.desc()).limit(12).all()
+
+    device_events = db.query(AccessLog).filter(
+        AccessLog.event_type.in_(['device_coldstart', 'device_offline'])
+    ).order_by(AccessLog.timestamp.desc()).limit(8).all()
+
+    ambientes = db.query(Ambiente).all()
+    tartaros = []
+    for amb in ambientes:
+        entry = {'id': amb.id, 'nome': amb.nome, 'local': amb.local,
+                 'cerberoses': [], 'carontes': []}
+        for c in amb.cerberoses:
+            entry['cerberoses'].append({
+                'id': c.id, 'nome': c.nome, 'mac': c.mac,
+                'status': c.status or 'unknown',
+                'last_seen': c.last_seen.isoformat() if c.last_seen else None,
+                'coldstart_at': c.coldstart_at.isoformat() if c.coldstart_at else None,
+            })
+        for c in amb.carontes:
+            entry['carontes'].append({
+                'id': c.id, 'mac': c.mac,
+                'status': c.status or 'unknown',
+                'last_seen': c.last_seen.isoformat() if c.last_seen else None,
+                'coldstart_at': c.coldstart_at.isoformat() if c.coldstart_at else None,
+            })
+        tartaros.append(entry)
+
+    def _ev(e):
+        return {
+            'timestamp': e.timestamp.isoformat(),
+            'event_type': e.event_type,
+            'result': e.result,
+            'usuario_nome': e.usuario_nome,
+            'ambiente_nome': e.ambiente_nome,
+            'mac': e.mac,
+            'tag': e.tag,
+            'message': e.message,
+        }
+
+    return jsonify({
+        'server_time': now.isoformat(),
+        'devices': {
+            'total': len(all_devices),
+            'online': online,
+            'offline': offline,
+            'unknown': unknown,
+        },
+        'accesses': {
+            'today': accesses_today,
+            'sucesso': sucesso_today,
+            'falha': accesses_today - sucesso_today,
+            'last_at': last_access.timestamp.isoformat() if last_access else None,
+        },
+        'tartaros': tartaros,
+        'recent_events': [_ev(e) for e in recent_events],
+        'device_events': [_ev(e) for e in device_events],
+    })
+
+
 @app.route('/api/status', methods=['GET'])
 def api_status():
     ambientes = db.query(Ambiente).all()
