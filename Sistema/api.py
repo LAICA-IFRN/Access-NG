@@ -993,6 +993,9 @@ def admin_usuario_novo():
                     pin=f['pin'][:4], admin='admin' in f)
         db.add(u)
         db.flush()
+        tag_numero = f.get('tag', '').strip()
+        if tag_numero:
+            db.add(TAG(numero=tag_numero, usuario_id=u.id))
         for amb_id in request.form.getlist('ambientes'):
             amb = db.query(Ambiente).filter(Ambiente.id == int(amb_id)).first()
             if amb:
@@ -1017,6 +1020,15 @@ def admin_usuario_editar(id):
         if f.get('pin'):
             u.pin = f['pin'][:4]
         u.admin = 'admin' in f
+        tag_numero = f.get('tag', '').strip()
+        existing_tag = db.query(TAG).filter(TAG.usuario_id == u.id).first()
+        if tag_numero:
+            if existing_tag:
+                existing_tag.numero = tag_numero
+            else:
+                db.add(TAG(numero=tag_numero, usuario_id=u.id))
+        elif existing_tag:
+            db.delete(existing_tag)
         u.ambientes = []
         for amb_id in request.form.getlist('ambientes'):
             amb = db.query(Ambiente).filter(Ambiente.id == int(amb_id)).first()

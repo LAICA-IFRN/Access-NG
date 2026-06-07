@@ -9,13 +9,16 @@
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
       <thead><tr>
-        <th>Nome</th><th>Matrícula</th><th>Admin</th><th>Ambientes</th><th></th>
+        <th>Nome</th><th>Matrícula</th><th>TAG RFID</th><th>Admin</th><th>Ambientes</th><th></th>
       </tr></thead>
       <tbody>
       {% for u in usuarios %}
       <tr>
         <td>{{ u.nome }}</td>
         <td style="font-family:monospace; font-size:.85rem;">{{ u.matricula }}</td>
+        <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">
+          {{ u.tag.numero if u.tag else '—' }}
+        </td>
         <td>{% if u.admin %}<span class="badge" style="background:#c9a227; color:#000;">admin</span>{% endif %}</td>
         <td style="font-size:.8rem; color:#888;">
           {{ u.ambientes|map(attribute='nome')|join(', ') or '—' }}
@@ -29,7 +32,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="text-center" style="color:#555;">Nenhum usuário cadastrado.</td></tr>
+      <tr><td colspan="6" class="text-center" style="color:#555;">Nenhum usuário cadastrado.</td></tr>
       {% endfor %}
       </tbody>
     </table>

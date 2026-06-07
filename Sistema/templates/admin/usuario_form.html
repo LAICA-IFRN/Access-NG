@@ -20,10 +20,19 @@
                  value="{{ usuario.matricula if usuario else '' }}" required>
         </div>
       </div>
-      <div class="form-group">
-        <label>PIN {% if usuario %}<small style="color:#555;">(deixe em branco para não alterar)</small>{% endif %}</label>
-        <input name="pin" type="password" class="form-control" maxlength="4"
-               {% if not usuario %}required{% endif %} placeholder="4 dígitos">
+      <div class="form-row">
+        <div class="form-group col-md-6">
+          <label>PIN {% if usuario %}<small style="color:#555;">(deixe em branco para não alterar)</small>{% endif %}</label>
+          <input name="pin" type="password" class="form-control" maxlength="4"
+                 {% if not usuario %}required{% endif %} placeholder="4 dígitos">
+        </div>
+        <div class="form-group col-md-6">
+          <label>TAG RFID <small style="color:#555;">(deixe em branco para remover)</small></label>
+          <input name="tag" type="text" class="form-control"
+                 value="{{ usuario.tag.numero if usuario and usuario.tag else '' }}"
+                 placeholder="Ex: A3F2E1B0">
+          <small style="color:#555;">Identificador do cartão ou tag virtual (ex: <code style="color:#888;">btn_local</code>)</small>
+        </div>
       </div>
       <div class="form-group">
         <div class="form-check">
