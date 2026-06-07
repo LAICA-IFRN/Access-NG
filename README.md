@@ -548,19 +548,93 @@ Regras:
 - Dispositivos `online` sem contato por mais de 30 segundos viram `offline`.
 - Dispositivos sem histórico aparecem como `unknown`.
 
-## GitHub Actions
+## CI/CD
 
-O workflow principal fica em `.github/workflows/python-app.yml` e roda a cada `push`.
+O projeto possui dois workflows em `.github/workflows/`:
 
-Ele possui duas verificações:
+| Arquivo | Finalidade |
+| --- | --- |
+| `python-app.yml` | Verificação de sintaxe e instalação de dependências (legado). |
+| `deploy.yml` | Pipeline principal de CI + CD para o servidor de produção. |
 
-- `build`: valida a instalação de várias versões de Python configuradas na matrix.
-- `install-dependencies`: instala `Sistema/requirements.txt` e `Dashboard/requeriments.txt`,
-  depois executa `python -m compileall Sistema Dashboard`.
+### Pipeline `deploy.yml`
 
-Não use `pip test`: esse comando não existe no `pip`. Se o projeto passar a ter
-testes automatizados com `pytest` ou `unittest`, adicione uma etapa específica para
-esse runner no workflow.
+Dispara em:
+
+- `push` para `main` → roda CI e, se aprovado, faz o deploy.
+- `pull_request` para `main` → roda apenas o CI.
+
+Etapas:
+
+```text
+ci  →  deploy (somente push em main)
+```
+
+**Job `ci`**
+
+1. Faz checkout do repositório.
+2. Instala `Sistema/requirements.txt` e `Dashboard/requeriments.txt`.
+3. Executa `python -m compileall Sistema Dashboard`.
+
+**Job `deploy`**
+
+1. Conecta ao servidor via SSH.
+2. Faz `git pull origin main`.
+3. Atualiza dependências com `pip install`.
+4. Reinicia os processos com `pm2 reload ecosystem.config.js --update-env`.
+
+### Secrets necessários
+
+Configure em **Settings → Secrets and variables → Actions** do repositório:
+
+| Secret | Exemplo | Obrigatório |
+| --- | --- | --- |
+| `SSH_HOST` | `192.168.1.100` ou `meuservidor.com` | Sim |
+| `SSH_USER` | `ubuntu` | Sim |
+| `SSH_KEY` | conteúdo de `~/.ssh/id_rsa` | Sim |
+| `SSH_PORT` | `22` | Não (padrão: 22) |
+| `DEPLOY_PATH` | `/home/ubuntu/Access-NG` | Sim |
+
+### PM2 — `ecosystem.config.js`
+
+O arquivo `ecosystem.config.js` na raiz do repositório define os dois processos:
+
+| Nome PM2 | Diretório | Porta |
+| --- | --- | --- |
+| `access-ng-api` | `./Sistema` | 9001 |
+| `access-ng-dashboard` | `./Dashboard` | 3002 |
+
+Logs ficam em `logs/` na raiz do repositório (criado automaticamente pelo PM2).
+
+**Primeira inicialização no servidor:**
+
+```bash
+cd /home/ubuntu/Access-NG
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup   # gera o comando systemd para iniciar com o servidor
+```
+
+Após o `pm2 startup`, execute o comando que ele imprimir com `sudo` para persistir
+os processos após reboot.
+
+**Usando virtualenv:**
+
+Se as dependências estiverem num virtualenv, altere o campo `interpreter` em
+`ecosystem.config.js`:
+
+```js
+interpreter: '/home/ubuntu/Access-NG/venv/bin/python3',
+```
+
+**Comandos úteis:**
+
+```bash
+pm2 list                              # status dos processos
+pm2 logs access-ng-api                # logs em tempo real
+pm2 reload ecosystem.config.js        # zero-downtime reload
+pm2 restart access-ng-api             # restart forçado
+```
 
 ## Firmware
 
@@ -744,3 +818,5 @@ O usuário logado provavelmente não está associado ao Tartaro em `usuarios_amb
 - O painel admin e o Caronte web estão presentes em `Sistema/templates/`.
 - O firmware ainda precisa ser ajustado para usar `/device/coldstart` com MAC real.
 - Carontes fixos precisam de heartbeat periódico para status online confiável.
+- Pipeline CI/CD configurado em `.github/workflows/deploy.yml`; configure os 5 secrets no repositório para ativar o deploy automático.
+- `ecosystem.config.js` na raiz define os dois processos PM2 (`access-ng-api` e `access-ng-dashboard`).
