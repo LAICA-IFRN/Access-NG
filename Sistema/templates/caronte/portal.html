@@ -36,9 +36,11 @@
       padding:.5rem 1rem; font-weight:600; font-size:.9rem; flex-shrink:0; cursor:pointer;
     }
     .btn-access:disabled { background:#3a3a2e; color:#666; cursor:not-allowed; }
-    .btn-access.loading { background:#3a3a2e; color:#888; }
-    .btn-access.success { background:#1e7e34; color:#fff; }
-    .btn-access.denied  { background:#7e1e1e; color:#fff; }
+    .btn-access.loading  { background:#3a3a2e; color:#888; }
+    .btn-access.success  { background:#1e7e34; color:#fff; }
+    .btn-access.denied   { background:#7e1e1e; color:#fff; }
+    .btn-access.offline  { background:#1e1e1e; color:#555; cursor:not-allowed; border:1px solid #2d2d2d; }
+    .ambiente-status { font-size:.72rem; color:#7e4e1e; margin-top:.15rem; }
 
     .empty-state { text-align:center; color:#444; padding:3rem 1rem; }
     .empty-state .icon { font-size:3rem; margin-bottom:.5rem; }
@@ -54,6 +56,8 @@
   <span class="brand">&#9760; CARONTE</span>
   <span>
     <span class="user">{{ user_nome }}</span>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('caronte_login') }}">Início</a>
     &nbsp;·&nbsp;
     <a href="{{ url_for('caronte_logout') }}">Sair</a>
   </span>
@@ -97,15 +101,20 @@ function renderAmbientes(ambientes) {
     return;
   }
   list.innerHTML = ambientes.map(function(a) {
+    var available = a.available !== false;
+    var statusHtml = available ? '' :
+      '<div class="ambiente-status">&#9888; Fechadura offline</div>';
+    var btnHtml = available
+      ? '<button class="btn-access" id="btn-' + a.id + '" onclick="solicitarAcesso(' + a.id + ', this)">Entrar</button>'
+      : '<button class="btn-access offline" disabled>Offline</button>';
     return '<div class="ambiente-card">'
       + '<div class="ambiente-icon">&#128682;</div>'
       + '<div class="ambiente-info">'
       + '<div class="ambiente-nome">' + escHtml(a.nome) + '</div>'
       + '<div class="ambiente-local">' + escHtml(a.local) + '</div>'
+      + statusHtml
       + '</div>'
-      + '<button class="btn-access" id="btn-' + a.id + '" onclick="solicitarAcesso(' + a.id + ', this)">'
-      + 'Entrar'
-      + '</button>'
+      + btnHtml
       + '</div>';
   }).join('');
 }
@@ -120,7 +129,12 @@ function buscarAmbientes(lat, lon) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.error) { setStatus('error', data.error); return; }
-      setStatus('ok', 'Localização obtida · ' + data.length + ' ambiente(s) próximo(s)');
+      var disponiveis = data.filter(function(a) { return a.available !== false; }).length;
+      var statusMsg = 'Localização obtida · ' + data.length + ' ambiente(s) próximo(s)';
+      if (data.length > 0 && disponiveis < data.length) {
+        statusMsg += ' · ' + disponiveis + ' disponível(is)';
+      }
+      setStatus(disponiveis > 0 ? 'ok' : 'error', statusMsg);
       renderAmbientes(data);
     })
     .catch(function() { setStatus('error', 'Erro ao buscar ambientes.'); });

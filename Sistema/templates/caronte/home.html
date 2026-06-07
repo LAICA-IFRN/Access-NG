@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <title>Caronte — Início</title>
+  <style>
+    * { box-sizing:border-box; }
+    body { background:#0d0d1a; color:#e0e0e0; min-height:100vh; font-size:16px; }
+    .topbar { background:#12122a; border-bottom:1px solid #2d2d4e;
+              padding:.75rem 1rem; display:flex; justify-content:space-between; align-items:center; }
+    .topbar .brand { color:#c9a227; font-weight:bold; letter-spacing:2px; }
+    .topbar .user  { color:#888; font-size:.85rem; }
+    .topbar a      { color:#555; font-size:.8rem; text-decoration:none; }
+    .topbar a:hover { color:#c9a227; }
+
+    .container-home { max-width:480px; margin:0 auto; padding:2rem 1rem; }
+
+    .welcome { color:#888; font-size:.9rem; margin-bottom:2rem; }
+    .welcome strong { color:#e0e0e0; }
+
+    .menu-card {
+      display:flex; align-items:center; gap:1.25rem;
+      background:#1a1a2e; border:1px solid #2d2d4e; border-radius:12px;
+      padding:1.25rem 1.25rem; margin-bottom:.85rem;
+      text-decoration:none; color:#e0e0e0;
+      transition:border-color .15s, background .15s;
+    }
+    .menu-card:hover { border-color:#c9a227; background:#1e1e38; color:#e0e0e0; text-decoration:none; }
+    .menu-card:active { background:#161628; }
+
+    .menu-icon { font-size:2rem; flex-shrink:0; line-height:1; }
+    .menu-title { font-weight:600; font-size:1rem; }
+    .menu-desc  { font-size:.78rem; color:#666; margin-top:.15rem; }
+    .menu-arrow { margin-left:auto; color:#444; font-size:1.2rem; flex-shrink:0; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">&#9760; CARONTE</span>
+  <span>
+    <span class="user">{{ user_nome }}</span>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('caronte_logout') }}">Sair</a>
+  </span>
+</div>
+
+<div class="container-home">
+  <p class="welcome">Olá, <strong>{{ user_nome }}</strong>. O que deseja fazer?</p>
+
+  <a href="{{ url_for('caronte_portal') }}" class="menu-card">
+    <span class="menu-icon">&#128682;</span>
+    <span>
+      <div class="menu-title">Abrir Porta</div>
+      <div class="menu-desc">Solicitar acesso a ambientes próximos via geolocalização</div>
+    </span>
+    <span class="menu-arrow">&#8250;</span>
+  </a>
+
+  <a href="{{ url_for('caronte_meus_logs') }}" class="menu-card">
+    <span class="menu-icon">&#128203;</span>
+    <span>
+      <div class="menu-title">Meus Acessos</div>
+      <div class="menu-desc">Ver histórico de tentativas e acessos autorizados</div>
+    </span>
+    <span class="menu-arrow">&#8250;</span>
+  </a>
+</div>
+
+</body>
+</html>

@@ -120,6 +120,27 @@ def _create_audit_log(event_type, result, message=None, mac=None, tag=None,
         return None
 
 
+def _create_device_event_log(event_type, mac, ambiente=None, message=None):
+    """Loga eventos de dispositivo sem necessitar de contexto de requisicao HTTP."""
+    try:
+        log = AccessLog(
+            timestamp=datetime.datetime.now(datetime.UTC),
+            path='(sistema)',
+            method='SYSTEM',
+            mac=mac,
+            event_type=event_type,
+            result='sucesso' if event_type == 'device_coldstart' else 'falha',
+            ambiente_id=ambiente.id if ambiente is not None else None,
+            ambiente_nome=ambiente.nome if ambiente is not None else None,
+            message=(str(message)[:2000] if message is not None else None)
+        )
+        db.add(log)
+        db.commit()
+    except Exception as e:
+        print(f"[DeviceLog] Falha ao criar log: {e}")
+        db.rollback()
+
+
 @app.before_request
 def log_request():
     if request.path.startswith('/static'):
@@ -192,6 +213,7 @@ def _offline_monitor():
         time.sleep(15)
         threshold = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=OFFLINE_THRESHOLD)
         try:
+            offline_events = []
             for model in (Cerberos, Caronte):
                 stale = db.query(model).filter(
                     model.status == 'online',
@@ -199,8 +221,16 @@ def _offline_monitor():
                     model.last_seen < threshold
                 ).all()
                 for d in stale:
+                    offline_events.append((d.mac, getattr(d, 'nome', d.mac), d.ambiente))
                     d.status = 'offline'
             db.commit()
+            for mac, label, ambiente in offline_events:
+                _create_device_event_log(
+                    event_type='device_offline',
+                    mac=mac,
+                    ambiente=ambiente,
+                    message=f'Dispositivo offline (sem contato por {OFFLINE_THRESHOLD}s): {label}'
+                )
         except Exception:
             db.rollback()
         finally:
@@ -286,6 +316,14 @@ def coldstart():
     device.last_seen = now
     device.status = 'online'
     db.commit()
+    device_label = getattr(device, 'nome', mac)
+    _create_audit_log(
+        event_type='device_coldstart',
+        result='sucesso',
+        message=f'{device_type} iniciado: {device_label} ({mac})',
+        mac=mac,
+        ambiente=device.ambiente
+    )
     return jsonify({'status': 'ok', 'device': device_type, 'mac': mac})
 
 
@@ -360,7 +398,7 @@ def api_status():
 @app.route('/caronte')
 def caronte_login():
     if 'user_id' in session:
-        return redirect(url_for('caronte_portal'))
+        return render_template('caronte/home.html', user_nome=session.get('user_nome'))
     return render_template('caronte/login.html')
 
 
@@ -410,7 +448,17 @@ def caronte_ambientes_proximos():
 
     tartaro = Tartaro()
     proximos = tartaro.ambientesProximos(lat, lon)
-    result = [{'id': a.id, 'nome': a.nome, 'local': a.local} for a in proximos]
+    result = []
+    for a in proximos:
+        online = [c for c in a.cerberoses if c.status == 'online']
+        result.append({
+            'id': a.id,
+            'nome': a.nome,
+            'local': a.local,
+            'available': len(online) > 0,
+            'cerberoses_online': len(online),
+            'cerberoses_total': len(a.cerberoses),
+        })
     return jsonify(result)
 
 
@@ -446,6 +494,17 @@ def caronte_solicitar():
             payload=content
         )
         return jsonify({'allow': False, 'motivo': 'Ambiente não encontrado'}), 404
+
+    if not any(c.status == 'online' for c in ambiente.cerberoses):
+        _create_audit_log(
+            event_type='tentativa_web',
+            result='falha',
+            message='Nenhum Cerberos online neste ambiente',
+            ambiente=ambiente,
+            usuario=usuario,
+            payload=content
+        )
+        return jsonify({'allow': False, 'motivo': 'Nenhuma fechadura online neste ambiente'})
 
     if ambiente.latitude is not None and ambiente.longitude is not None:
         from Tartaro import _distancia_metros
@@ -486,6 +545,35 @@ def caronte_solicitar():
         payload=content
     )
     return jsonify({'allow': False, 'motivo': 'Sem permissão para este ambiente'})
+
+
+@app.route('/caronte/meus-logs')
+@caronte_required
+def caronte_meus_logs():
+    user_id = session['user_id']
+    access_event_types = ['tentativa_web', 'tentativa_tag', 'login_caronte', 'logout_caronte']
+    logs = (
+        db.query(AccessLog)
+        .filter(
+            AccessLog.usuario_id == user_id,
+            AccessLog.event_type.in_(access_event_types)
+        )
+        .order_by(AccessLog.timestamp.desc())
+        .limit(100)
+        .all()
+    )
+    event_labels = {
+        'tentativa_web': 'Acesso pelo portal',
+        'tentativa_tag': 'Acesso por tag RFID',
+        'login_caronte': 'Login no sistema',
+        'logout_caronte': 'Logout do sistema',
+    }
+    return render_template(
+        'caronte/meus_logs.html',
+        user_nome=session.get('user_nome'),
+        logs=logs,
+        event_labels=event_labels
+    )
 
 
 @app.route('/caronte/logout')
@@ -562,7 +650,26 @@ def admin_index():
         'usuarios': db.query(Usuario).count(),
         'logs': db.query(AccessLog).count(),
     }
-    return render_template('admin/index.html', stats=stats)
+    recent_device_events = (
+        db.query(AccessLog)
+        .filter(AccessLog.event_type.in_(['device_coldstart', 'device_offline']))
+        .order_by(AccessLog.timestamp.desc())
+        .limit(15)
+        .all()
+    )
+    recent_access_events = (
+        db.query(AccessLog)
+        .filter(AccessLog.event_type.in_(['tentativa_tag', 'tentativa_web', 'comando_abertura']))
+        .order_by(AccessLog.timestamp.desc())
+        .limit(10)
+        .all()
+    )
+    return render_template(
+        'admin/index.html',
+        stats=stats,
+        recent_device_events=recent_device_events,
+        recent_access_events=recent_access_events
+    )
 
 
 # Ambientes ──────────────────────────────────
@@ -777,7 +884,10 @@ def admin_logs():
         ('login_caronte', 'Login Caronte'),
         ('logout_caronte', 'Logout Caronte'),
         ('api_request', 'Requisicoes da API'),
+        ('device_coldstart', 'Coldstart de dispositivo'),
+        ('device_offline', 'Dispositivo offline'),
     ]
+    event_label_map = {v: l for v, l in event_types if v}
     return render_template(
         'admin/logs.html',
         logs=logs,
@@ -786,6 +896,7 @@ def admin_logs():
         result=result,
         ambiente_id=ambiente_id,
         event_types=event_types,
+        event_label_map=event_label_map,
         ambientes=ambientes,
         total=total
     )

@@ -2,6 +2,7 @@
 {% block title %}Visão Geral{% endblock %}
 {% block content %}
 <h5 style="color:#c9a227; margin-bottom:1.5rem;">Visão Geral</h5>
+
 <div class="row">
   {% set items = [
     ('Tartaros', stats.ambientes, 'admin_ambientes', '#c9a227'),
@@ -21,5 +22,93 @@
     </div>
   </div>
   {% endfor %}
+</div>
+
+<div class="row mt-2">
+
+  {# Atividade de dispositivos #}
+  <div class="col-12 col-lg-6 mb-4">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Atividade de Dispositivos</span>
+        <a href="{{ url_for('admin_logs', event_type='device_coldstart') }}" style="font-size:.75rem; color:#888;">Ver todos</a>
+      </div>
+      <div class="card-body p-0">
+        {% if recent_device_events %}
+        <table class="table mb-0" style="font-size:.82rem;">
+          <thead>
+            <tr>
+              <th>Dispositivo</th>
+              <th>Tartaro</th>
+              <th>Evento</th>
+              <th>Quando</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ev in recent_device_events %}
+            <tr>
+              <td style="font-family:monospace; font-size:.78rem;">{{ ev.mac or '—' }}</td>
+              <td>{{ ev.ambiente_nome or '—' }}</td>
+              <td>
+                {% if ev.event_type == 'device_coldstart' %}
+                  <span class="badge badge-online" style="font-size:.72rem;">online</span>
+                {% else %}
+                  <span class="badge badge-offline" style="font-size:.72rem;">offline</span>
+                {% endif %}
+              </td>
+              <td style="color:#666;">{{ ev.timestamp.strftime('%d/%m %H:%M') }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p style="color:#555; font-size:.85rem; padding:1rem; margin:0;">Nenhum evento de dispositivo registrado.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Últimas tentativas de acesso #}
+  <div class="col-12 col-lg-6 mb-4">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Últimas Tentativas de Acesso</span>
+        <a href="{{ url_for('admin_logs', event_type='tentativa_web') }}" style="font-size:.75rem; color:#888;">Ver todos</a>
+      </div>
+      <div class="card-body p-0">
+        {% if recent_access_events %}
+        <table class="table mb-0" style="font-size:.82rem;">
+          <thead>
+            <tr>
+              <th>Usuário</th>
+              <th>Tartaro</th>
+              <th>Resultado</th>
+              <th>Quando</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ev in recent_access_events %}
+            <tr>
+              <td>{{ ev.usuario_nome or ev.mac or ev.tag or '—' }}</td>
+              <td>{{ ev.ambiente_nome or '—' }}</td>
+              <td>
+                {% if ev.result == 'sucesso' %}
+                  <span class="badge badge-online" style="font-size:.72rem;">autorizado</span>
+                {% else %}
+                  <span class="badge badge-offline" style="font-size:.72rem;">negado</span>
+                {% endif %}
+              </td>
+              <td style="color:#666;">{{ ev.timestamp.strftime('%d/%m %H:%M') }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p style="color:#555; font-size:.85rem; padding:1rem; margin:0;">Nenhuma tentativa de acesso registrada.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}

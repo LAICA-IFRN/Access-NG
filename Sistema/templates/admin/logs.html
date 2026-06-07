@@ -86,7 +86,7 @@
             <tr>
               <td><input type="checkbox" name="log_ids" value="{{ log.id }}" class="log-check"></td>
               <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-              <td>{{ log.event_type or 'api_request' }}</td>
+              <td>{{ event_label_map.get(log.event_type, log.event_type) or 'api_request' }}</td>
               <td>
                 {% if log.result == 'sucesso' %}
                 <span class="badge badge-online">sucesso</span>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <title>Caronte — Meus Acessos</title>
+  <style>
+    * { box-sizing:border-box; }
+    body { background:#0d0d1a; color:#e0e0e0; min-height:100vh; font-size:16px; }
+    .topbar { background:#12122a; border-bottom:1px solid #2d2d4e;
+              padding:.75rem 1rem; display:flex; justify-content:space-between; align-items:center; }
+    .topbar .brand { color:#c9a227; font-weight:bold; letter-spacing:2px; }
+    .topbar .user  { color:#888; font-size:.85rem; }
+    .topbar a      { color:#555; font-size:.8rem; text-decoration:none; }
+    .topbar a:hover { color:#c9a227; }
+
+    .container-logs { max-width:640px; margin:0 auto; padding:1.25rem 1rem; }
+
+    .page-title { color:#c9a227; font-weight:bold; font-size:1.1rem; margin-bottom:.25rem; }
+    .page-subtitle { color:#555; font-size:.8rem; margin-bottom:1.25rem; }
+
+    .log-card {
+      background:#1a1a2e; border:1px solid #2d2d4e; border-radius:10px;
+      padding:.85rem 1rem; margin-bottom:.6rem;
+    }
+    .log-header { display:flex; justify-content:space-between; align-items:flex-start; gap:.5rem; }
+    .log-evento { font-weight:600; color:#e0e0e0; font-size:.9rem; }
+    .log-meta { font-size:.78rem; color:#666; margin-top:.3rem; }
+    .log-ambiente { color:#c9a227; }
+    .log-msg { font-size:.78rem; color:#555; margin-top:.2rem; }
+
+    .badge-sucesso { background:#1e4d2b; color:#4caf72; border:1px solid #2a6b3a;
+                     padding:.2rem .65rem; border-radius:12px; font-size:.75rem; white-space:nowrap; }
+    .badge-falha   { background:#4d1e1e; color:#cf6679; border:1px solid #6b2a2a;
+                     padding:.2rem .65rem; border-radius:12px; font-size:.75rem; white-space:nowrap; }
+    .badge-neutro  { background:#1e1e2e; color:#666; border:1px solid #2d2d4e;
+                     padding:.2rem .65rem; border-radius:12px; font-size:.75rem; white-space:nowrap; }
+
+    .empty-state { text-align:center; color:#444; padding:3rem 1rem; }
+    .empty-state .icon { font-size:2.5rem; margin-bottom:.5rem; }
+    .empty-state p { font-size:.9rem; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">&#9760; CARONTE</span>
+  <span>
+    <span class="user">{{ user_nome }}</span>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('caronte_portal') }}">Portal</a>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('caronte_logout') }}">Sair</a>
+  </span>
+</div>
+
+<div class="container-logs">
+  <div class="page-title">Meus Acessos</div>
+  <div class="page-subtitle">Últimos {{ logs|length }} registro(s) de acesso da sua conta.</div>
+
+  {% if logs %}
+    {% for log in logs %}
+    <div class="log-card">
+      <div class="log-header">
+        <span class="log-evento">{{ event_labels.get(log.event_type, log.event_type) }}</span>
+        {% if log.result == 'sucesso' %}
+          <span class="badge-sucesso">Autorizado</span>
+        {% elif log.result == 'falha' %}
+          <span class="badge-falha">Negado</span>
+        {% else %}
+          <span class="badge-neutro">—</span>
+        {% endif %}
+      </div>
+      <div class="log-meta">
+        {% if log.ambiente_nome %}
+          <span class="log-ambiente">{{ log.ambiente_nome }}</span>
+          &nbsp;·&nbsp;
+        {% endif %}
+        {{ log.timestamp.strftime('%d/%m/%Y %H:%M') }}
+        {% if log.ip %}
+          &nbsp;·&nbsp;{{ log.ip }}
+        {% endif %}
+      </div>
+      {% if log.message and log.result == 'falha' %}
+      <div class="log-msg">{{ log.message }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty-state">
+      <div class="icon">&#128203;</div>
+      <p>Nenhum registro de acesso encontrado.</p>
+    </div>
+  {% endif %}
+</div>
+
+</body>
+</html>
