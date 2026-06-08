@@ -71,7 +71,7 @@ def _create_log_entry(status_code=None, message=None):
     ambiente = _ambiente_from_mac(mac)
     try:
         log = AccessLog(
-            timestamp=datetime.datetime.now(datetime.UTC),
+            timestamp=datetime.datetime.utcnow(),
             path=request.path,
             method=request.method,
             ip=request.remote_addr,
@@ -99,7 +99,7 @@ def _create_audit_log(event_type, result, message=None, mac=None, tag=None,
                       ambiente=None, usuario=None, payload=None):
     try:
         log = AccessLog(
-            timestamp=datetime.datetime.now(datetime.UTC),
+            timestamp=datetime.datetime.utcnow(),
             path=request.path,
             method=request.method,
             ip=request.remote_addr,
@@ -127,7 +127,7 @@ def _create_device_event_log(event_type, mac, ambiente=None, message=None):
     """Loga eventos de dispositivo sem necessitar de contexto de requisicao HTTP."""
     try:
         log = AccessLog(
-            timestamp=datetime.datetime.now(datetime.UTC),
+            timestamp=datetime.datetime.utcnow(),
             path='(sistema)',
             method='SYSTEM',
             mac=mac,
@@ -201,7 +201,7 @@ def caronte_required(f):
 # ── Device helpers ───────────────────────────────────────────────────────────
 
 def _touch_device(mac: str):
-    now = datetime.datetime.now(datetime.UTC)
+    now = datetime.datetime.utcnow()
     updated = False
     for model in (Cerberos, Caronte):
         device = db.query(model).filter(model.mac.ilike(mac)).first()
@@ -216,7 +216,7 @@ def _touch_device(mac: str):
 def _offline_monitor():
     while True:
         time.sleep(15)
-        threshold = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=OFFLINE_THRESHOLD)
+        threshold = datetime.datetime.utcnow() - datetime.timedelta(seconds=OFFLINE_THRESHOLD)
         try:
             offline_events = []
             for model in (Cerberos, Caronte):
@@ -387,7 +387,7 @@ def device_command():
 
 @app.route('/api/dashboard', methods=['GET'])
 def api_dashboard():
-    now = datetime.datetime.now(datetime.UTC)
+    now = datetime.datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     access_types = ['tentativa_tag', 'tentativa_web', 'comando_abertura']
 
