@@ -21,11 +21,20 @@
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group col-md-6">
-          <label>PIN {% if usuario %}<small style="color:#555;">(deixe em branco para não alterar)</small>{% endif %}</label>
+        <div class="form-group col-md-4">
+          <label>PIN — Caronte {% if usuario %}<small style="color:#555;">(em branco = não altera)</small>{% endif %}</label>
           <input name="pin" type="password" class="form-control" maxlength="4"
-                 {% if not usuario %}required{% endif %} placeholder="4 dígitos">
+                 {% if not usuario %}required{% endif %} placeholder="4 dígitos"
+                 autocomplete="off">
         </div>
+        <div class="form-group col-md-8" id="senha-group">
+          <label>Senha — Admin {% if usuario %}<small style="color:#555;">(em branco = não altera)</small>{% endif %}</label>
+          <input name="senha" type="password" class="form-control"
+                 placeholder="Só necessário para admins" autocomplete="new-password">
+          <small style="color:#555;">Usada para acessar o painel administrativo.</small>
+        </div>
+      </div>
+      <div class="form-row" style="display:none;" id="dummy-row-placeholder"></div>
         <div class="form-group col-md-6">
           <label>TAG RFID <small style="color:#555;">(deixe em branco para remover)</small></label>
           <input name="tag" type="text" class="form-control"
@@ -60,4 +69,20 @@
     </form>
   </div>
 </div>
+
+<script>
+(function() {
+  var adminCheck = document.getElementById('adminCheck');
+  var senhaGroup = document.getElementById('senha-group');
+  function update() {
+    senhaGroup.style.border = adminCheck.checked
+      ? '1px solid #c9a227' : '1px solid transparent';
+    senhaGroup.style.borderRadius = '6px';
+    senhaGroup.style.padding = adminCheck.checked ? '8px' : '0';
+    senhaGroup.querySelector('label').style.color = adminCheck.checked ? '#c9a227' : '#888';
+  }
+  adminCheck.addEventListener('change', update);
+  update();
+})();
+</script>
 {% endblock %}

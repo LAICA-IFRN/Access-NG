@@ -3,6 +3,7 @@ from flask import (Flask, render_template, jsonify, request,
                    session, redirect, url_for, flash, abort)
 from flask_bootstrap import Bootstrap
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from sqlalchemy import or_
 import datetime
@@ -690,13 +691,21 @@ def caronte_logout():
 def admin_login():
     if request.method == 'POST':
         matricula = request.form.get('matricula', '').strip()
-        pin = request.form.get('pin', '').strip()
+        senha = request.form.get('senha', '').strip()
         usuario = db.query(Usuario).filter(
             Usuario.matricula == matricula,
-            Usuario.pin == pin,
             Usuario.admin == True
         ).first()
-        if not usuario:
+
+        autenticado = False
+        if usuario:
+            if usuario.senha:
+                autenticado = check_password_hash(usuario.senha, senha)
+            else:
+                # Fallback para PIN enquanto a senha ainda não foi definida
+                autenticado = (usuario.pin == senha)
+
+        if not autenticado:
             _create_audit_log(
                 event_type='login_admin',
                 result='falha',
@@ -705,6 +714,8 @@ def admin_login():
             )
             flash('Credenciais inválidas ou sem permissão de admin.', 'danger')
             return redirect(url_for('admin_login'))
+        if not usuario.senha:
+            flash('Você entrou com o PIN (fallback). Defina uma senha de admin no seu perfil.', 'warning')
         _create_audit_log(
             event_type='login_admin',
             result='sucesso',
@@ -1081,8 +1092,11 @@ def admin_usuario_novo():
     ambientes = db.query(Ambiente).all()
     if request.method == 'POST':
         f = request.form
+        is_admin = 'admin' in f
+        senha_raw = f.get('senha', '').strip()
         u = Usuario(nome=f['nome'], matricula=f['matricula'],
-                    pin=f['pin'][:4], admin='admin' in f)
+                    pin=f['pin'][:4], admin=is_admin,
+                    senha=generate_password_hash(senha_raw) if senha_raw else None)
         db.add(u)
         db.flush()
         tag_numero = f.get('tag', '').strip()
@@ -1112,6 +1126,8 @@ def admin_usuario_editar(id):
         if f.get('pin'):
             u.pin = f['pin'][:4]
         u.admin = 'admin' in f
+        if f.get('senha'):
+            u.senha = generate_password_hash(f['senha'])
         tag_numero = f.get('tag', '').strip()
         existing_tag = db.query(TAG).filter(TAG.usuario_id == u.id).first()
         if tag_numero:

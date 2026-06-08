@@ -43,6 +43,7 @@ class Usuario(Base):
     nome: Mapped[str] = mapped_column(String(50))
     matricula: Mapped[str] = mapped_column(String(50))
     pin: Mapped[str] = mapped_column(String(4))
+    senha: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     admin: Mapped[bool] = mapped_column(Boolean)
     tag: Mapped["TAG"] = relationship(back_populates="usuario")
     mac: Mapped["MAC"] = relationship(back_populates="usuario")
@@ -145,6 +146,8 @@ def _add_column_if_missing(table: str, column: str, col_type: str):
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
             conn.commit()
 
+
+_add_column_if_missing('usuarios', 'senha', 'VARCHAR(200)')
 
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'status', 'VARCHAR(20)')
