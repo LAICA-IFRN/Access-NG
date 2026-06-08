@@ -2,6 +2,7 @@ from Tartaro import *
 from flask import (Flask, render_template, jsonify, request,
                    session, redirect, url_for, flash, abort)
 from flask_bootstrap import Bootstrap
+from werkzeug.middleware.proxy_fix import ProxyFix
 from functools import wraps
 from sqlalchemy import or_
 import datetime
@@ -13,6 +14,7 @@ import json
 app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get('SECRET_KEY', 'tartaro-dev-key-change-in-prod')
 Bootstrap(app)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 OFFLINE_THRESHOLD = 30  # seconds without contact → device is offline
 
