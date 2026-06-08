@@ -183,6 +183,7 @@
 </div>
 
 <script>
+  var URL_DASHBOARD = "{{ url_for('proxy_dashboard') }}";
   var _lastData = null;
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -366,7 +367,7 @@
   // ── Poll ─────────────────────────────────────────────────────────────────────
 
   function poll() {
-    fetch('/api/dashboard')
+    fetch(URL_DASHBOARD)
       .then(function(r) { return r.json(); })
       .then(function(data) {
         _lastData = data;
