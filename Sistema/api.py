@@ -316,6 +316,13 @@ def coldstart():
         device = db.query(Caronte).filter(Caronte.mac.ilike(mac)).first()
         device_type = 'caronte'
     if device is None:
+        _create_audit_log(
+            event_type='device_coldstart',
+            result='desconhecido',
+            message=f'MAC não cadastrado: {mac}',
+            mac=mac,
+            payload={'mac': mac, 'chave': content.get('chave')}
+        )
         return jsonify({'status': 'unknown', 'mac': mac}), 404
     device.coldstart_at = now
     device.last_seen = now
@@ -350,6 +357,13 @@ def device_command():
 
     cerberos = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
     if cerberos is None:
+        _create_audit_log(
+            event_type='device_command',
+            result='desconhecido',
+            message=f'Cerberos não cadastrado tentou buscar comando: {mac}',
+            mac=mac,
+            payload={'mac': mac}
+        )
         return jsonify({'error': 'unknown cerberos', 'mac': mac}), 404
 
     _touch_device(mac)
