@@ -4,6 +4,45 @@ Cerberos + Caronte — MicroPython para BitDogLab V6 (Raspberry Pi Pico W)
 Papéis do dispositivo:
   Caronte : lê o botão local → autentica na API → abre a porta
   Cerberos: faz long-poll na API por comandos remotos (portal web) → abre a porta
+
+─── config.json (copie para a raiz do dispositivo e ajuste os valores) ──────────
+
+{
+    "WIFI_SSID"          : "nome-da-rede",
+    "WIFI_PASS"          : "senha-da-rede",
+
+    "API_HOST"           : "seu-servidor.exemplo.com",
+    "API_PORT"           : 443,
+    "API_TIMEOUT"        : 10,
+
+    "DEVICE_KEY"         : "chave-cadastrada-no-banco",
+
+    "COLDSTART_ENDPOINT" : "/access-ng/device/coldstart",
+    "HEARTBEAT_ENDPOINT" : "/access-ng/device/heartbeat",
+    "AUTH_ENDPOINT"      : "/access-ng/caronte/autenticarTag",
+    "COMMAND_ENDPOINT"   : "/access-ng/device/command",
+
+    "HEARTBEAT_INTERVAL" : 25,
+    "COMMAND_WAIT"       : 8,
+    "COMMAND_TIMEOUT"    : 12,
+
+    "BUTTON_PIN"         : 5,
+    "BUTTON_DEBOUNCE_MS" : 50,
+    "BUTTON_TAG"         : "btn_local",
+
+    "LED_RED_PIN"        : 13,
+    "LED_GREEN_PIN"      : 11,
+    "LED_BLUE_PIN"       : 12,
+    "RELAY_PIN"          : 15,
+    "RELAY_ACTIVE_MS"    : 2000
+}
+
+Notas:
+  - API_PORT 443  → HTTPS (ussl); 80 → HTTP puro.
+  - DEVICE_KEY    deve bater com o campo 'chave' do Cerberos cadastrado no servidor.
+  - BUTTON_TAG    deve ser uma TAG virtual cadastrada para o usuário que o botão representa.
+  - HEARTBEAT_INTERVAL deve ser menor que OFFLINE_THRESHOLD do servidor (padrão 30 s).
+─────────────────────────────────────────────────────────────────────────────────
 """
 
 import machine
@@ -12,31 +51,41 @@ import socket
 import time
 import json
 import ubinascii
+try:
+    import ssl
+    _SSL_AVAILABLE = True
+except ImportError:
+    _SSL_AVAILABLE = False
 
 # ─── CONFIGURAÇÃO ────────────────────────────────────────────────────────────────
 
 _DEFAULTS = {
     # Rede
-    "WIFI_SSID"         : "wIFRN-IoT",
-    "WIFI_PASS"         : "deviceiotifrn",
+    "WIFI_SSID"           : "wIFRN-IoT",
+    "WIFI_PASS"           : "deviceiotifrn",
     # API
-    "API_HOST"          : "laica.ifrn.edu.br",
-    "API_PORT"          : 80,
-    "API_TIMEOUT"       : 10,
-    "DEVICE_KEY"        : "chave-do-dispositivo",  # campo 'chave' no banco
+    "API_HOST"            : "laica.ifrn.edu.br",
+    "API_PORT"            : 443,
+    "API_TIMEOUT"         : 10,
+    "DEVICE_KEY"          : "chave-do-dispositivo",  # campo 'chave' no banco
+    # Endpoints (com prefixo do subpath do servidor)
+    "COLDSTART_ENDPOINT"  : "/access-ng/device/coldstart",
+    "HEARTBEAT_ENDPOINT"  : "/access-ng/device/heartbeat",
+    "AUTH_ENDPOINT"       : "/access-ng/caronte/autenticarTag",
+    "COMMAND_ENDPOINT"    : "/access-ng/device/command",
     # Comportamento
-    "HEARTBEAT_INTERVAL": 25,    # segundos — deve ser < OFFLINE_THRESHOLD do servidor (30s)
-    "COMMAND_WAIT"      : 8,     # segundos que o servidor aguarda por comando (long-poll)
-    "COMMAND_TIMEOUT"   : 12,    # timeout do socket do command poll
+    "HEARTBEAT_INTERVAL"  : 25,   # segundos — deve ser < OFFLINE_THRESHOLD do servidor (30s)
+    "COMMAND_WAIT"        : 8,    # segundos que o servidor aguarda por comando (long-poll)
+    "COMMAND_TIMEOUT"     : 12,   # timeout do socket do command poll
     # Hardware
-    "BUTTON_PIN"        : 5,
-    "BUTTON_DEBOUNCE_MS": 50,
-    "BUTTON_TAG"        : "btn_local",  # TAG virtual cadastrada no sistema para este botão
-    "LED_RED_PIN"       : 13,
-    "LED_GREEN_PIN"     : 11,
-    "LED_BLUE_PIN"      : 12,
-    "RELAY_PIN"         : 15,    # pino do relé que controla a fechadura
-    "RELAY_ACTIVE_MS"   : 2000,  # tempo em que o relé fica ativo (porta aberta)
+    "BUTTON_PIN"          : 5,
+    "BUTTON_DEBOUNCE_MS"  : 50,
+    "BUTTON_TAG"          : "btn_local",  # TAG virtual cadastrada no sistema para este botão
+    "LED_RED_PIN"         : 13,
+    "LED_GREEN_PIN"       : 11,
+    "LED_BLUE_PIN"        : 12,
+    "RELAY_PIN"           : 15,   # pino do relé que controla a fechadura
+    "RELAY_ACTIVE_MS"     : 2000, # tempo em que o relé fica ativo (porta aberta)
 }
 
 try:
@@ -57,6 +106,10 @@ API_HOST           = _cfg('API_HOST')
 API_PORT           = _cfg('API_PORT')
 API_TIMEOUT        = _cfg('API_TIMEOUT')
 DEVICE_KEY         = _cfg('DEVICE_KEY')
+COLDSTART_ENDPOINT = _cfg('COLDSTART_ENDPOINT')
+HEARTBEAT_ENDPOINT = _cfg('HEARTBEAT_ENDPOINT')
+AUTH_ENDPOINT      = _cfg('AUTH_ENDPOINT')
+COMMAND_ENDPOINT   = _cfg('COMMAND_ENDPOINT')
 HEARTBEAT_INTERVAL = _cfg('HEARTBEAT_INTERVAL')
 COMMAND_WAIT       = _cfg('COMMAND_WAIT')
 COMMAND_TIMEOUT    = _cfg('COMMAND_TIMEOUT')
@@ -152,23 +205,43 @@ def connect_wifi():
 
 
 def http_post(endpoint, data, timeout=None):
-    """POST JSON para a API. Retorna (status_code, body) ou (None, None)."""
-    sock = None
-    try:
-        sock = socket.socket()
-        sock.settimeout(timeout or API_TIMEOUT)
-        sock.connect((API_HOST, API_PORT))
+    """POST JSON para a API. Retorna (status_code, body) ou (None, None).
 
-        body = json.dumps(data)
-        req = (
-            f"POST {endpoint} HTTP/1.1\r\n"
-            f"Host: {API_HOST}\r\n"
-            f"Content-Type: application/json\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            f"Connection: close\r\n\r\n"
-            f"{body}"
+    Usa getaddrinfo() para resolver o hostname (obrigatório no MicroPython/lwIP)
+    e envolve o socket em ussl quando API_PORT == 443.
+    """
+    sock = None
+    t = timeout or API_TIMEOUT
+    use_ssl = (API_PORT == 443)
+    try:
+        # MicroPython exige endereço já resolvido para sock.connect()
+        ai = socket.getaddrinfo(API_HOST, API_PORT, 0, socket.SOCK_STREAM)
+        addr = ai[0][-1]
+
+        sock = socket.socket()
+        sock.settimeout(t)
+        sock.connect(addr)
+
+        if use_ssl:
+            if not _SSL_AVAILABLE:
+                raise Exception("ussl indisponível neste build")
+            # server_hostname é necessário para SNI (a maioria dos servidores modernos exige)
+            try:
+                sock = ussl.wrap_socket(sock, server_hostname=API_HOST)
+            except TypeError:
+                # builds mais antigos não aceitam server_hostname
+                sock = ussl.wrap_socket(sock)
+
+        body_bytes = json.dumps(data).encode('utf-8')
+        headers = (
+            "POST " + endpoint + " HTTP/1.1\r\n"
+            "Host: " + API_HOST + "\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: " + str(len(body_bytes)) + "\r\n"
+            "Connection: close\r\n\r\n"
         )
-        sock.sendall(req.encode())
+        sock.sendall(headers.encode('utf-8'))
+        sock.sendall(body_bytes)
 
         resp = b""
         while True:
@@ -183,27 +256,29 @@ def http_post(endpoint, data, timeout=None):
         return status, resp_body
 
     except Exception as e:
-        print(f"[HTTP] Erro: {e}")
+        print("[HTTP] Erro:", e)
         return None, None
     finally:
         if sock:
-            try: sock.close()
-            except: pass
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 
 # ─── DEVICE LIFECYCLE ─────────────────────────────────────────────────────────────
 
 def coldstart():
-    status, _ = http_post('/device/coldstart', {'mac': DEVICE_MAC, 'chave': DEVICE_KEY})
+    status, _ = http_post(COLDSTART_ENDPOINT, {'mac': DEVICE_MAC, 'chave': DEVICE_KEY})
     ok = status in (200, 201)
-    print(f"[Device] Coldstart {'OK' if ok else 'FALHOU'}")
+    print("[Device] Coldstart", "OK" if ok else "FALHOU")
     led_ok() if ok else led_denied()
     return ok
 
 
 def heartbeat():
-    status, _ = http_post('/device/heartbeat', {'mac': DEVICE_MAC})
-    print(f"[Device] Heartbeat {'OK' if status in (200, 201) else 'FALHOU'}")
+    status, _ = http_post(HEARTBEAT_ENDPOINT, {'mac': DEVICE_MAC})
+    print("[Device] Heartbeat", "OK" if status in (200, 201) else "FALHOU")
 
 
 # ─── CARONTE — Botão local ─────────────────────────────────────────────────────────
@@ -211,7 +286,7 @@ def heartbeat():
 def caronte_button():
     """Autentica o botão local na API e abre a porta se autorizado."""
     print("[Caronte] Autenticando botão...")
-    status, resp = http_post('/caronte/autenticarTag', {
+    status, resp = http_post(AUTH_ENDPOINT, {
         'mac'  : DEVICE_MAC,
         'tag'  : BUTTON_TAG,
         'chave': DEVICE_KEY,
@@ -226,7 +301,7 @@ def caronte_button():
                 unlock_door()
                 # Drena o comando que o servidor enfileirou para este Cerberos
                 # evitando abertura dupla no próximo poll.
-                http_post('/device/command', {'mac': DEVICE_MAC, 'wait': 0}, timeout=3)
+                http_post(COMMAND_ENDPOINT, {'mac': DEVICE_MAC, 'wait': 0}, timeout=3)
                 return
         except Exception:
             pass
@@ -240,7 +315,7 @@ def cerberos_poll():
     """Long-poll no servidor por comando de abertura remoto (portal web)."""
     print("[Cerberos] Aguardando comando remoto...")
     status, resp = http_post(
-        '/device/command',
+        COMMAND_ENDPOINT,
         {'mac': DEVICE_MAC, 'wait': COMMAND_WAIT},
         timeout=COMMAND_TIMEOUT,
     )
