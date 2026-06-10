@@ -9,7 +9,7 @@
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
       <thead><tr>
-        <th>MAC</th><th>Chave</th><th>Tartaro</th><th>Status</th><th></th>
+        <th>MAC</th><th>Chave</th><th>Tartaro</th><th>Protocolo</th><th>Status</th><th></th>
       </tr></thead>
       <tbody>
       {% for c in carontes %}
@@ -17,6 +17,14 @@
         <td style="font-family:monospace; font-size:.8rem;">{{ c.mac }}</td>
         <td style="font-family:monospace; font-size:.8rem; color:#555;">{{ c.chave }}</td>
         <td>{{ c.ambiente.nome }}</td>
+        <td>
+          {% if c.protocolo == 'mqtt' %}
+            <span class="badge" style="background:#1e4e2e; color:#4e9; font-size:.72rem;">MQTT</span>
+            {% if c.broker %}<small style="color:#555; font-size:.72rem;">{{ c.broker.nome }}</small>{% endif %}
+          {% else %}
+            <span class="badge" style="background:#1e2e4e; color:#7af; font-size:.72rem;">REST</span>
+          {% endif %}
+        </td>
         <td><span class="badge badge-{{ c.status or 'unknown' }}">{{ c.status or 'unknown' }}</span></td>
         <td class="text-right">
           <a href="{{ url_for('admin_caronte_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
@@ -27,7 +35,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="text-center" style="color:#555;">Nenhum caronte cadastrado.</td></tr>
+      <tr><td colspan="6" class="text-center" style="color:#555;">Nenhum caronte cadastrado.</td></tr>
       {% endfor %}
       </tbody>
     </table>

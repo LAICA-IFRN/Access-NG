@@ -3,13 +3,17 @@ Cerberos + Caronte — MicroPython para BitDogLab V6 (Raspberry Pi Pico W)
 
 Papéis do dispositivo:
   Caronte : lê o botão local → autentica na API → abre a porta
-  Cerberos: faz long-poll na API por comandos remotos (portal web) → abre a porta
+  Cerberos: aguarda comandos remotos (portal web) → abre a porta
+
+Suporta dois protocolos: REST (padrão) e MQTT.
 
 ─── config.json (copie para a raiz do dispositivo e ajuste os valores) ──────────
 
 {
     "WIFI_SSID"          : "nome-da-rede",
     "WIFI_PASS"          : "senha-da-rede",
+
+    "PROTOCOLO"          : "rest",
 
     "API_HOST"           : "seu-servidor.exemplo.com",
     "API_PORT"           : 443,
@@ -26,6 +30,13 @@ Papéis do dispositivo:
     "COMMAND_WAIT"       : 8,
     "COMMAND_TIMEOUT"    : 12,
 
+    "MQTT_BROKER"        : "broker.exemplo.com",
+    "MQTT_PORT"          : 1883,
+    "MQTT_USER"          : "",
+    "MQTT_PASS"          : "",
+    "MQTT_TLS"           : false,
+    "AMBIENTE_ID"        : 1,
+
     "BUTTON_PIN"         : 5,
     "BUTTON_DEBOUNCE_MS" : 50,
     "BUTTON_TAG"         : "btn_local",
@@ -38,10 +49,12 @@ Papéis do dispositivo:
 }
 
 Notas:
-  - API_PORT 443  → HTTPS (ussl); 80 → HTTP puro.
+  - PROTOCOLO "rest" → HTTP/HTTPS (padrão); "mqtt" → MQTT.
+  - API_PORT 443  → HTTPS (ssl); 80 → HTTP puro (só no modo REST).
   - DEVICE_KEY    deve bater com o campo 'chave' do Cerberos cadastrado no servidor.
   - BUTTON_TAG    deve ser uma TAG virtual cadastrada para o usuário que o botão representa.
   - HEARTBEAT_INTERVAL deve ser menor que OFFLINE_THRESHOLD do servidor (padrão 30 s).
+  - Em modo MQTT, os tópicos usam '-' no lugar de ':' no MAC address.
 ─────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -63,29 +76,38 @@ _DEFAULTS = {
     # Rede
     "WIFI_SSID"           : "wIFRN-IoT",
     "WIFI_PASS"           : "deviceiotifrn",
-    # API
+    # Protocolo: "rest" ou "mqtt"
+    "PROTOCOLO"           : "rest",
+    # API REST
     "API_HOST"            : "laica.ifrn.edu.br",
     "API_PORT"            : 443,
     "API_TIMEOUT"         : 10,
-    "DEVICE_KEY"          : "chave-do-dispositivo",  # campo 'chave' no banco
-    # Endpoints (com prefixo do subpath do servidor)
+    "DEVICE_KEY"          : "chave-do-dispositivo",
+    # Endpoints REST (com prefixo do subpath do servidor)
     "COLDSTART_ENDPOINT"  : "/access-ng/device/coldstart",
     "HEARTBEAT_ENDPOINT"  : "/access-ng/device/heartbeat",
     "AUTH_ENDPOINT"       : "/access-ng/caronte/autenticarTag",
     "COMMAND_ENDPOINT"    : "/access-ng/device/command",
-    # Comportamento
-    "HEARTBEAT_INTERVAL"  : 25,   # segundos — deve ser < OFFLINE_THRESHOLD do servidor (30s)
-    "COMMAND_WAIT"        : 8,    # segundos que o servidor aguarda por comando (long-poll)
-    "COMMAND_TIMEOUT"     : 12,   # timeout do socket do command poll
+    # Comportamento REST
+    "HEARTBEAT_INTERVAL"  : 25,
+    "COMMAND_WAIT"        : 8,
+    "COMMAND_TIMEOUT"     : 12,
+    # MQTT
+    "MQTT_BROKER"         : "broker.exemplo.com",
+    "MQTT_PORT"           : 1883,
+    "MQTT_USER"           : "",
+    "MQTT_PASS"           : "",
+    "MQTT_TLS"            : False,
+    "AMBIENTE_ID"         : 1,
     # Hardware
     "BUTTON_PIN"          : 5,
     "BUTTON_DEBOUNCE_MS"  : 50,
-    "BUTTON_TAG"          : "btn_local",  # TAG virtual cadastrada no sistema para este botão
+    "BUTTON_TAG"          : "btn_local",
     "LED_RED_PIN"         : 13,
     "LED_GREEN_PIN"       : 11,
     "LED_BLUE_PIN"        : 12,
-    "RELAY_PIN"           : 15,   # pino do relé que controla a fechadura
-    "RELAY_ACTIVE_MS"     : 2000, # tempo em que o relé fica ativo (porta aberta)
+    "RELAY_PIN"           : 15,
+    "RELAY_ACTIVE_MS"     : 2000,
 }
 
 try:
@@ -98,10 +120,11 @@ except Exception:
 
 def _cfg(key):
     v = _file_cfg.get(key, _DEFAULTS[key])
-    return type(_DEFAULTS[key])(v)   # garante o tipo correto (int/str)
+    return type(_DEFAULTS[key])(v)
 
 WIFI_SSID          = _cfg('WIFI_SSID')
 WIFI_PASS          = _cfg('WIFI_PASS')
+PROTOCOLO          = _cfg('PROTOCOLO')
 API_HOST           = _cfg('API_HOST')
 API_PORT           = _cfg('API_PORT')
 API_TIMEOUT        = _cfg('API_TIMEOUT')
@@ -113,6 +136,12 @@ COMMAND_ENDPOINT   = _cfg('COMMAND_ENDPOINT')
 HEARTBEAT_INTERVAL = _cfg('HEARTBEAT_INTERVAL')
 COMMAND_WAIT       = _cfg('COMMAND_WAIT')
 COMMAND_TIMEOUT    = _cfg('COMMAND_TIMEOUT')
+MQTT_BROKER        = _cfg('MQTT_BROKER')
+MQTT_PORT          = _cfg('MQTT_PORT')
+MQTT_USER          = _cfg('MQTT_USER')
+MQTT_PASS          = _cfg('MQTT_PASS')
+MQTT_TLS           = _cfg('MQTT_TLS')
+AMBIENTE_ID        = _cfg('AMBIENTE_ID')
 BUTTON_PIN         = _cfg('BUTTON_PIN')
 BUTTON_DEBOUNCE_MS = _cfg('BUTTON_DEBOUNCE_MS')
 BUTTON_TAG         = _cfg('BUTTON_TAG')
@@ -122,7 +151,8 @@ LED_BLUE_PIN       = _cfg('LED_BLUE_PIN')
 RELAY_PIN          = _cfg('RELAY_PIN')
 RELAY_ACTIVE_MS    = _cfg('RELAY_ACTIVE_MS')
 
-DEVICE_MAC = None
+MQTT_PREFIX = 'access-ng'
+DEVICE_MAC  = None
 
 # ─── HARDWARE ────────────────────────────────────────────────────────────────────
 
@@ -131,7 +161,7 @@ led_r     = None
 led_g     = None
 led_b     = None
 relay     = None
-_btn_flag = False   # setado pelo IRQ; lido no loop principal
+_btn_flag = False
 
 
 def _on_button(_):
@@ -149,9 +179,7 @@ def init_gpio():
     led_g = machine.PWM(machine.Pin(LED_GREEN_PIN)); led_g.freq(1000)
     led_b = machine.PWM(machine.Pin(LED_BLUE_PIN));  led_b.freq(1000)
 
-    # Relé ativo em nível alto; inicia desligado
     relay = machine.Pin(RELAY_PIN, machine.Pin.OUT, value=0)
-
     _led(0, 0, 0)
     print("[GPIO] Inicializado")
 
@@ -166,16 +194,11 @@ def _led_pulse(r, g, b, ms):
     _led(r, g, b); time.sleep_ms(ms); _led(0, 0, 0)
 
 
-def led_ok():
-    _led_pulse(0, 255, 0, 400)
-
-
-def led_denied():
-    _led_pulse(255, 0, 0, 1000)
+def led_ok():     _led_pulse(0, 255, 0, 400)
+def led_denied(): _led_pulse(255, 0, 0, 1000)
 
 
 def unlock_door():
-    """Aciona o relé por RELAY_ACTIVE_MS ms e sinaliza com LED azul."""
     print("[Lock] Abrindo porta...")
     for _ in range(3):
         _led(0, 0, 255); time.sleep_ms(200)
@@ -195,7 +218,7 @@ def connect_wifi():
         return True
     print(f"[WiFi] Conectando em {WIFI_SSID}...")
     wlan.connect(WIFI_SSID, WIFI_PASS)
-    for _ in range(30):          # aguarda até 15s
+    for _ in range(30):
         if wlan.isconnected():
             print(f"[WiFi] IP: {wlan.ifconfig()[0]}")
             return True
@@ -204,18 +227,19 @@ def connect_wifi():
     return False
 
 
+# ─── REST — HTTP/HTTPS ────────────────────────────────────────────────────────────
+
 def http_post(endpoint, data, timeout=None):
     """POST JSON para a API. Retorna (status_code, body) ou (None, None).
 
     Usa getaddrinfo() para resolver o hostname (obrigatório no MicroPython/lwIP)
-    e envolve o socket em ussl quando API_PORT == 443.
+    e envolve o socket em ssl quando API_PORT == 443.
     """
     sock = None
-    t = timeout or API_TIMEOUT
+    t    = timeout or API_TIMEOUT
     use_ssl = (API_PORT == 443)
     try:
-        # MicroPython exige endereço já resolvido para sock.connect()
-        ai = socket.getaddrinfo(API_HOST, API_PORT, 0, socket.SOCK_STREAM)
+        ai   = socket.getaddrinfo(API_HOST, API_PORT, 0, socket.SOCK_STREAM)
         addr = ai[0][-1]
 
         sock = socket.socket()
@@ -224,13 +248,11 @@ def http_post(endpoint, data, timeout=None):
 
         if use_ssl:
             if not _SSL_AVAILABLE:
-                raise Exception("ussl indisponível neste build")
-            # server_hostname é necessário para SNI (a maioria dos servidores modernos exige)
+                raise Exception("ssl indisponível neste build")
             try:
-                sock = ussl.wrap_socket(sock, server_hostname=API_HOST)
+                sock = ssl.wrap_socket(sock, server_hostname=API_HOST)
             except TypeError:
-                # builds mais antigos não aceitam server_hostname
-                sock = ussl.wrap_socket(sock)
+                sock = ssl.wrap_socket(sock)
 
         body_bytes = json.dumps(data).encode('utf-8')
         headers = (
@@ -266,26 +288,23 @@ def http_post(endpoint, data, timeout=None):
                 pass
 
 
-# ─── DEVICE LIFECYCLE ─────────────────────────────────────────────────────────────
+# ─── REST — Device lifecycle ──────────────────────────────────────────────────────
 
-def coldstart():
+def rest_coldstart():
     status, _ = http_post(COLDSTART_ENDPOINT, {'mac': DEVICE_MAC, 'chave': DEVICE_KEY})
     ok = status in (200, 201)
-    print("[Device] Coldstart", "OK" if ok else "FALHOU")
+    print("[REST] Coldstart", "OK" if ok else "FALHOU")
     led_ok() if ok else led_denied()
     return ok
 
 
-def heartbeat():
+def rest_heartbeat():
     status, _ = http_post(HEARTBEAT_ENDPOINT, {'mac': DEVICE_MAC})
-    print("[Device] Heartbeat", "OK" if status in (200, 201) else "FALHOU")
+    print("[REST] Heartbeat", "OK" if status in (200, 201) else "FALHOU")
 
 
-# ─── CARONTE — Botão local ─────────────────────────────────────────────────────────
-
-def caronte_button():
-    """Autentica o botão local na API e abre a porta se autorizado."""
-    print("[Caronte] Autenticando botão...")
+def rest_caronte_button():
+    print("[REST] Autenticando botão...")
     status, resp = http_post(AUTH_ENDPOINT, {
         'mac'  : DEVICE_MAC,
         'tag'  : BUTTON_TAG,
@@ -297,23 +316,20 @@ def caronte_button():
             if isinstance(allow, str):
                 allow = allow.lower() == 'true'
             if allow:
-                print("[Caronte] Acesso autorizado!")
+                print("[REST] Acesso autorizado!")
                 unlock_door()
-                # Drena o comando que o servidor enfileirou para este Cerberos
-                # evitando abertura dupla no próximo poll.
+                # Drena o comando enfileirado no servidor para evitar abertura dupla
                 http_post(COMMAND_ENDPOINT, {'mac': DEVICE_MAC, 'wait': 0}, timeout=3)
                 return
         except Exception:
             pass
-    print("[Caronte] Acesso negado")
+    print("[REST] Acesso negado")
     led_denied()
 
 
-# ─── CERBEROS — Comando remoto ─────────────────────────────────────────────────────
-
-def cerberos_poll():
-    """Long-poll no servidor por comando de abertura remoto (portal web)."""
-    print("[Cerberos] Aguardando comando remoto...")
+def rest_cerberos_poll():
+    """Long-poll no servidor por comando de abertura remoto."""
+    print("[REST] Aguardando comando remoto...")
     status, resp = http_post(
         COMMAND_ENDPOINT,
         {'mac': DEVICE_MAC, 'wait': COMMAND_WAIT},
@@ -322,7 +338,7 @@ def cerberos_poll():
     if status == 200:
         try:
             if json.loads(resp).get('command') == 'unlock':
-                print("[Cerberos] Comando remoto recebido!")
+                print("[REST] Comando remoto recebido!")
                 unlock_door()
                 return True
         except Exception:
@@ -330,13 +346,144 @@ def cerberos_poll():
     return False
 
 
+# ─── MQTT ─────────────────────────────────────────────────────────────────────────
+
+_mqtt_client  = None
+_mqtt_pending = False   # True quando comando de abertura chegou por MQTT
+
+
+def _mac_safe():
+    return DEVICE_MAC.replace(':', '-')
+
+
+def _topics():
+    mac    = _mac_safe()
+    amb    = str(AMBIENTE_ID)
+    prefix = MQTT_PREFIX
+    return {
+        'coldstart' : f'{prefix}/coldstart/{mac}',
+        'heartbeat' : f'{prefix}/heartbeat/{mac}',
+        'tag'       : f'{prefix}/{amb}/caronte/{mac}/tag',
+        'result'    : f'{prefix}/{amb}/caronte/{mac}/result',
+        'command'   : f'{prefix}/{amb}/cerberos/{mac}/command',
+    }
+
+
+def _mqtt_on_message(topic, payload):
+    global _mqtt_pending
+    topic_str = topic.decode('utf-8')
+    t = _topics()
+    if topic_str == t['command']:
+        try:
+            data = json.loads(payload)
+            if data.get('command') == 'unlock':
+                print("[MQTT] Comando de abertura recebido!")
+                _mqtt_pending = True
+        except Exception:
+            pass
+    elif topic_str == t['result']:
+        try:
+            data  = json.loads(payload)
+            allow = data.get('allow', False)
+            if allow:
+                print("[MQTT] Acesso autorizado pelo servidor!")
+                unlock_door()
+            else:
+                print(f"[MQTT] Acesso negado: {data.get('motivo', '')}")
+                led_denied()
+        except Exception:
+            pass
+
+
+def mqtt_connect():
+    global _mqtt_client
+    try:
+        from umqtt.robust import MQTTClient
+    except ImportError:
+        try:
+            from umqtt.simple import MQTTClient
+        except ImportError:
+            print("[MQTT] umqtt não disponível — instale micropython-umqtt.robust")
+            return False
+
+    cid = f'cerberos-{_mac_safe()}'
+    try:
+        kwargs = {
+            'port'      : MQTT_PORT,
+            'keepalive' : 30,
+        }
+        if MQTT_USER:
+            kwargs['user']     = MQTT_USER
+            kwargs['password'] = MQTT_PASS
+        if MQTT_TLS:
+            kwargs['ssl'] = True
+        client = MQTTClient(cid, MQTT_BROKER, **kwargs)
+        client.set_callback(_mqtt_on_message)
+        client.connect()
+        t = _topics()
+        client.subscribe(t['command'])
+        client.subscribe(t['result'])
+        _mqtt_client = client
+        print(f"[MQTT] Conectado ao broker {MQTT_BROKER}:{MQTT_PORT}")
+        return True
+    except Exception as e:
+        print(f"[MQTT] Falha na conexão: {e}")
+        return False
+
+
+def mqtt_coldstart():
+    if not _mqtt_client:
+        return False
+    t = _topics()
+    try:
+        _mqtt_client.publish(
+            t['coldstart'],
+            json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY}),
+            qos=1
+        )
+        print("[MQTT] Coldstart publicado")
+        led_ok()
+        return True
+    except Exception as e:
+        print(f"[MQTT] Erro coldstart: {e}")
+        led_denied()
+        return False
+
+
+def mqtt_heartbeat():
+    if not _mqtt_client:
+        return
+    try:
+        _mqtt_client.publish(_topics()['heartbeat'], json.dumps({'mac': DEVICE_MAC}))
+    except Exception as e:
+        print(f"[MQTT] Erro heartbeat: {e}")
+
+
+def mqtt_caronte_button():
+    if not _mqtt_client:
+        print("[MQTT] Sem conexão ao broker")
+        led_denied()
+        return
+    print("[MQTT] Publicando TAG do botão...")
+    try:
+        _mqtt_client.publish(_topics()['tag'], json.dumps({
+            'tag'  : BUTTON_TAG,
+            'chave': DEVICE_KEY,
+            'mac'  : DEVICE_MAC,
+        }), qos=1)
+    except Exception as e:
+        print(f"[MQTT] Erro ao publicar TAG: {e}")
+        led_denied()
+
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────────
 
 def main():
-    global DEVICE_MAC, _btn_flag
+    global DEVICE_MAC, _btn_flag, _mqtt_pending
 
     print("\n" + "=" * 48)
     print("  CERBEROS + CARONTE — BitDogLab V6")
+    print(f"  Protocolo: {PROTOCOLO.upper()}")
     print("=" * 48)
 
     init_gpio()
@@ -348,49 +495,92 @@ def main():
     print(f"[Device] MAC: {DEVICE_MAC}")
 
     while not connect_wifi():
-        print("[WiFi] Aguardando rede — nova tentativa em 10s...")
+        print("[WiFi] Nova tentativa em 10s...")
         led_denied()
         time.sleep(10)
 
-    coldstart()
-    last_heartbeat = time.time()
-    print("[Main] Operacional\n")
+    # ── Modo MQTT ─────────────────────────────────────────────────────────
+    if PROTOCOLO == 'mqtt':
+        while not mqtt_connect():
+            print("[MQTT] Tentando reconectar em 10s...")
+            led_denied()
+            time.sleep(10)
 
-    while True:
-        try:
-            # Reconexão automática se WiFi cair
-            if not network.WLAN(network.STA_IF).isconnected():
-                print("[WiFi] Conexão perdida — reconectando...")
-                if connect_wifi():
-                    coldstart()
+        mqtt_coldstart()
+        last_heartbeat = time.time()
+        print("[Main] Operacional (MQTT)\n")
+
+        while True:
+            try:
+                if not network.WLAN(network.STA_IF).isconnected():
+                    print("[WiFi] Reconectando...")
+                    if connect_wifi():
+                        mqtt_connect()
+                        mqtt_coldstart()
+                        last_heartbeat = time.time()
+                    else:
+                        time.sleep(5)
+                        continue
+
+                if _btn_flag:
+                    _btn_flag = False
+                    time.sleep_ms(BUTTON_DEBOUNCE_MS)
+                    mqtt_caronte_button()
+
+                if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
+                    mqtt_heartbeat()
                     last_heartbeat = time.time()
-                else:
-                    time.sleep(5)
-                    continue
 
-            # Caronte: botão local
-            # A confirmação por button.value() foi removida intencionalmente:
-            # o poll bloqueia até COMMAND_TIMEOUT segundos, então quando a flag
-            # é checada o botão já foi solto — o IRQ em si é suficiente como fonte.
-            if _btn_flag:
-                _btn_flag = False
-                time.sleep_ms(BUTTON_DEBOUNCE_MS)  # filtra bouncing mecânico
-                caronte_button()
+                # Processa mensagens MQTT pendentes (command / result)
+                try:
+                    _mqtt_client.check_msg()
+                except Exception as e:
+                    print(f"[MQTT] Erro check_msg: {e} — reconectando...")
+                    if mqtt_connect():
+                        mqtt_coldstart()
 
-            # Heartbeat periódico
-            if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
-                heartbeat()
-                last_heartbeat = time.time()
+                if _mqtt_pending:
+                    _mqtt_pending = False
+                    unlock_door()
 
-            # Cerberos: long-poll por comando remoto
-            # Pulado se o botão já foi pressionado neste ciclo para responder
-            # imediatamente; caso contrário bloqueia até COMMAND_TIMEOUT.
-            if not _btn_flag:
-                cerberos_poll()
+                time.sleep_ms(50)
 
-        except Exception as e:
-            print(f"[Main] Erro: {e}")
-            time.sleep(1)
+            except Exception as e:
+                print(f"[Main] Erro: {e}")
+                time.sleep(1)
+
+    # ── Modo REST ─────────────────────────────────────────────────────────
+    else:
+        rest_coldstart()
+        last_heartbeat = time.time()
+        print("[Main] Operacional (REST)\n")
+
+        while True:
+            try:
+                if not network.WLAN(network.STA_IF).isconnected():
+                    print("[WiFi] Conexão perdida — reconectando...")
+                    if connect_wifi():
+                        rest_coldstart()
+                        last_heartbeat = time.time()
+                    else:
+                        time.sleep(5)
+                        continue
+
+                if _btn_flag:
+                    _btn_flag = False
+                    time.sleep_ms(BUTTON_DEBOUNCE_MS)
+                    rest_caronte_button()
+
+                if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
+                    rest_heartbeat()
+                    last_heartbeat = time.time()
+
+                if not _btn_flag:
+                    rest_cerberos_poll()
+
+            except Exception as e:
+                print(f"[Main] Erro: {e}")
+                time.sleep(1)
 
 
 main()

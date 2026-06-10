@@ -1,0 +1,56 @@
+{% extends "admin/base.html" %}
+{% block title %}Brokers MQTT{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#4e9; margin:0;">Brokers MQTT</h5>
+  <a href="{{ url_for('admin_broker_novo') }}" class="btn btn-sm" style="background:#4e9; color:#000; border:none;">+ Novo</a>
+</div>
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr>
+        <th>Nome</th><th>Host</th><th>Porta</th><th>Usuário</th><th>TLS</th><th>Ativo</th><th>Dispositivos</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for b in brokers %}
+      <tr>
+        <td style="color:#4e9; font-weight:600;">{{ b.nome }}</td>
+        <td style="font-family:monospace; font-size:.8rem;">{{ b.host }}</td>
+        <td style="font-family:monospace; font-size:.8rem;">{{ b.porta }}</td>
+        <td style="font-size:.8rem; color:#888;">{{ b.usuario or '—' }}</td>
+        <td>
+          {% if b.tls %}<span class="badge" style="background:#1e4e7e;">TLS</span>{% else %}<span style="color:#444;">—</span>{% endif %}
+        </td>
+        <td>
+          {% if b.ativo %}<span class="badge badge-online">ativo</span>{% else %}<span class="badge badge-offline">inativo</span>{% endif %}
+        </td>
+        <td style="font-size:.8rem; color:#888;">
+          {{ b.cerberoses|length }} cerberos · {{ b.carontes|length }} caronte
+        </td>
+        <td class="text-right">
+          <a href="{{ url_for('admin_broker_editar', id=b.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
+          <form method="POST" action="{{ url_for('admin_broker_excluir', id=b.id) }}" style="display:inline;"
+                onsubmit="return confirm('Remover broker {{ b.nome }}? Isso desconecta todos os dispositivos vinculados.')">
+            <button class="btn btn-sm btn-outline-danger py-0 px-2">Excluir</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="text-center" style="color:#555;">Nenhum broker cadastrado.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="mt-3" style="font-size:.8rem; color:#555; line-height:1.8;">
+  <strong style="color:#4e9;">Estrutura de tópicos:</strong><br>
+  <code style="color:#888;">access-ng/coldstart/{mac}</code> — dispositivo → servidor (boot)<br>
+  <code style="color:#888;">access-ng/heartbeat/{mac}</code> — dispositivo → servidor (periódico)<br>
+  <code style="color:#888;">access-ng/{amb_id}/caronte/{mac}/tag</code> — Caronte → servidor (TAG RFID)<br>
+  <code style="color:#888;">access-ng/{amb_id}/caronte/{mac}/result</code> — servidor → Caronte (resultado)<br>
+  <code style="color:#888;">access-ng/{amb_id}/cerberos/{mac}/command</code> — servidor → Cerberos (abrir)<br>
+  <code style="color:#888;">access-ng/{amb_id}/cerberos/{mac}/status</code> — Cerberos → servidor (status)<br>
+  <em style="color:#444;">O MAC usa '-' no lugar de ':' nos tópicos.</em>
+</div>
+{% endblock %}

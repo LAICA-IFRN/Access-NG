@@ -45,6 +45,8 @@
          href="{{ url_for('admin_usuarios') }}">Usuários</a>
       <a class="nav-link {% if 'logs' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_logs') }}">Logs</a>
+      <a class="nav-link {% if 'broker' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_brokers') }}" style="font-size:.85rem; color:#4e9;">Brokers MQTT</a>
       <hr style="border-color:#2d2d4e; margin:.5rem 0;">
       <a class="nav-link" href="{{ url_for('admin_logout') }}" style="color:#7e1e1e;">Sair</a>
     </nav>

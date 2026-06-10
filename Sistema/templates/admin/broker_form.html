@@ -1,0 +1,59 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ 'Editar' if broker else 'Novo' }} Broker MQTT{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#4e9; margin:0;">{{ 'Editar' if broker else 'Novo' }} Broker MQTT</h5>
+  <a href="{{ url_for('admin_brokers') }}" style="color:#888; font-size:.85rem;">← Voltar</a>
+</div>
+<div class="card" style="max-width:520px;">
+  <div class="card-body">
+    <form method="POST">
+      <div class="form-group">
+        <label>Nome</label>
+        <input name="nome" type="text" class="form-control" placeholder="ex: Broker Principal"
+               value="{{ broker.nome if broker else '' }}" required>
+      </div>
+      <div class="form-row">
+        <div class="form-group col-8">
+          <label>Host</label>
+          <input name="host" type="text" class="form-control" placeholder="broker.exemplo.com"
+                 value="{{ broker.host if broker else '' }}" required>
+        </div>
+        <div class="form-group col-4">
+          <label>Porta</label>
+          <input name="porta" type="number" class="form-control" min="1" max="65535"
+                 value="{{ broker.porta if broker else 1883 }}" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group col-6">
+          <label>Usuário <small style="color:#555;">(opcional)</small></label>
+          <input name="usuario" type="text" class="form-control" autocomplete="off"
+                 value="{{ broker.usuario if broker else '' }}">
+        </div>
+        <div class="form-group col-6">
+          <label>Senha <small style="color:#555;">{% if broker %}(deixe vazio para manter){% else %}opcional{% endif %}</small></label>
+          <input name="senha" type="password" class="form-control" autocomplete="new-password">
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="tls" id="chk-tls"
+                 {% if broker and broker.tls %}checked{% endif %}>
+          <label class="form-check-label" for="chk-tls" style="color:#4e9;">
+            Usar TLS/SSL
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="ativo" id="chk-ativo"
+                 {% if not broker or broker.ativo %}checked{% endif %}>
+          <label class="form-check-label" for="chk-ativo">Ativo</label>
+        </div>
+      </div>
+      <button type="submit" class="btn" style="background:#4e9; color:#000; border:none;">Salvar</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

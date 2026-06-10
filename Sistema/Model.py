@@ -81,6 +81,20 @@ class Ambiente(Base):
     carontes: Mapped[List[Caronte]] = relationship(back_populates="ambiente")
 
 
+class BrokerMQTT(Base):
+    __tablename__ = 'brokers_mqtt'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(100))
+    host: Mapped[str] = mapped_column(String(200))
+    porta: Mapped[int] = mapped_column(Integer, default=1883)
+    usuario: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    senha: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    tls: Mapped[bool] = mapped_column(Boolean, default=False)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    cerberoses: Mapped[List["Cerberos"]] = relationship(back_populates="broker")
+    carontes: Mapped[List["Caronte"]] = relationship(back_populates="broker")
+
+
 class Cerberos(Base):
     __tablename__ = 'cerberoses'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -92,6 +106,9 @@ class Cerberos(Base):
     status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     last_seen: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
     coldstart_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    protocolo: Mapped[str] = mapped_column(String(10), default='rest', server_default='rest')
+    broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
+    broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="cerberoses")
 
 
 class Caronte(Base):
@@ -104,6 +121,9 @@ class Caronte(Base):
     status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     last_seen: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
     coldstart_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    protocolo: Mapped[str] = mapped_column(String(10), default='rest', server_default='rest')
+    broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
+    broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="carontes")
 
     def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
@@ -164,3 +184,7 @@ _add_column_if_missing('access_logs', 'ambiente_id', 'INTEGER')
 _add_column_if_missing('access_logs', 'ambiente_nome', 'VARCHAR(100)')
 _add_column_if_missing('access_logs', 'usuario_id', 'INTEGER')
 _add_column_if_missing('access_logs', 'usuario_nome', 'VARCHAR(100)')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'protocolo', "VARCHAR(10) DEFAULT 'rest'")
+    _add_column_if_missing(_table, 'broker_id', 'INTEGER')
