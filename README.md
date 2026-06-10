@@ -4,6 +4,9 @@ Sistema de controle de acesso para ambientes físicos usando ESP32/ESP8266,
 RFID, fechaduras acionadas por relé, API Flask, painel administrativo,
 dashboard de status e uma versão web/mobile do Caronte com geolocalização.
 
+Cerberoses e Carontes podem se comunicar com o Sistema por **REST** (HTTP/HTTPS,
+modo padrão) ou por **MQTT**, configurável por dispositivo no painel admin.
+
 O projeto usa a seguinte nomenclatura:
 
 - **Tartaro**: ambiente físico controlado, modelado como `Ambiente`.
@@ -20,9 +23,10 @@ Access-NG/
 │   ├── api.py                         # API principal, admin, Caronte web e endpoints IoT
 │   ├── Model.py                       # Modelos SQLAlchemy e migrações SQLite automáticas
 │   ├── Tartaro.py                     # Regras de autenticação, filas de abertura e geofence
+│   ├── mqtt_service.py                # Serviço MQTT de background (brokers, tópicos, handlers)
 │   ├── requirements.txt               # Dependências do Sistema
 │   └── templates/
-│       ├── admin/                     # Painel administrativo
+│       ├── admin/                     # Painel administrativo (inclui CRUD de Brokers MQTT)
 │       └── caronte/                   # Portal mobile do Caronte web
 ├── Dashboard/
 │   ├── api.py                         # Dashboard e proxy de /api/status
@@ -33,7 +37,9 @@ Access-NG/
     ├── Fechadura/
     │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID
     │   ├── Caronte_RFID.ino           # ESP leitor RFID via MFRC522
-    │   └── Cerberos.ino               # Sketch alternativo/legado
+    │   ├── Cerberos.ino               # Sketch alternativo/legado
+    │   ├── Cerberos_BitDogLab.py      # Firmware MicroPython (Pico W) — modo REST
+    │   └── Cerberos_BitDogLab_MQTT.py # Firmware MicroPython (Pico W) — modo MQTT
     ├── Ambiente/
     │   └── TempHumi.ino               # Sensor de temperatura/umidade
     └── ModPotencia/
@@ -69,10 +75,22 @@ Fluxo de status:
 4. `GET /api/status` expõe todos os Tartaros com seus dispositivos.
 5. O Dashboard consulta o Sistema e atualiza a tela a cada 10 segundos.
 
+Fluxo MQTT (alternativo ao REST, por dispositivo):
+
+1. No painel admin, o Cerberos/Caronte é configurado com `protocolo=mqtt` e associado a um Broker MQTT cadastrado em `/admin/brokers`.
+2. O `mqtt_service` conecta a todos os brokers ativos ao iniciar o Sistema (`_mqtt().start()`).
+3. O dispositivo publica `access-ng/coldstart/{mac}` e `access-ng/heartbeat/{mac}` periodicamente — o serviço atualiza `status`/`last_seen` da mesma forma que os endpoints REST.
+4. Um Caronte MQTT publica a TAG lida em `access-ng/{amb_id}/caronte/{mac}/tag`; o Sistema autentica com `Tartaro.autenticarTAGDetalhado()`, responde em `access-ng/{amb_id}/caronte/{mac}/result` e, se autorizado, publica o comando de abertura para os Cerberoses do ambiente.
+5. Um Cerberos MQTT assina `access-ng/{amb_id}/cerberos/{mac}/command`; ao receber `{"command":"unlock"}` aciona o relé.
+6. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
+
+O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
+
 ## Requisitos
 
 - Python 3.10+ recomendado.
 - SQLite.
+- `paho-mqtt` (incluído em `Sistema/requirements.txt`) — necessário para o suporte a MQTT. Sem ele, o `mqtt_service` fica desabilitado e o Sistema funciona normalmente apenas com REST.
 - Para firmware:
   - Arduino IDE ou PlatformIO.
   - Bibliotecas Arduino usadas pelos sketches:
@@ -168,6 +186,8 @@ Colunas adicionadas automaticamente em `cerberoses` e `carontes`:
 - `status VARCHAR(20)`
 - `last_seen DATETIME`
 - `coldstart_at DATETIME`
+- `protocolo VARCHAR(10) DEFAULT 'rest'`
+- `broker_id INTEGER`
 
 Colunas adicionadas automaticamente em `ambientes`:
 
@@ -227,6 +247,23 @@ Tabela: `ambientes`
 `latitude`, `longitude` e `raio_metros` são usados pelo Caronte web para validar
 proximidade. O raio padrão usado pelo código é 50 metros quando o campo está vazio.
 
+### BrokerMQTT
+
+Tabela: `brokers_mqtt`
+
+- `id`
+- `nome`
+- `host`
+- `porta` (padrão `1883`)
+- `usuario`
+- `senha`
+- `tls`
+- `ativo`
+- relacionamento um-para-muitos com `Cerberos` e `Caronte`
+
+Cadastrado em `/admin/brokers`. Ao salvar/ativar um broker, o `mqtt_service`
+conecta (ou reconecta) automaticamente; ao excluir/desativar, desconecta.
+
 ### Cerberos
 
 Tabela: `cerberoses`
@@ -239,6 +276,8 @@ Tabela: `cerberoses`
 - `status`
 - `last_seen`
 - `coldstart_at`
+- `protocolo` (`rest` ou `mqtt`, padrão `rest`)
+- `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
 
 Representa a fechadura/dispositivo acionável.
 
@@ -253,6 +292,8 @@ Tabela: `carontes`
 - `status`
 - `last_seen`
 - `coldstart_at`
+- `protocolo` (`rest` ou `mqtt`, padrão `rest`)
+- `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
 
 Representa o leitor/autenticador fixo.
 
@@ -468,6 +509,10 @@ Acesso exige um usuário com `admin=True`.
 | `GET/POST` | `/admin/carontes/novo` | Cria Caronte fixo. |
 | `GET/POST` | `/admin/carontes/<id>/editar` | Edita Caronte fixo. |
 | `POST` | `/admin/carontes/<id>/excluir` | Remove Caronte fixo. |
+| `GET` | `/admin/brokers` | Lista Brokers MQTT. |
+| `GET/POST` | `/admin/brokers/novo` | Cria Broker MQTT e conecta o `mqtt_service`. |
+| `GET/POST` | `/admin/brokers/<id>/editar` | Edita Broker MQTT e reconecta/desconecta conforme `ativo`. |
+| `POST` | `/admin/brokers/<id>/excluir` | Desconecta e remove Broker MQTT. |
 | `GET` | `/admin/usuarios` | Lista usuários. |
 | `GET/POST` | `/admin/usuarios/novo` | Cria usuário e define ambientes permitidos. |
 | `GET/POST` | `/admin/usuarios/<id>/editar` | Edita usuário e permissões. |
@@ -491,7 +536,7 @@ A API registra todos os acessos em `access_logs`, no banco `Sistema/Acesso.db`. 
 - `ip` — origem da requisição
 - `mac` — endereço MAC do dispositivo, se presente
 - `tag` — tag usada na tentativa, se presente
-- `event_type` — tipo do evento, como `api_request`, `login_admin` ou `comando_abertura`
+- `event_type` — tipo do evento, como `api_request`, `login_admin`, `comando_abertura`, `mqtt_heartbeat`, `mqtt_status` ou `mqtt_command`
 - `result` — resultado resumido do evento, como `sucesso` ou `negado`
 - `ambiente_id` e `ambiente_nome` — Tartaro relacionado, quando identificado
 - `usuario_id` e `usuario_nome` — usuário relacionado, quando identificado
@@ -637,6 +682,59 @@ pm2 restart access-ng-api             # restart forçado
 ```
 
 ## Firmware
+
+### BitDogLab V6 (Raspberry Pi Pico W) — MicroPython
+
+Dois firmwares prontos em `Hardware/Fechadura/`:
+
+- `Cerberos_BitDogLab.py` — modo REST (HTTP/HTTPS), padrão.
+- `Cerberos_BitDogLab_MQTT.py` — modo MQTT exclusivo.
+
+Ambos carregam configuração de um `config.json` no mesmo diretório, com fallback
+para valores padrão quando o arquivo não existe.
+
+#### `config.json` do modo MQTT
+
+```json
+{
+    "WIFI_SSID"          : "nome-da-rede",
+    "WIFI_PASS"          : "senha-da-rede",
+
+    "MQTT_BROKER"        : "broker.exemplo.com",
+    "MQTT_PORT"          : 1883,
+    "MQTT_USER"          : "",
+    "MQTT_PASS"          : "",
+    "MQTT_TLS"           : false,
+
+    "DEVICE_KEY"         : "chave-cadastrada-no-banco",
+    "AMBIENTE_ID"        : 1,
+
+    "HEARTBEAT_INTERVAL" : 25,
+
+    "BUTTON_PIN"         : 5,
+    "BUTTON_DEBOUNCE_MS" : 50,
+    "BUTTON_TAG"         : "btn_local",
+
+    "LED_RED_PIN"        : 13,
+    "LED_GREEN_PIN"      : 11,
+    "LED_BLUE_PIN"       : 12,
+    "RELAY_PIN"          : 15,
+    "RELAY_ACTIVE_MS"    : 2000
+}
+```
+
+`DEVICE_KEY` deve corresponder ao campo `chave` cadastrado para o Cerberos/Caronte
+no banco, e o dispositivo precisa estar com `protocolo=mqtt` e um `broker_id`
+apontando para um broker cadastrado em `/admin/brokers`. `HEARTBEAT_INTERVAL` deve
+ser menor que o limite de 30s usado pelo monitor de offline do Sistema.
+
+O firmware MQTT requer a biblioteca `umqtt` (`umqtt.robust` ou `umqtt.simple`)
+instalada na placa via `mip`:
+
+```python
+import mip
+mip.install("umqtt.robust")
+```
 
 ### Configuração de IP
 
@@ -811,6 +909,19 @@ Verifique:
 
 O usuário logado provavelmente não está associado ao Tartaro em `usuarios_ambientes`.
 
+### Firmware MQTT não conecta (`ECONNABORTED`)
+
+`[MQTT] Falha na conexão: [Errno 103] ECONNABORTED` indica que o TCP foi recusado
+antes do handshake MQTT — geralmente não é erro de configuração. Verifique:
+
+- `MQTT_PORT`/`MQTT_TLS` no `config.json` batem com o broker (porta 1883 sem TLS
+  ou 8883 com TLS).
+- O host resolve para o IP esperado (`[Diag]` no boot do firmware mostra o IP
+  resolvido e testa um socket TCP cru antes do `umqtt`).
+- A rede Wi-Fi do dispositivo tem rota/firewall liberado até o broker — redes
+  segmentadas (ex: VLAN de IoT separada da VLAN do broker) costumam derrubar a
+  conexão mesmo com DNS funcionando.
+
 ## Estado atual importante
 
 - O backend do Sistema já possui endpoints novos de coldstart, heartbeat e status.
@@ -820,3 +931,6 @@ O usuário logado provavelmente não está associado ao Tartaro em `usuarios_amb
 - Carontes fixos precisam de heartbeat periódico para status online confiável.
 - Pipeline CI/CD configurado em `.github/workflows/deploy.yml`; configure os 5 secrets no repositório para ativar o deploy automático.
 - `ecosystem.config.js` na raiz define os dois processos PM2 (`access-ng-api` e `access-ng-dashboard`).
+- Suporte a MQTT adicionado: `mqtt_service.py`, CRUD de Brokers em `/admin/brokers`,
+  campos `protocolo`/`broker_id` em Cerberos e Caronte, e firmware
+  `Cerberos_BitDogLab_MQTT.py`. Requer `paho-mqtt` no Sistema e `umqtt` na placa.
