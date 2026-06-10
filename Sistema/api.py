@@ -11,6 +11,7 @@ import threading
 import time
 import os
 import json
+from mqtt_service import get_service as _mqtt
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get('SECRET_KEY', 'tartaro-dev-key-change-in-prod')
@@ -243,6 +244,7 @@ def _offline_monitor():
 
 
 threading.Thread(target=_offline_monitor, daemon=True).start()
+_mqtt().start()
 
 
 def ensure_default_admin():
@@ -284,6 +286,9 @@ def autenticar():
         usuario=auth.get('usuario'),
         payload={'tag': c.get('tag'), 'mac': c.get('mac')}
     )
+    if auth['allow'] and auth.get('ambiente'):
+        for _cb in auth['ambiente'].cerberoses:
+            _mqtt().unlock_cerberos(_cb)
     return jsonify({'Allow': auth['allow']})
 
 
@@ -642,6 +647,8 @@ def caronte_solicitar():
             usuario=usuario,
             payload=content
         )
+        for _cb in ambiente.cerberoses:
+            _mqtt().unlock_cerberos(_cb)
         return jsonify({'allow': True})
     _create_audit_log(
         event_type='tentativa_web',
@@ -861,15 +868,20 @@ def admin_cerberoses():
 @admin_required
 def admin_cerberos_novo():
     ambientes = db.query(Ambiente).all()
+    brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
+        broker_id = int(f['broker_id']) if f.get('broker_id') else None
         c = Cerberos(nome=f['nome'], mac=f['mac'], chave=f['chave'],
-                     ambiente_id=int(f['ambiente_id']))
+                     ambiente_id=int(f['ambiente_id']),
+                     protocolo=f.get('protocolo', 'rest'),
+                     broker_id=broker_id)
         db.add(c)
         db.commit()
         flash('Cerberos criado.', 'success')
         return redirect(url_for('admin_cerberoses'))
-    return render_template('admin/cerberos_form.html', cerberos=None, ambientes=ambientes)
+    return render_template('admin/cerberos_form.html', cerberos=None,
+                           ambientes=ambientes, brokers=brokers)
 
 
 @app.route('/admin/cerberoses/<int:id>/editar', methods=['GET', 'POST'])
@@ -879,16 +891,20 @@ def admin_cerberos_editar(id):
     if c is None:
         abort(404)
     ambientes = db.query(Ambiente).all()
+    brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
-        c.nome = f['nome']
-        c.mac = f['mac']
-        c.chave = f['chave']
+        c.nome       = f['nome']
+        c.mac        = f['mac']
+        c.chave      = f['chave']
         c.ambiente_id = int(f['ambiente_id'])
+        c.protocolo  = f.get('protocolo', 'rest')
+        c.broker_id  = int(f['broker_id']) if f.get('broker_id') else None
         db.commit()
         flash('Cerberos atualizado.', 'success')
         return redirect(url_for('admin_cerberoses'))
-    return render_template('admin/cerberos_form.html', cerberos=c, ambientes=ambientes)
+    return render_template('admin/cerberos_form.html', cerberos=c,
+                           ambientes=ambientes, brokers=brokers)
 
 
 @app.route('/admin/cerberoses/<int:id>/abrir', methods=['POST'])
@@ -898,6 +914,7 @@ def admin_cerberos_abrir(id):
     if c is None:
         abort(404)
     Tartaro().acionarCerberos(c.mac)
+    _mqtt().unlock_cerberos(c)
     usuario = None
     if session.get('admin_id'):
         usuario = db.query(Usuario).filter(Usuario.id == session.get('admin_id')).first()
@@ -938,14 +955,19 @@ def admin_carontes():
 @admin_required
 def admin_caronte_novo():
     ambientes = db.query(Ambiente).all()
+    brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
-        c = Caronte(mac=f['mac'], chave=f['chave'], ambiente_id=int(f['ambiente_id']))
+        broker_id = int(f['broker_id']) if f.get('broker_id') else None
+        c = Caronte(mac=f['mac'], chave=f['chave'], ambiente_id=int(f['ambiente_id']),
+                    protocolo=f.get('protocolo', 'rest'),
+                    broker_id=broker_id)
         db.add(c)
         db.commit()
         flash('Caronte criado.', 'success')
         return redirect(url_for('admin_carontes'))
-    return render_template('admin/caronte_form.html', caronte=None, ambientes=ambientes)
+    return render_template('admin/caronte_form.html', caronte=None,
+                           ambientes=ambientes, brokers=brokers)
 
 
 @app.route('/admin/carontes/<int:id>/editar', methods=['GET', 'POST'])
@@ -955,15 +977,19 @@ def admin_caronte_editar(id):
     if c is None:
         abort(404)
     ambientes = db.query(Ambiente).all()
+    brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
-        c.mac = f['mac']
-        c.chave = f['chave']
+        c.mac        = f['mac']
+        c.chave      = f['chave']
         c.ambiente_id = int(f['ambiente_id'])
+        c.protocolo  = f.get('protocolo', 'rest')
+        c.broker_id  = int(f['broker_id']) if f.get('broker_id') else None
         db.commit()
         flash('Caronte atualizado.', 'success')
         return redirect(url_for('admin_carontes'))
-    return render_template('admin/caronte_form.html', caronte=c, ambientes=ambientes)
+    return render_template('admin/caronte_form.html', caronte=c,
+                           ambientes=ambientes, brokers=brokers)
 
 
 @app.route('/admin/carontes/<int:id>/excluir', methods=['POST'])
@@ -976,6 +1002,76 @@ def admin_caronte_excluir(id):
     db.commit()
     flash('Caronte removido.', 'success')
     return redirect(url_for('admin_carontes'))
+
+
+# Brokers MQTT ──────────────────────────────
+
+@app.route('/admin/brokers')
+@admin_required
+def admin_brokers():
+    brokers = db.query(BrokerMQTT).all()
+    return render_template('admin/brokers.html', brokers=brokers)
+
+
+@app.route('/admin/brokers/novo', methods=['GET', 'POST'])
+@admin_required
+def admin_broker_novo():
+    if request.method == 'POST':
+        f = request.form
+        b = BrokerMQTT(
+            nome=f['nome'],
+            host=f['host'],
+            porta=int(f.get('porta') or 1883),
+            usuario=f.get('usuario') or None,
+            senha=f.get('senha') or None,
+            tls='tls' in f,
+            ativo='ativo' in f,
+        )
+        db.add(b)
+        db.commit()
+        _mqtt().refresh_broker(b.id)
+        flash('Broker MQTT criado.', 'success')
+        return redirect(url_for('admin_brokers'))
+    return render_template('admin/broker_form.html', broker=None)
+
+
+@app.route('/admin/brokers/<int:id>/editar', methods=['GET', 'POST'])
+@admin_required
+def admin_broker_editar(id):
+    b = db.query(BrokerMQTT).filter(BrokerMQTT.id == id).first()
+    if b is None:
+        abort(404)
+    if request.method == 'POST':
+        f = request.form
+        b.nome    = f['nome']
+        b.host    = f['host']
+        b.porta   = int(f.get('porta') or 1883)
+        b.usuario = f.get('usuario') or None
+        if f.get('senha'):
+            b.senha = f['senha']
+        b.tls   = 'tls' in f
+        b.ativo = 'ativo' in f
+        db.commit()
+        if b.ativo:
+            _mqtt().refresh_broker(b.id)
+        else:
+            _mqtt().stop_broker(b.id)
+        flash('Broker MQTT atualizado.', 'success')
+        return redirect(url_for('admin_brokers'))
+    return render_template('admin/broker_form.html', broker=b)
+
+
+@app.route('/admin/brokers/<int:id>/excluir', methods=['POST'])
+@admin_required
+def admin_broker_excluir(id):
+    b = db.query(BrokerMQTT).filter(BrokerMQTT.id == id).first()
+    if b is None:
+        abort(404)
+    _mqtt().stop_broker(b.id)
+    db.delete(b)
+    db.commit()
+    flash('Broker MQTT removido.', 'success')
+    return redirect(url_for('admin_brokers'))
 
 
 # Usuários ───────────────────────────────────
@@ -1003,6 +1099,9 @@ def admin_logs():
         ('api_request', 'Requisicoes da API'),
         ('device_coldstart', 'Coldstart de dispositivo'),
         ('device_offline', 'Dispositivo offline'),
+        ('mqtt_heartbeat', 'Heartbeat MQTT'),
+        ('mqtt_status', 'Status MQTT'),
+        ('mqtt_command', 'Comando MQTT'),
     ]
     event_label_map = {v: l for v, l in event_types if v}
     return render_template(

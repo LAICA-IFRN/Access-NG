@@ -5,7 +5,7 @@
   <h5 style="color:#c9a227; margin:0;">{{ 'Editar' if cerberos else 'Novo' }} Cerberos</h5>
   <a href="{{ url_for('admin_cerberoses') }}" style="color:#888; font-size:.85rem;">← Voltar</a>
 </div>
-<div class="card" style="max-width:500px;">
+<div class="card" style="max-width:520px;">
   <div class="card-body">
     <form method="POST">
       <div class="form-group">
@@ -34,8 +34,50 @@
           {% endfor %}
         </select>
       </div>
+
+      <hr style="border-color:#2d2d4e;">
+      <div class="form-group">
+        <label>Protocolo de comunicação</label>
+        <select name="protocolo" id="sel-protocolo" class="form-control">
+          <option value="rest"
+            {% if not cerberos or cerberos.protocolo == 'rest' %}selected{% endif %}>
+            REST (HTTP/HTTPS — padrão)
+          </option>
+          <option value="mqtt"
+            {% if cerberos and cerberos.protocolo == 'mqtt' %}selected{% endif %}>
+            MQTT
+          </option>
+        </select>
+      </div>
+      <div class="form-group" id="broker-row"
+           {% if not cerberos or cerberos.protocolo != 'mqtt' %}style="display:none"{% endif %}>
+        <label>Broker MQTT</label>
+        <select name="broker_id" class="form-control">
+          <option value="">— Nenhum —</option>
+          {% for b in brokers %}
+          <option value="{{ b.id }}"
+            {% if cerberos and cerberos.broker_id == b.id %}selected{% endif %}>
+            {{ b.nome }} ({{ b.host }}:{{ b.porta }})
+          </option>
+          {% endfor %}
+        </select>
+        {% if not brokers %}
+        <small style="color:#7e4e1e;">
+          Nenhum broker cadastrado. <a href="{{ url_for('admin_broker_novo') }}" style="color:#c9a227;">Criar broker</a>.
+        </small>
+        {% endif %}
+      </div>
+
       <button type="submit" class="btn btn-gold">Salvar</button>
     </form>
   </div>
 </div>
+{% endblock %}
+{% block extra_js %}
+<script>
+document.getElementById('sel-protocolo').addEventListener('change', function() {
+  document.getElementById('broker-row').style.display =
+    this.value === 'mqtt' ? '' : 'none';
+});
+</script>
 {% endblock %}
