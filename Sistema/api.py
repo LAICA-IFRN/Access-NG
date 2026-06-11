@@ -329,6 +329,16 @@ def coldstart():
             payload={'mac': mac, 'chave': content.get('chave')}
         )
         return jsonify({'status': 'unknown', 'mac': mac}), 404
+    if device.chave != content.get('chave'):
+        _create_audit_log(
+            event_type='device_coldstart',
+            result='negado',
+            message=f'Chave inválida para {device_type} {getattr(device, "nome", mac)} ({mac})',
+            mac=mac,
+            ambiente=device.ambiente,
+            payload={'mac': mac, 'chave': content.get('chave')}
+        )
+        return jsonify({'status': 'denied', 'mac': mac}), 403
     device.coldstart_at = now
     device.last_seen = now
     device.status = 'online'
@@ -341,7 +351,8 @@ def coldstart():
         mac=mac,
         ambiente=device.ambiente
     )
-    return jsonify({'status': 'ok', 'device': device_type, 'mac': mac})
+    return jsonify({'status': 'ok', 'device': device_type, 'mac': mac,
+                    'ambiente_id': device.ambiente_id})
 
 
 @app.route('/device/heartbeat', methods=['POST'])
