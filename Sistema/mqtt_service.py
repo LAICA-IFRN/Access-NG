@@ -3,11 +3,18 @@ Serviço MQTT de background — Access-NG / Tartaro
 
 Estrutura de tópicos (prefixo: access-ng/):
   coldstart/{mac}                   → dispositivo → servidor (boot)
+  coldstart/{mac}/result            → servidor → dispositivo (status + ambiente_id)
   heartbeat/{mac}                   → dispositivo → servidor (periódico)
   {amb_id}/caronte/{mac}/tag        → Caronte RFID → servidor (autenticar TAG)
   {amb_id}/caronte/{mac}/result     → servidor → Caronte (resultado da auth)
   {amb_id}/cerberos/{mac}/command   → servidor → Cerberos (comando de abertura)
   {amb_id}/cerberos/{mac}/status    → Cerberos → servidor (atualização de status)
+
+O dispositivo não conhece seu ambiente_id de antemão: ele publica em
+coldstart/{mac}, aguarda a resposta em coldstart/{mac}/result e usa o
+ambiente_id recebido para montar/assinar os tópicos {amb_id}/.... Caso o
+coldstart seja "unknown" (MAC não cadastrado) ou "denied" (chave inválida),
+o dispositivo deve repetir a tentativa periodicamente até obter "ok".
 
 O MAC nos tópicos usa '-' no lugar de ':' para compatibilidade com brokers
 que tratam ':' como separador especial. O servidor aceita ambos ao receber.
@@ -151,10 +158,10 @@ class MqttService:
         try:
             # access-ng/coldstart/{mac}
             if len(parts) == 3 and parts[1] == 'coldstart':
-                self._handle_coldstart(parts[2].replace('-', ':'), client, userdata)
+                self._handle_coldstart(parts[2].replace('-', ':'), payload, client, userdata)
             # access-ng/heartbeat/{mac}
             elif len(parts) == 3 and parts[1] == 'heartbeat':
-                self._handle_heartbeat(parts[2].replace('-', ':'))
+                self._handle_heartbeat(parts[2].replace('-', ':'), payload)
             # access-ng/{amb_id}/caronte/{mac}/tag
             elif len(parts) == 5 and parts[2] == 'caronte' and parts[4] == 'tag':
                 self._handle_tag(parts[3].replace('-', ':'), parts[1], payload, client)
@@ -187,8 +194,10 @@ class MqttService:
             print(f'[MQTT] Erro ao logar comando {cerberos.mac}: {e}')
             db.rollback()
 
-    def _handle_coldstart(self, mac, client, userdata):
+    def _handle_coldstart(self, mac, payload, client, userdata):
         from Model import Cerberos, Caronte, AccessLog, db
+        mac_safe     = mac.replace(':', '-')
+        result_topic = f'{PREFIX}/coldstart/{mac_safe}/result'
         try:
             now = datetime.datetime.utcnow()
             device, dtype = None, None
@@ -204,7 +213,20 @@ class MqttService:
                     message=f'MAC não cadastrado (MQTT coldstart): {mac}'
                 ))
                 db.commit()
+                client.publish(result_topic, json.dumps({'status': 'unknown'}), qos=1)
                 print(f'[MQTT] Coldstart desconhecido: {mac}')
+                return
+            if device.chave != payload.get('chave'):
+                db.add(AccessLog(
+                    timestamp=now, path='mqtt:coldstart', method='MQTT', mac=mac,
+                    event_type='device_coldstart', result='negado',
+                    ambiente_id=device.ambiente_id,
+                    ambiente_nome=device.ambiente.nome if device.ambiente else None,
+                    message=f'Chave inválida para {dtype} {getattr(device, "nome", mac)} ({mac}) via MQTT'
+                ))
+                db.commit()
+                client.publish(result_topic, json.dumps({'status': 'denied'}), qos=1)
+                print(f'[MQTT] Coldstart negado (chave inválida): {mac}')
                 return
             device.coldstart_at = now
             device.last_seen    = now
@@ -218,6 +240,9 @@ class MqttService:
                 message=f'{dtype} iniciado via MQTT: {label_name} ({mac})'
             ))
             db.commit()
+            client.publish(result_topic, json.dumps({
+                'status': 'ok', 'ambiente_id': device.ambiente_id
+            }), qos=1)
             print(f'[MQTT] Coldstart {dtype} {label_name} ({mac})')
         except Exception as e:
             print(f'[MQTT] Erro coldstart {mac}: {e}')
@@ -225,9 +250,10 @@ class MqttService:
         finally:
             db.remove()
 
-    def _handle_heartbeat(self, mac):
+    def _handle_heartbeat(self, mac, payload=None):
         from Model import Cerberos, Caronte, AccessLog, db
         try:
+            payload = payload or {}
             now = datetime.datetime.utcnow()
             updated = False
             found_device = None
@@ -248,6 +274,7 @@ class MqttService:
                     result='sucesso',
                     ambiente_id=found_device.ambiente_id,
                     ambiente_nome=found_device.ambiente.nome if found_device.ambiente else None,
+                    payload=json.dumps(payload),
                     message=f'Heartbeat MQTT recebido de {mac}'
                 ))
                 db.commit()
@@ -259,6 +286,7 @@ class MqttService:
                     mac=mac,
                     event_type='mqtt_heartbeat',
                     result='desconhecido',
+                    payload=json.dumps(payload),
                     message=f'Heartbeat MQTT de MAC não cadastrado: {mac}'
                 ))
                 db.commit()

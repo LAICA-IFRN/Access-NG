@@ -35,7 +35,6 @@ Suporta dois protocolos: REST (padrão) e MQTT.
     "MQTT_USER"          : "",
     "MQTT_PASS"          : "",
     "MQTT_TLS"           : false,
-    "AMBIENTE_ID"        : 1,
 
     "BUTTON_PIN"         : 5,
     "BUTTON_DEBOUNCE_MS" : 50,
@@ -55,6 +54,10 @@ Notas:
   - BUTTON_TAG    deve ser uma TAG virtual cadastrada para o usuário que o botão representa.
   - HEARTBEAT_INTERVAL deve ser menor que OFFLINE_THRESHOLD do servidor (padrão 30 s).
   - Em modo MQTT, os tópicos usam '-' no lugar de ':' no MAC address.
+  - O AMBIENTE_ID não é configurado no dispositivo: ele é obtido a partir da
+    resposta do coldstart (REST ou MQTT). Se o coldstart for negado ou o
+    dispositivo não estiver cadastrado, ele tenta novamente a cada 15s e não
+    prossegue para a operação normal até receber "ok".
 ─────────────────────────────────────────────────────────────────────────────────
 """
 
@@ -98,7 +101,6 @@ _DEFAULTS = {
     "MQTT_USER"           : "",
     "MQTT_PASS"           : "",
     "MQTT_TLS"            : False,
-    "AMBIENTE_ID"         : 1,
     # Hardware
     "BUTTON_PIN"          : 5,
     "BUTTON_DEBOUNCE_MS"  : 50,
@@ -141,7 +143,6 @@ MQTT_PORT          = _cfg('MQTT_PORT')
 MQTT_USER          = _cfg('MQTT_USER')
 MQTT_PASS          = _cfg('MQTT_PASS')
 MQTT_TLS           = _cfg('MQTT_TLS')
-AMBIENTE_ID        = _cfg('AMBIENTE_ID')
 BUTTON_PIN         = _cfg('BUTTON_PIN')
 BUTTON_DEBOUNCE_MS = _cfg('BUTTON_DEBOUNCE_MS')
 BUTTON_TAG         = _cfg('BUTTON_TAG')
@@ -153,6 +154,7 @@ RELAY_ACTIVE_MS    = _cfg('RELAY_ACTIVE_MS')
 
 MQTT_PREFIX = 'access-ng'
 DEVICE_MAC  = None
+AMBIENTE_ID = None   # obtido a partir da resposta do coldstart
 
 # ─── HARDWARE ────────────────────────────────────────────────────────────────────
 
@@ -291,11 +293,28 @@ def http_post(endpoint, data, timeout=None):
 # ─── REST — Device lifecycle ──────────────────────────────────────────────────────
 
 def rest_coldstart():
-    status, _ = http_post(COLDSTART_ENDPOINT, {'mac': DEVICE_MAC, 'chave': DEVICE_KEY})
-    ok = status in (200, 201)
-    print("[REST] Coldstart", "OK" if ok else "FALHOU")
-    led_ok() if ok else led_denied()
-    return ok
+    """Faz coldstart e aguarda confirmação do servidor com o ambiente_id.
+
+    Não retorna enquanto o servidor não responder status "ok" — repete a
+    cada 15s em caso de "unknown"/"denied" ou falha de rede.
+    """
+    global AMBIENTE_ID
+    while True:
+        status, body = http_post(COLDSTART_ENDPOINT, {'mac': DEVICE_MAC, 'chave': DEVICE_KEY})
+        try:
+            data = json.loads(body)
+        except Exception:
+            data = {}
+
+        if status in (200, 201) and data.get('status') == 'ok':
+            AMBIENTE_ID = data.get('ambiente_id')
+            print(f"[REST] Coldstart OK — ambiente_id={AMBIENTE_ID}")
+            led_ok()
+            return
+
+        print(f"[REST] Coldstart negado/sem resposta (status={status}, {data}) — tentando em 15s...")
+        led_denied()
+        time.sleep(15)
 
 
 def rest_heartbeat():
@@ -357,42 +376,47 @@ def _mac_safe():
 
 
 def _topics():
+    """Retorna os tópicos derivados do MAC e, quando já conhecido, do ambiente."""
     mac    = _mac_safe()
-    amb    = str(AMBIENTE_ID)
     prefix = MQTT_PREFIX
-    return {
-        'coldstart' : f'{prefix}/coldstart/{mac}',
-        'heartbeat' : f'{prefix}/heartbeat/{mac}',
-        'tag'       : f'{prefix}/{amb}/caronte/{mac}/tag',
-        'result'    : f'{prefix}/{amb}/caronte/{mac}/result',
-        'command'   : f'{prefix}/{amb}/cerberos/{mac}/command',
+    topics = {
+        'coldstart'       : f'{prefix}/coldstart/{mac}',
+        'coldstart_result': f'{prefix}/coldstart/{mac}/result',
+        'heartbeat'       : f'{prefix}/heartbeat/{mac}',
     }
+    if AMBIENTE_ID is not None:
+        amb = str(AMBIENTE_ID)
+        topics['tag']     = f'{prefix}/{amb}/caronte/{mac}/tag'
+        topics['result']  = f'{prefix}/{amb}/caronte/{mac}/result'
+        topics['command'] = f'{prefix}/{amb}/cerberos/{mac}/command'
+    return topics
+
+
+_mqtt_coldstart_result = None
 
 
 def _mqtt_on_message(topic, payload):
-    global _mqtt_pending
+    global _mqtt_pending, _mqtt_coldstart_result
     topic_str = topic.decode('utf-8')
     t = _topics()
-    if topic_str == t['command']:
-        try:
-            data = json.loads(payload)
-            if data.get('command') == 'unlock':
-                print("[MQTT] Comando de abertura recebido!")
-                _mqtt_pending = True
-        except Exception:
-            pass
-    elif topic_str == t['result']:
-        try:
-            data  = json.loads(payload)
-            allow = data.get('allow', False)
-            if allow:
-                print("[MQTT] Acesso autorizado pelo servidor!")
-                unlock_door()
-            else:
-                print(f"[MQTT] Acesso negado: {data.get('motivo', '')}")
-                led_denied()
-        except Exception:
-            pass
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return
+
+    if topic_str == t['coldstart_result']:
+        _mqtt_coldstart_result = data
+    elif topic_str == t.get('command'):
+        if data.get('command') == 'unlock':
+            print("[MQTT] Comando de abertura recebido!")
+            _mqtt_pending = True
+    elif topic_str == t.get('result'):
+        if data.get('allow'):
+            print("[MQTT] Acesso autorizado pelo servidor!")
+            unlock_door()
+        else:
+            print(f"[MQTT] Acesso negado: {data.get('motivo', '')}")
+            led_denied()
 
 
 def mqtt_connect():
@@ -420,9 +444,7 @@ def mqtt_connect():
         client = MQTTClient(cid, MQTT_BROKER, **kwargs)
         client.set_callback(_mqtt_on_message)
         client.connect()
-        t = _topics()
-        client.subscribe(t['command'])
-        client.subscribe(t['result'])
+        client.subscribe(_topics()['coldstart_result'])
         _mqtt_client = client
         print(f"[MQTT] Conectado ao broker {MQTT_BROKER}:{MQTT_PORT}")
         return True
@@ -432,22 +454,43 @@ def mqtt_connect():
 
 
 def mqtt_coldstart():
-    if not _mqtt_client:
-        return False
-    t = _topics()
-    try:
-        _mqtt_client.publish(
-            t['coldstart'],
-            json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY}),
-            qos=1
-        )
-        print("[MQTT] Coldstart publicado")
-        led_ok()
-        return True
-    except Exception as e:
-        print(f"[MQTT] Erro coldstart: {e}")
+    """Publica coldstart e aguarda confirmação do servidor com o ambiente_id.
+
+    Não retorna enquanto o servidor não responder status "ok" — repete a
+    cada 15s em caso de "unknown"/"denied" ou ausência de resposta.
+    """
+    global AMBIENTE_ID, _mqtt_coldstart_result
+    while True:
+        _mqtt_coldstart_result = None
+        try:
+            _mqtt_client.publish(
+                _topics()['coldstart'],
+                json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY}),
+                qos=1
+            )
+            print("[MQTT] Coldstart publicado, aguardando confirmação...")
+
+            t0 = time.time()
+            while time.time() - t0 < 5:
+                _mqtt_client.check_msg()
+                if _mqtt_coldstart_result is not None:
+                    break
+                time.sleep_ms(100)
+        except Exception as e:
+            print(f"[MQTT] Erro coldstart: {e}")
+
+        if _mqtt_coldstart_result and _mqtt_coldstart_result.get('status') == 'ok':
+            AMBIENTE_ID = _mqtt_coldstart_result.get('ambiente_id')
+            t = _topics()
+            _mqtt_client.subscribe(t['command'])
+            _mqtt_client.subscribe(t['result'])
+            print(f"[MQTT] Coldstart OK — ambiente_id={AMBIENTE_ID}")
+            led_ok()
+            return
+
+        print(f"[MQTT] Coldstart negado/sem resposta ({_mqtt_coldstart_result}) — tentando em 15s...")
         led_denied()
-        return False
+        time.sleep(15)
 
 
 def mqtt_heartbeat():

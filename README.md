@@ -79,10 +79,11 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 
 1. No painel admin, o Cerberos/Caronte é configurado com `protocolo=mqtt` e associado a um Broker MQTT cadastrado em `/admin/brokers`.
 2. O `mqtt_service` conecta a todos os brokers ativos ao iniciar o Sistema (`_mqtt().start()`).
-3. O dispositivo publica `access-ng/coldstart/{mac}` e `access-ng/heartbeat/{mac}` periodicamente — o serviço atualiza `status`/`last_seen` da mesma forma que os endpoints REST.
-4. Um Caronte MQTT publica a TAG lida em `access-ng/{amb_id}/caronte/{mac}/tag`; o Sistema autentica com `Tartaro.autenticarTAGDetalhado()`, responde em `access-ng/{amb_id}/caronte/{mac}/result` e, se autorizado, publica o comando de abertura para os Cerberoses do ambiente.
-5. Um Cerberos MQTT assina `access-ng/{amb_id}/cerberos/{mac}/command`; ao receber `{"command":"unlock"}` aciona o relé.
-6. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
+3. Ao ligar, o dispositivo publica `access-ng/coldstart/{mac}` (com `mac` e `chave`) e aguarda a resposta em `access-ng/coldstart/{mac}/result`. O Sistema valida a `chave`, atualiza `status`/`last_seen` e responde com `status:"ok"` + `ambiente_id`, `denied` (chave inválida) ou `unknown` (MAC não cadastrado). O dispositivo só prossegue ao receber `ok`; caso contrário repete a cada 15s.
+4. Com o `ambiente_id` recebido, o dispositivo publica `access-ng/heartbeat/{mac}` periodicamente, enviando `mac`, `uptime_ms` e `uptime_s`, e monta os tópicos `access-ng/{ambiente_id}/...`.
+5. Um Caronte MQTT publica a TAG lida em `access-ng/{amb_id}/caronte/{mac}/tag`; o Sistema autentica com `Tartaro.autenticarTAGDetalhado()`, responde em `access-ng/{amb_id}/caronte/{mac}/result` e, se autorizado, publica o comando de abertura para os Cerberoses do ambiente.
+6. Um Cerberos MQTT assina `access-ng/{amb_id}/cerberos/{mac}/command`; ao receber `{"command":"unlock"}` aciona o relé.
+7. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
 
 O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
 
@@ -370,12 +371,21 @@ curl -X POST http://127.0.0.1:9001/device/coldstart \
 Respostas possíveis:
 
 ```json
-{"status":"ok","device":"cerberos","mac":"AA:BB:CC:DD:EE:FF"}
+{"status":"ok","device":"cerberos","mac":"AA:BB:CC:DD:EE:FF","ambiente_id":1}
+```
+
+```json
+{"status":"denied","mac":"AA:BB:CC:DD:EE:FF"}
 ```
 
 ```json
 {"status":"unknown","mac":"AA:BB:CC:DD:EE:FF"}
 ```
+
+`status:"ok"` retorna o `ambiente_id` cadastrado para o dispositivo — o
+firmware usa esse valor para montar os tópicos/rotas do ambiente. `denied`
+indica `chave` inválida e `unknown` indica MAC não cadastrado; em ambos os
+casos o dispositivo deve repetir o coldstart periodicamente até obter `ok`.
 
 Exemplo de heartbeat:
 
@@ -707,7 +717,6 @@ para valores padrão quando o arquivo não existe.
     "MQTT_TLS"           : false,
 
     "DEVICE_KEY"         : "chave-cadastrada-no-banco",
-    "AMBIENTE_ID"        : 1,
 
     "HEARTBEAT_INTERVAL" : 25,
 
@@ -727,6 +736,28 @@ para valores padrão quando o arquivo não existe.
 no banco, e o dispositivo precisa estar com `protocolo=mqtt` e um `broker_id`
 apontando para um broker cadastrado em `/admin/brokers`. `HEARTBEAT_INTERVAL` deve
 ser menor que o limite de 30s usado pelo monitor de offline do Sistema.
+
+O `AMBIENTE_ID` não é configurado no dispositivo: ao ligar, o firmware publica
+um coldstart em `access-ng/coldstart/{mac}` e aguarda a resposta em
+`access-ng/coldstart/{mac}/result`. O servidor responde com `status:"ok"` e o
+`ambiente_id` cadastrado, que o dispositivo usa para montar os tópicos
+`access-ng/{ambiente_id}/...`. Se a resposta for `denied` (chave inválida),
+`unknown` (MAC não cadastrado) ou não chegar, o dispositivo não inicia a
+operação normal — ele tenta novamente a cada 15 segundos até obter `ok`.
+
+Depois do coldstart aceito, o heartbeat MQTT é publicado em
+`access-ng/heartbeat/{mac}` com o tempo que o microcontrolador está ligado:
+
+```json
+{
+    "mac": "AA:BB:CC:DD:EE:FF",
+    "uptime_ms": 123456,
+    "uptime_s": 123
+}
+```
+
+O Sistema grava esse payload nos logs do evento `mqtt_heartbeat`, útil para
+debug de reinicializações e quedas de energia.
 
 O firmware MQTT requer a biblioteca `umqtt` (`umqtt.robust` ou `umqtt.simple`)
 instalada na placa via `mip`:

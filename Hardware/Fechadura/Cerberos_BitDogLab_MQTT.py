@@ -18,7 +18,6 @@ Para o modo REST (HTTP/HTTPS) use Cerberos_BitDogLab.py.
     "MQTT_TLS"           : false,
 
     "DEVICE_KEY"         : "chave-cadastrada-no-banco",
-    "AMBIENTE_ID"        : 1,
 
     "HEARTBEAT_INTERVAL" : 25,
 
@@ -41,8 +40,14 @@ Para o modo REST (HTTP/HTTPS) use Cerberos_BitDogLab.py.
     access-ng/{amb_id}/caronte/{mac}/tag     → TAG RFID para autenticação
 
   Assina:
+    access-ng/coldstart/{mac}/result          → resposta do coldstart (status + ambiente_id)
     access-ng/{amb_id}/cerberos/{mac}/command → comando de abertura (servidor → dispositivo)
     access-ng/{amb_id}/caronte/{mac}/result   → resultado da autenticação
+
+  O AMBIENTE_ID não é configurado no dispositivo: ele é obtido a partir da
+  resposta do coldstart. Enquanto o coldstart não retornar status "ok"
+  (MAC desconhecido ou chave inválida), o dispositivo repete a tentativa a
+  cada 15s e não inicia a operação normal.
 
   O MAC usa '-' no lugar de ':' nos tópicos.
   HEARTBEAT_INTERVAL deve ser menor que OFFLINE_THRESHOLD do servidor (padrão 30s).
@@ -67,7 +72,6 @@ _DEFAULTS = {
     "MQTT_PASS"           : "",
     "MQTT_TLS"            : False,
     "DEVICE_KEY"          : "chave-do-dispositivo",
-    "AMBIENTE_ID"         : 1,
     "HEARTBEAT_INTERVAL"  : 25,
     "BUTTON_PIN"          : 5,
     "BUTTON_DEBOUNCE_MS"  : 50,
@@ -99,7 +103,6 @@ MQTT_USER          = cfg('MQTT_USER')
 MQTT_PASS          = cfg('MQTT_PASS')
 MQTT_TLS           = cfg('MQTT_TLS')
 DEVICE_KEY         = cfg('DEVICE_KEY')
-AMBIENTE_ID        = cfg('AMBIENTE_ID')
 HEARTBEAT_INTERVAL = cfg('HEARTBEAT_INTERVAL')
 BUTTON_PIN         = cfg('BUTTON_PIN')
 BUTTON_DEBOUNCE_MS = cfg('BUTTON_DEBOUNCE_MS')
@@ -112,6 +115,7 @@ RELAY_ACTIVE_MS    = cfg('RELAY_ACTIVE_MS')
 
 MQTT_PREFIX = 'access-ng'
 DEVICE_MAC  = None
+AMBIENTE_ID = None   # obtido a partir da resposta do coldstart
 
 # ─── HARDWARE ─────────────────────────────────────────────────────────────────
 
@@ -195,21 +199,27 @@ def _mac_safe():
 
 
 def _t():
-    """Retorna os tópicos derivados do MAC e ambiente."""
+    """Retorna os tópicos derivados do MAC e, quando já conhecido, do ambiente."""
     mac = _mac_safe()
-    amb = str(AMBIENTE_ID)
     p   = MQTT_PREFIX
-    return {
-        'coldstart': f'{p}/coldstart/{mac}',
-        'heartbeat': f'{p}/heartbeat/{mac}',
-        'tag'      : f'{p}/{amb}/caronte/{mac}/tag',
-        'result'   : f'{p}/{amb}/caronte/{mac}/result',
-        'command'  : f'{p}/{amb}/cerberos/{mac}/command',
+    topics = {
+        'coldstart'       : f'{p}/coldstart/{mac}',
+        'coldstart_result': f'{p}/coldstart/{mac}/result',
+        'heartbeat'       : f'{p}/heartbeat/{mac}',
     }
+    if AMBIENTE_ID is not None:
+        amb = str(AMBIENTE_ID)
+        topics['tag']     = f'{p}/{amb}/caronte/{mac}/tag'
+        topics['result']  = f'{p}/{amb}/caronte/{mac}/result'
+        topics['command'] = f'{p}/{amb}/cerberos/{mac}/command'
+    return topics
+
+
+_coldstart_result = None
 
 
 def _on_message(topic, payload):
-    global _unlock_flag
+    global _unlock_flag, _coldstart_result
     topic_str = topic.decode('utf-8')
     topics    = _t()
     try:
@@ -217,12 +227,15 @@ def _on_message(topic, payload):
     except Exception:
         return
 
-    if topic_str == topics['command']:
+    if topic_str == topics['coldstart_result']:
+        _coldstart_result = data
+
+    elif topic_str == topics.get('command'):
         if data.get('command') == 'unlock':
             print("[MQTT] Comando de abertura recebido!")
             _unlock_flag = True
 
-    elif topic_str == topics['result']:
+    elif topic_str == topics.get('result'):
         if data.get('allow'):
             print("[MQTT] Acesso autorizado!")
             unlock_door()
@@ -323,23 +336,53 @@ def mqtt_connect():
     c = MQTTClient(f'cerberos-{_mac_safe()}', MQTT_BROKER, **kwargs)
     c.set_callback(_on_message)
     c.connect()
-    topics = _t()
-    c.subscribe(topics['command'])
-    c.subscribe(topics['result'])
+    c.subscribe(_t()['coldstart_result'])
     _client = c
     print(f"[MQTT] Conectado ao broker {MQTT_BROKER}:{MQTT_PORT}")
 
 
-def publish_coldstart():
-    _client.publish(_t()['coldstart'],
-                    json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY}),
-                    qos=1)
-    print("[MQTT] Coldstart publicado")
-    led_ok()
+def do_coldstart():
+    """Publica coldstart e aguarda confirmação do servidor com o ambiente_id.
+
+    Não retorna enquanto o servidor não responder status "ok" — repete a
+    cada 15s em caso de "unknown"/"denied" ou ausência de resposta.
+    """
+    global AMBIENTE_ID, _coldstart_result
+    while True:
+        _coldstart_result = None
+        _client.publish(_t()['coldstart'],
+                        json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY}),
+                        qos=1)
+        print("[MQTT] Coldstart publicado, aguardando confirmação...")
+
+        t0 = time.time()
+        while time.time() - t0 < 5:
+            _client.check_msg()
+            if _coldstart_result is not None:
+                break
+            time.sleep_ms(100)
+
+        if _coldstart_result and _coldstart_result.get('status') == 'ok':
+            AMBIENTE_ID = _coldstart_result.get('ambiente_id')
+            topics = _t()
+            _client.subscribe(topics['command'])
+            _client.subscribe(topics['result'])
+            print(f"[MQTT] Coldstart OK — ambiente_id={AMBIENTE_ID}")
+            led_ok()
+            return
+
+        print(f"[MQTT] Coldstart negado/sem resposta ({_coldstart_result}) — tentando em 15s...")
+        led_denied()
+        time.sleep(15)
 
 
 def publish_heartbeat():
-    _client.publish(_t()['heartbeat'], json.dumps({'mac': DEVICE_MAC}))
+    uptime_ms = time.ticks_ms()
+    _client.publish(_t()['heartbeat'], json.dumps({
+        'mac': DEVICE_MAC,
+        'uptime_ms': uptime_ms,
+        'uptime_s': uptime_ms // 1000,
+    }))
 
 
 def publish_tag():
@@ -384,7 +427,7 @@ def main():
             print(f"[MQTT] Falha na conexão: {e} — tentando em 10s...")
             led_denied(); time.sleep(10)
 
-    publish_coldstart()
+    do_coldstart()
     last_heartbeat = time.time()
     print("[Main] Operacional\n")
 
@@ -395,7 +438,7 @@ def main():
                 print("[WiFi] Reconectando...")
                 if connect_wifi():
                     mqtt_connect()
-                    publish_coldstart()
+                    do_coldstart()
                     last_heartbeat = time.time()
                 else:
                     time.sleep(5)
@@ -426,7 +469,7 @@ def main():
             print(f"[MQTT] Erro de rede: {e} — reconectando...")
             try:
                 mqtt_connect()
-                publish_coldstart()
+                do_coldstart()
                 last_heartbeat = time.time()
             except Exception:
                 time.sleep(5)

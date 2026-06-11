@@ -180,8 +180,14 @@ Content-Type: application/json
 
 **Resposta:**
 ```json
-{"status":"ok","device":"cerberos","mac":"AA:BB:CC:DD:EE:FF"}
+{"status":"ok","device":"cerberos","mac":"AA:BB:CC:DD:EE:FF","ambiente_id":1}
 ```
+
+Se a `chave` for inválida o servidor responde `{"status":"denied", ...}` (HTTP 403)
+e se o MAC não estiver cadastrado responde `{"status":"unknown", ...}` (HTTP 404).
+Em ambos os casos o dispositivo não inicia a operação normal — ele repete o
+coldstart a cada 15 segundos até receber `status:"ok"`, usando o `ambiente_id`
+retornado para montar seus tópicos/rotas (não é mais configurado localmente).
 
 ### Heartbeat (Presença)
 
