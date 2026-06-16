@@ -123,9 +123,8 @@ led_link      = None
 led_status    = None
 relay         = None
 inputs        = []
-_input_pin    = None
-_unlock_flag  = False
-_last_input_ms = 0
+_input_pin   = None
+_unlock_flag = False
 
 
 def _set_link(ok):
@@ -139,11 +138,12 @@ def status_pulse(ms=80):
 
 
 def _make_input_handler(pin_no):
+    ts = [0]  # timestamp por pino — lista pré-alocada, sem GC no IRQ
     def _handler(_pin):
-        global _input_pin, _last_input_ms
+        global _input_pin
         now = time.ticks_ms()
-        if time.ticks_diff(now, _last_input_ms) >= INPUT_DEBOUNCE_MS:
-            _last_input_ms = now
+        if time.ticks_diff(now, ts[0]) >= INPUT_DEBOUNCE_MS:
+            ts[0] = now
             _input_pin = pin_no
     return _handler
 
