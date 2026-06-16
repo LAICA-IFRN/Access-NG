@@ -139,6 +139,7 @@ class MqttService:
             client.subscribe(f'{PREFIX}/heartbeat/+')
             client.subscribe(f'{PREFIX}/+/caronte/+/tag')
             client.subscribe(f'{PREFIX}/+/cerberos/+/status')
+            client.subscribe(f'{PREFIX}/+/cerberos/+/entrada')
         else:
             codes = {1: 'versão inaceitável', 2: 'id rejeitado', 3: 'servidor indisponível',
                      4: 'credenciais inválidas', 5: 'não autorizado'}
@@ -169,6 +170,9 @@ class MqttService:
             elif len(parts) == 5 and parts[2] == 'cerberos' and parts[4] == 'status':
                 self._handle_device_status(parts[3].replace('-', ':'),
                                            payload.get('status', 'online'))
+            # access-ng/{amb_id}/cerberos/{mac}/entrada
+            elif len(parts) == 5 and parts[2] == 'cerberos' and parts[4] == 'entrada':
+                self._handle_entrada(parts[3].replace('-', ':'), payload)
         except Exception as e:
             print(f'[MQTT] Erro no handler "{topic}": {e}')
 
@@ -327,6 +331,36 @@ class MqttService:
             db.commit()
         except Exception as e:
             print(f'[MQTT] Erro status {mac}: {e}')
+            db.rollback()
+        finally:
+            db.remove()
+
+    def _handle_entrada(self, mac, payload):
+        from Model import Cerberos, AccessLog, db
+        try:
+            now = datetime.datetime.utcnow()
+            pin = payload.get('pin')
+            cerberos = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
+            db.add(AccessLog(
+                timestamp=now,
+                path='mqtt:entrada',
+                method='MQTT',
+                mac=mac,
+                event_type='entrada_fisica',
+                result='sucesso' if cerberos else 'desconhecido',
+                ambiente_id=cerberos.ambiente_id if cerberos else None,
+                ambiente_nome=cerberos.ambiente.nome if cerberos and cerberos.ambiente else None,
+                payload=json.dumps(payload),
+                message=(
+                    f'Abertura por entrada física (pin={pin}) em {cerberos.nome} ({mac})'
+                    if cerberos else
+                    f'Entrada física de Cerberos não cadastrado: {mac} (pin={pin})'
+                )
+            ))
+            db.commit()
+            print(f'[MQTT] Entrada física {mac} (pin={pin})')
+        except Exception as e:
+            print(f'[MQTT] Erro entrada {mac}: {e}')
             db.rollback()
         finally:
             db.remove()

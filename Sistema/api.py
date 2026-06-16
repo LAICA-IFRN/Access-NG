@@ -405,7 +405,7 @@ def device_command():
 def api_dashboard():
     now = datetime.datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    access_types = ['tentativa_tag', 'tentativa_web', 'comando_abertura']
+    access_types = ['tentativa_tag', 'tentativa_web', 'comando_abertura', 'entrada_fisica']
 
     cerberoses = db.query(Cerberos).all()
     carontes   = db.query(Caronte).all()
@@ -794,7 +794,9 @@ def admin_index():
     )
     recent_access_events = (
         db.query(AccessLog)
-        .filter(AccessLog.event_type.in_(['tentativa_tag', 'tentativa_web', 'comando_abertura']))
+        .filter(AccessLog.event_type.in_([
+            'tentativa_tag', 'tentativa_web', 'comando_abertura', 'entrada_fisica'
+        ]))
         .order_by(AccessLog.timestamp.desc())
         .limit(10)
         .all()
@@ -1113,6 +1115,7 @@ def admin_logs():
         ('mqtt_heartbeat', 'Heartbeat MQTT'),
         ('mqtt_status', 'Status MQTT'),
         ('mqtt_command', 'Comando MQTT'),
+        ('entrada_fisica', 'Entrada fisica'),
     ]
     event_label_map = {v: l for v, l in event_types if v}
     return render_template(

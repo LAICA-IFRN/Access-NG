@@ -41,8 +41,9 @@ Use resistor pull-up externo nessa entrada quando o sinal for ativo baixo.
 --- Topicos MQTT -------------------------------------------------------------
 
   Publica:
-    access-ng/coldstart/{mac}                -> boot do dispositivo
-    access-ng/heartbeat/{mac}                -> presenca periodica
+    access-ng/coldstart/{mac}                     -> boot do dispositivo
+    access-ng/heartbeat/{mac}                     -> presenca periodica
+    access-ng/{amb_id}/cerberos/{mac}/entrada     -> acionamento por pino fisico
 
   Assina:
     access-ng/coldstart/{mac}/result          -> resposta do coldstart
@@ -122,7 +123,7 @@ led_link      = None
 led_status    = None
 relay         = None
 inputs        = []
-_input_flag   = False
+_input_pin    = None
 _unlock_flag  = False
 _last_input_ms = 0
 
@@ -137,12 +138,14 @@ def status_pulse(ms=80):
     led_status.value(0)
 
 
-def _on_input(_pin):
-    global _input_flag, _last_input_ms
-    now = time.ticks_ms()
-    if time.ticks_diff(now, _last_input_ms) >= INPUT_DEBOUNCE_MS:
-        _last_input_ms = now
-        _input_flag = True
+def _make_input_handler(pin_no):
+    def _handler(_pin):
+        global _input_pin, _last_input_ms
+        now = time.ticks_ms()
+        if time.ticks_diff(now, _last_input_ms) >= INPUT_DEBOUNCE_MS:
+            _last_input_ms = now
+            _input_pin = pin_no
+    return _handler
 
 
 def _init_input(pin_no):
@@ -150,7 +153,7 @@ def _init_input(pin_no):
         pin = machine.Pin(pin_no, machine.Pin.IN, machine.Pin.PULL_UP)
     except Exception:
         pin = machine.Pin(pin_no, machine.Pin.IN)
-    pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=_on_input)
+    pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=_make_input_handler(pin_no))
     return pin
 
 
@@ -215,6 +218,11 @@ def _topics():
     }
     if AMBIENTE_ID is not None:
         topics["command"] = "%s/%s/cerberos/%s/command" % (
+            MQTT_PREFIX,
+            str(AMBIENTE_ID),
+            mac,
+        )
+        topics["entrada"] = "%s/%s/cerberos/%s/entrada" % (
             MQTT_PREFIX,
             str(AMBIENTE_ID),
             mac,
@@ -304,6 +312,17 @@ def do_coldstart():
             time.sleep(1)
 
 
+def publish_entrada(pin_no):
+    topic = _topics().get("entrada")
+    if topic is None:
+        return
+    _client.publish(topic, json.dumps({
+        "mac": DEVICE_MAC,
+        "pin": pin_no,
+    }))
+    print("[Lock] Entrada fisica publicada (pin=%d)" % pin_no)
+
+
 def publish_heartbeat():
     uptime_ms = time.ticks_ms()
     _client.publish(_topics()["heartbeat"], json.dumps({
@@ -317,7 +336,7 @@ def publish_heartbeat():
 # --- MAIN --------------------------------------------------------------------
 
 def main():
-    global DEVICE_MAC, _input_flag, _unlock_flag
+    global DEVICE_MAC, _input_pin, _unlock_flag
 
     print("\n" + "=" * 48)
     print("  CERBEROS ESP32 - MQTT")
@@ -363,9 +382,11 @@ def main():
                     time.sleep(5)
                     continue
 
-            if _input_flag:
-                _input_flag = False
+            if _input_pin is not None:
+                pin_no = _input_pin
+                _input_pin = None
                 unlock_door("entrada")
+                publish_entrada(pin_no)
 
             if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
                 publish_heartbeat()
