@@ -213,8 +213,8 @@ Tabela: `usuarios`
 - `admin`
 - relacionamento com `TAG`
 - relacionamento com `MAC`
-- relacionamento muitos-para-muitos com `Ambiente` via `usuarios_ambientes`
-- relacionamento muitos-para-muitos administrativo via `usuarios_ambientesadmin`
+- relacionamento muitos-para-muitos com `Ambiente` via `usuarios_ambientes` (frequentadores/acesso físico)
+- relacionamento um-para-muitos com `PapelAmbiente` (papéis por Tartaro — gerente/colaborador/leitor)
 
 ### TAG
 
@@ -245,12 +245,25 @@ Tabela: `ambientes`
 - `longitude`
 - `raio_metros`
 - `frequentadores`
-- `admins`
+- `papeis` (usuários com papel `gerente`/`colaborador`/`leitor` neste Tartaro)
 - `cerberoses`
 - `carontes`
 
 `latitude`, `longitude` e `raio_metros` são usados pelo Caronte web para validar
 proximidade. O raio padrão usado pelo código é 50 metros quando o campo está vazio.
+
+### PapelAmbiente
+
+Tabela: `papeis_ambiente`
+
+- `usuario_id` (FK, parte da chave primária composta)
+- `ambiente_id` (FK, parte da chave primária composta)
+- `papel`: `gerente`, `colaborador` ou `leitor`
+
+Associa um usuário a um papel administrativo num Tartaro específico. A chave
+primária composta (`usuario_id` + `ambiente_id`) garante um único papel por
+par usuário/Tartaro. Veja a seção [Papéis e permissões](#papéis-e-permissões)
+para o que cada papel pode fazer.
 
 ### BrokerMQTT
 
@@ -301,6 +314,29 @@ Tabela: `carontes`
 - `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
 
 Representa o leitor/autenticador fixo.
+
+## Papéis e permissões
+
+Além do administrador geral (`Usuario.admin = True`, acesso irrestrito), o
+painel suporta papéis **por Tartaro**, atribuídos via `PapelAmbiente`:
+
+| Papel | Pode | Não pode |
+| --- | --- | --- |
+| **Administrador geral** | Tudo: Tartaros, Brokers MQTT, Cerberoses/Carontes/Usuários/Logs de qualquer Tartaro, conceder qualquer papel ou `admin`. | — |
+| **Gerente** | Cadastrar/editar/excluir usuários, Cerberoses e Carontes do seu Tartaro; nomear `colaborador`/`leitor` para gente do mesmo Tartaro; ler os logs do seu Tartaro. | Criar/editar Tartaros ou Brokers MQTT; conceder `admin` geral ou nomear outro `gerente`. |
+| **Colaborador** | Cadastrar novos usuários no seu Tartaro. | Editar/excluir usuários existentes, gerenciar Cerberoses/Carontes, ver logs, atribuir papéis. |
+| **Leitor** | Visualizar (somente leitura) os logs/eventos do seu Tartaro. | Qualquer ação de escrita no painel. |
+| **Usuário regular** (sem papel) | Acessar o portal Caronte (`/caronte`) e atualizar a própria TAG e PIN em `/caronte/perfil`. | Entrar no painel `/admin`. |
+
+Os papéis são hierárquicos dentro do mesmo Tartaro: `gerente` já cobre as
+capacidades de `colaborador` (cadastrar usuários) e `leitor` (ler logs), além
+de gerenciar dispositivos. Cada usuário tem no máximo um papel por Tartaro —
+`PapelAmbiente` usa chave primária composta (`usuario_id` + `ambiente_id`).
+
+Qualquer usuário com `admin=True` ou com pelo menos um papel pode entrar em
+`/admin/login`; o menu lateral e o conteúdo das telas se ajustam
+automaticamente ao que aquele usuário pode ver/fazer. Tartaros, Brokers MQTT
+e a exclusão/limpeza de logs continuam exclusivos do administrador geral.
 
 ## Endpoints do Sistema
 
@@ -469,6 +505,8 @@ Formato da resposta:
 | `GET` | `/caronte/portal` | Portal mobile com geolocalização. |
 | `GET` | `/caronte/ambientes-proximos?lat=&lon=` | Retorna ambientes cujo raio contém as coordenadas. |
 | `POST` | `/caronte/solicitar` | Valida geolocalização e permissão, depois aciona Cerberoses. |
+| `GET` | `/caronte/meus-logs` | Histórico de acessos do próprio usuário (tentativas, autorizações, login/logout). |
+| `GET/POST` | `/caronte/perfil` | Autoatendimento: nome e matrícula somente leitura; atualiza a própria TAG RFID e o PIN. |
 | `GET` | `/caronte/logout` | Encerra sessão. |
 
 Payload de `/caronte/solicitar`:
@@ -503,7 +541,10 @@ O painel fica em:
 http://127.0.0.1:9001/admin/login
 ```
 
-Acesso exige um usuário com `admin=True`.
+Acesso exige um usuário com `admin=True` **ou** com pelo menos um papel em
+`PapelAmbiente` (`gerente`/`colaborador`/`leitor`) — veja
+[Papéis e permissões](#papéis-e-permissões). Quem não é administrador geral
+só vê/gerencia os Tartaros onde tem papel.
 
 | Método | Rota | Descrição |
 | --- | --- | --- |
@@ -534,6 +575,11 @@ Acesso exige um usuário com `admin=True`.
 | `GET` | `/admin/logs` | Visualiza logs de acesso à API e tentativas de dispositivos. |
 | `POST` | `/admin/logs/excluir` | Exclui logs selecionados. |
 | `POST` | `/admin/logs/limpar` | Limpa logs conforme filtros aplicados. |
+
+> As rotas de Tartaros e Brokers MQTT, e a exclusão/limpeza de logs, exigem
+> `admin=True`. As demais rotas desta tabela aceitam também `gerente`,
+> `colaborador` ou `leitor`, mas filtradas/restritas ao Tartaro onde o
+> usuário tem papel — ver [Papéis e permissões](#papéis-e-permissões).
 
 > Se não houver um administrador cadastrado, o sistema agora cria um usuário padrão automaticamente na primeira execução:
 > - Matrícula: `admin`
@@ -999,6 +1045,10 @@ python Sistema/api.py
 - Associe usuários aos Tartaros permitidos.
 - Para RFID, associe uma `TAG.numero` ao usuário.
 - Mantenha heartbeats em intervalo menor que 30 segundos. O recomendado é cerca de 10 segundos.
+- Para delegar a gestão de um Tartaro sem dar acesso de administrador geral,
+  cadastre um usuário com papel `gerente` nesse Tartaro pelo painel — ele
+  poderá cadastrar Cerberoses, Carontes, usuários e nomear `colaborador`/`leitor`
+  só dentro do próprio Tartaro (veja [Papéis e permissões](#papéis-e-permissões)).
 
 ## Problemas comuns
 
@@ -1063,3 +1113,7 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   (Cerberos enxuto com entrada física/botão, evento `entrada_fisica` no log) e
   `Hardware/Autenticador/CaronteESP32C3.py` (Caronte com leitor Wiegand,
   publica a TAG como string hexadecimal).
+- Sistema de papéis por Tartaro (`gerente`/`colaborador`/`leitor`) via a
+  tabela `PapelAmbiente`, com painel admin compartilhado (`painel_required`)
+  e autoatendimento do usuário regular em `/caronte/perfil` (TAG e PIN) —
+  veja [Papéis e permissões](#papéis-e-permissões).
