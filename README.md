@@ -36,10 +36,13 @@ Access-NG/
 └── Hardware/
     ├── Fechadura/
     │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID
-    │   ├── Caronte_RFID.ino           # ESP leitor RFID via MFRC522
     │   ├── Cerberos.ino               # Sketch alternativo/legado
+    │   ├── CerberosESP32.py           # Firmware MicroPython (ESP32) — Cerberos MQTT enxuto, com entrada física
     │   ├── Cerberos_BitDogLab.py      # Firmware MicroPython (Pico W) — modo REST
     │   └── Cerberos_BitDogLab_MQTT.py # Firmware MicroPython (Pico W) — modo MQTT
+    ├── Autenticador/
+    │   ├── Caronte_RFID.ino           # ESP leitor RFID via MFRC522, envia tag por UART ao Cerberos
+    │   └── CaronteESP32C3.py          # Firmware MicroPython (ESP32-C3) — Caronte com leitor Wiegand, MQTT
     ├── Ambiente/
     │   └── TempHumi.ino               # Sensor de temperatura/umidade
     └── ModPotencia/
@@ -83,7 +86,8 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 4. Com o `ambiente_id` recebido, o dispositivo publica `access-ng/heartbeat/{mac}` periodicamente, enviando `mac`, `uptime_ms` e `uptime_s`, e monta os tópicos `access-ng/{ambiente_id}/...`.
 5. Um Caronte MQTT publica a TAG lida em `access-ng/{amb_id}/caronte/{mac}/tag`; o Sistema autentica com `Tartaro.autenticarTAGDetalhado()`, responde em `access-ng/{amb_id}/caronte/{mac}/result` e, se autorizado, publica o comando de abertura para os Cerberoses do ambiente.
 6. Um Cerberos MQTT assina `access-ng/{amb_id}/cerberos/{mac}/command`; ao receber `{"command":"unlock"}` aciona o relé.
-7. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
+7. Quando o Cerberos tem entradas físicas configuradas (botão/contato local), ele publica `access-ng/{amb_id}/cerberos/{mac}/entrada` com `{"mac":..., "pin":...}` ao detectar o acionamento; o Sistema grava o evento como `entrada_fisica` no log, mesmo sem MAC cadastrado.
+8. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
 
 O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
 
@@ -546,7 +550,7 @@ A API registra todos os acessos em `access_logs`, no banco `Sistema/Acesso.db`. 
 - `ip` — origem da requisição
 - `mac` — endereço MAC do dispositivo, se presente
 - `tag` — tag usada na tentativa, se presente
-- `event_type` — tipo do evento, como `api_request`, `login_admin`, `comando_abertura`, `mqtt_heartbeat`, `mqtt_status` ou `mqtt_command`
+- `event_type` — tipo do evento, como `api_request`, `login_admin`, `comando_abertura`, `mqtt_heartbeat`, `mqtt_status`, `mqtt_command` ou `entrada_fisica`
 - `result` — resultado resumido do evento, como `sucesso` ou `negado`
 - `ambiente_id` e `ambiente_nome` — Tartaro relacionado, quando identificado
 - `usuario_id` e `usuario_nome` — usuário relacionado, quando identificado
@@ -767,6 +771,96 @@ import mip
 mip.install("umqtt.robust")
 ```
 
+### ESP32 (MicroPython) — Cerberos enxuto
+
+`Hardware/Fechadura/CerberosESP32.py` é um firmware MQTT-only para um Cerberos
+dedicado apenas a abrir a fechadura — sem lógica de Caronte/RFID embutida.
+Mesmo esquema de `config.json` com fallback a valores padrão dos demais
+firmwares MicroPython, com campos próprios:
+
+```json
+{
+    "WIFI_SSID"          : "nome-da-rede",
+    "WIFI_PASS"          : "senha-da-rede",
+
+    "MQTT_BROKER"        : "broker.exemplo.com",
+    "MQTT_PORT"          : 1883,
+    "MQTT_USER"          : "",
+    "MQTT_PASS"          : "",
+    "MQTT_TLS"           : false,
+
+    "DEVICE_KEY"         : "chave-cadastrada-no-banco",
+    "HEARTBEAT_INTERVAL" : 25,
+
+    "LED_LINK_PIN"       : 12,
+    "LED_STATUS_PIN"     : 13,
+    "RELAY_PIN"          : 15,
+    "RELAY_ACTIVE_MS"    : 2000,
+    "INPUT_PINS"         : [26, 34],
+    "INPUT_DEBOUNCE_MS"  : 200
+}
+```
+
+- `INPUT_PINS` são entradas lógicas (ativo baixo, ex.: botão local) que abrem o
+  relé diretamente no firmware e publicam `access-ng/{ambiente_id}/cerberos/{mac}/entrada`
+  com `{"mac":..., "pin":...}`; o Sistema grava isso como evento `entrada_fisica`
+  no log, mesmo que o MAC não esteja cadastrado.
+- Cada pino tem seu próprio debounce (`INPUT_DEBOUNCE_MS`) controlado por
+  timestamp pré-alocado por pino, para evitar alocação de memória dentro da
+  interrupção (IRQ).
+- No ESP32, `GPIO34` é somente entrada e não possui pull-up interno — use
+  resistor pull-up externo quando o sinal for ativo baixo.
+- Segue o mesmo fluxo de coldstart/heartbeat/comando MQTT dos demais firmwares
+  e também requer `umqtt` instalado via `mip`.
+
+### ESP32-C3 (MicroPython) — Caronte com leitor Wiegand
+
+`Hardware/Autenticador/CaronteESP32C3.py` é o firmware do Caronte fixo para um
+ESP32-C3 com leitor RFID Wiegand (D0/D1), substituindo o leitor MFRC522/UART
+de `Caronte_RFID.ino` para essa placa. Não possui Cerberos embutido — apenas lê
+a TAG e publica via MQTT.
+
+```json
+{
+    "WIFI_SSID"          : "nome-da-rede",
+    "WIFI_PASS"          : "senha-da-rede",
+
+    "MQTT_BROKER"        : "broker.exemplo.com",
+    "MQTT_PORT"          : 1883,
+    "MQTT_USER"          : "",
+    "MQTT_PASS"          : "",
+    "MQTT_TLS"           : false,
+
+    "DEVICE_KEY"         : "chave-cadastrada-no-banco",
+    "HEARTBEAT_INTERVAL" : 25,
+
+    "WG_D0_PIN"          : 5,
+    "WG_D1_PIN"          : 7,
+    "BUZZER_PIN"         : 6,
+    "LED_VM_PIN"         : 1,
+    "LED_VD1_PIN"        : 4,
+    "LED_VD2_PIN"        : 3,
+    "LED_VD3_PIN"        : 2,
+    "WG_TIMEOUT_MS"      : 25,
+    "AUTH_TIMEOUT_S"     : 5
+}
+```
+
+- Os pulsos Wiegand são acumulados em um buffer pré-alocado dentro da ISR (sem
+  GC); a leitura é considerada completa após `WG_TIMEOUT_MS` de silêncio nos
+  pinos D0/D1.
+- A TAG é decodificada para uma string hexadecimal maiúscula (`_decode_wiegand`),
+  com tratamento dedicado para os formatos Wiegand de 26 e 34 bits (remoção dos
+  bits de paridade) e fallback genérico para outros tamanhos. Cadastre a `TAG.numero`
+  do usuário exatamente nesse formato hexadecimal, já que a comparação em
+  `Tartaro.autenticarTAGDetalhado()` é sensível a maiúsculas/minúsculas.
+- Publica a TAG em `access-ng/{ambiente_id}/caronte/{mac}/tag` com `{"tag":...,"chave":...}`
+  e aguarda o resultado em `access-ng/{ambiente_id}/caronte/{mac}/result` por até
+  `AUTH_TIMEOUT_S` segundos, sinalizando o resultado com bipes/LEDs
+  (`feedback_allow`/`feedback_deny`).
+- Segue o mesmo fluxo de coldstart/heartbeat MQTT dos demais firmwares e também
+  requer `umqtt` instalado via `mip`.
+
 ### Configuração de IP
 
 No sketch `Hardware/Fechadura/Cerberos_UART.ino`, ajuste:
@@ -965,3 +1059,7 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
 - Suporte a MQTT adicionado: `mqtt_service.py`, CRUD de Brokers em `/admin/brokers`,
   campos `protocolo`/`broker_id` em Cerberos e Caronte, e firmware
   `Cerberos_BitDogLab_MQTT.py`. Requer `paho-mqtt` no Sistema e `umqtt` na placa.
+- Novos firmwares ESP32/ESP32-C3 MQTT-only: `Hardware/Fechadura/CerberosESP32.py`
+  (Cerberos enxuto com entrada física/botão, evento `entrada_fisica` no log) e
+  `Hardware/Autenticador/CaronteESP32C3.py` (Caronte com leitor Wiegand,
+  publica a TAG como string hexadecimal).
