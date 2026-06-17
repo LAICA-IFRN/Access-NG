@@ -29,13 +29,6 @@ usuarios_ambientes = Table(
     Column("ambiente_id", ForeignKey("ambientes.id"), primary_key=True),
 )
 
-usuarios_ambientes_admins = Table(
-    "usuarios_ambientesadmin",
-    Base.metadata,
-    Column("usuarioADM_id", ForeignKey("usuarios.id"), primary_key=True),
-    Column("ambienteADM_id", ForeignKey("ambientes.id"), primary_key=True),
-)
-
 
 class Usuario(Base):
     __tablename__ = 'usuarios'
@@ -48,7 +41,7 @@ class Usuario(Base):
     tag: Mapped["TAG"] = relationship(back_populates="usuario")
     mac: Mapped["MAC"] = relationship(back_populates="usuario")
     ambientes: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes, back_populates="frequentadores")
-    ambientesAdmin: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes_admins, back_populates="admins")
+    papeis: Mapped[List["PapelAmbiente"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 
 
 class TAG(Base):
@@ -76,9 +69,18 @@ class Ambiente(Base):
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     raio_metros: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     frequentadores: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes, back_populates="ambientes")
-    admins: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes_admins, back_populates="ambientesAdmin")
+    papeis: Mapped[List["PapelAmbiente"]] = relationship(back_populates="ambiente", cascade="all, delete-orphan")
     cerberoses: Mapped[List[Cerberos]] = relationship(back_populates="ambiente")
     carontes: Mapped[List[Caronte]] = relationship(back_populates="ambiente")
+
+
+class PapelAmbiente(Base):
+    __tablename__ = 'papeis_ambiente'
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), primary_key=True)
+    ambiente_id: Mapped[int] = mapped_column(ForeignKey("ambientes.id"), primary_key=True)
+    papel: Mapped[str] = mapped_column(String(20))  # 'gerente' | 'colaborador' | 'leitor'
+    usuario: Mapped["Usuario"] = relationship(back_populates="papeis")
+    ambiente: Mapped["Ambiente"] = relationship(back_populates="papeis")
 
 
 class BrokerMQTT(Base):

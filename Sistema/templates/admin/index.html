@@ -5,13 +5,14 @@
 
 <div class="row">
   {% set items = [
-    ('Tartaros', stats.ambientes, 'admin_ambientes', '#c9a227'),
-    ('Cerberoses', stats.cerberoses, 'admin_cerberoses', '#1e7e34'),
-    ('Carontes', stats.carontes, 'admin_carontes', '#1e4e7e'),
-    ('Usuários', stats.usuarios, 'admin_usuarios', '#7e1e7e'),
-    ('Logs', stats.logs, 'admin_logs', '#c97e22'),
+    ('Tartaros', stats.ambientes, 'admin_ambientes', '#c9a227', current_usuario.admin),
+    ('Cerberoses', stats.cerberoses, 'admin_cerberoses', '#1e7e34', true),
+    ('Carontes', stats.carontes, 'admin_carontes', '#1e4e7e', true),
+    ('Usuários', stats.usuarios, 'admin_usuarios', '#7e1e7e', true),
+    ('Logs', stats.logs, 'admin_logs', '#c97e22', true),
   ] %}
-  {% for label, count, endpoint, color in items %}
+  {% for label, count, endpoint, color, visible in items %}
+  {% if visible %}
   <div class="col-6 col-md-3 mb-3">
     <div class="card text-center">
       <div class="card-body py-3">
@@ -21,6 +22,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
   {% endfor %}
 </div>
 

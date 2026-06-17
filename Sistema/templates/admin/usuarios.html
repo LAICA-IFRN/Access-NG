@@ -9,7 +9,7 @@
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
       <thead><tr>
-        <th>Nome</th><th>Matrícula</th><th>TAG RFID</th><th>Admin</th><th>Ambientes</th><th></th>
+        <th>Nome</th><th>Matrícula</th><th>TAG RFID</th><th>Admin</th><th>Ambientes</th><th>Papéis</th><th></th>
       </tr></thead>
       <tbody>
       {% for u in usuarios %}
@@ -23,16 +23,25 @@
         <td style="font-size:.8rem; color:#888;">
           {{ u.ambientes|map(attribute='nome')|join(', ') or '—' }}
         </td>
+        <td style="font-size:.78rem;">
+          {% for p in u.papeis %}
+          <span class="badge" style="background:#2d2d4e; color:#ccc;">{{ p.ambiente.nome }}: {{ p.papel }}</span>
+          {% else %}—{% endfor %}
+        </td>
         <td class="text-right">
+          {% if pode_editar_map.get(u.id) %}
           <a href="{{ url_for('admin_usuario_editar', id=u.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
+          {% endif %}
+          {% if pode_excluir_map.get(u.id) %}
           <form method="POST" action="{{ url_for('admin_usuario_excluir', id=u.id) }}" style="display:inline;"
                 onsubmit="return confirm('Remover {{ u.nome }}?')">
             <button class="btn btn-sm btn-outline-danger py-0 px-2">Excluir</button>
           </form>
+          {% endif %}
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="text-center" style="color:#555;">Nenhum usuário cadastrado.</td></tr>
+      <tr><td colspan="7" class="text-center" style="color:#555;">Nenhum usuário cadastrado.</td></tr>
       {% endfor %}
       </tbody>
     </table>

@@ -182,10 +182,12 @@ def admin_required(f):
         uid = session.get('admin_id')
         if not uid:
             return redirect(url_for('admin_login'))
-        admin = db.query(Usuario).filter(Usuario.id == uid, Usuario.admin == True).first()
-        if not admin:
+        usuario = db.query(Usuario).filter(Usuario.id == uid).first()
+        if usuario is None or not (usuario.admin or usuario.papeis):
             session.pop('admin_id', None)
             return redirect(url_for('admin_login'))
+        if not usuario.admin:
+            abort(403)
         return f(*args, **kwargs)
     return decorated
 
@@ -197,6 +199,83 @@ def caronte_required(f):
             return redirect(url_for('caronte_login'))
         return f(*args, **kwargs)
     return decorated
+
+
+# ── Papéis por Tartaro ───────────────────────────────────────────────────────
+
+def _papel_em(usuario, ambiente_id):
+    """Papel ('gerente'/'colaborador'/'leitor') do usuário num ambiente, ou None."""
+    if not usuario or ambiente_id is None:
+        return None
+    pa = db.query(PapelAmbiente).filter(
+        PapelAmbiente.usuario_id == usuario.id,
+        PapelAmbiente.ambiente_id == ambiente_id,
+    ).first()
+    return pa.papel if pa else None
+
+
+def _ambientes_com_papel(usuario, papeis):
+    """IDs de ambiente onde o usuário tem um dos papéis dados.
+
+    Retorna None (sentinela "todos os ambientes") se o usuário for admin geral.
+    """
+    if not usuario:
+        return []
+    if usuario.admin:
+        return None
+    rows = db.query(PapelAmbiente).filter(
+        PapelAmbiente.usuario_id == usuario.id,
+        PapelAmbiente.papel.in_(papeis),
+    ).all()
+    return [r.ambiente_id for r in rows]
+
+
+def pode_gerenciar_dispositivos(usuario, ambiente_id):
+    return bool(usuario) and (usuario.admin or _papel_em(usuario, ambiente_id) == 'gerente')
+
+
+def pode_criar_usuarios(usuario, ambiente_id):
+    return bool(usuario) and (usuario.admin or _papel_em(usuario, ambiente_id) in ('gerente', 'colaborador'))
+
+
+def pode_editar_usuarios(usuario, ambiente_id):
+    return bool(usuario) and (usuario.admin or _papel_em(usuario, ambiente_id) == 'gerente')
+
+
+def pode_ler_logs(usuario, ambiente_id):
+    return bool(usuario) and (usuario.admin or _papel_em(usuario, ambiente_id) in ('gerente', 'leitor'))
+
+
+def painel_required(f):
+    """Libera acesso ao painel para admin geral OU qualquer usuário com algum papel."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        uid = session.get('admin_id')
+        if not uid:
+            return redirect(url_for('admin_login'))
+        usuario = db.query(Usuario).filter(Usuario.id == uid).first()
+        if not usuario or not (usuario.admin or usuario.papeis):
+            session.pop('admin_id', None)
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.context_processor
+def _inject_current_usuario():
+    usuario = _current_session_usuario() if session.get('admin_id') else None
+    nav = {'dispositivos': False, 'usuarios': False, 'logs': False}
+    if usuario:
+        if usuario.admin:
+            nav = {'dispositivos': True, 'usuarios': True, 'logs': True}
+        else:
+            papeis = {p.papel for p in usuario.papeis}
+            nav = {
+                'dispositivos': 'gerente' in papeis,
+                'usuarios': bool(papeis & {'gerente', 'colaborador'}),
+                'logs': bool(papeis & {'gerente', 'leitor'}),
+            }
+    return {'current_usuario': usuario, 'nav_visivel': nav}
 
 
 # ── Device helpers ───────────────────────────────────────────────────────────
@@ -701,6 +780,33 @@ def caronte_meus_logs():
     )
 
 
+@app.route('/caronte/perfil', methods=['GET', 'POST'])
+@caronte_required
+def caronte_perfil():
+    usuario = db.query(Usuario).filter(Usuario.id == session['user_id']).first()
+    if usuario is None:
+        abort(404)
+    if request.method == 'POST':
+        f = request.form
+        pin = f.get('pin', '').strip()
+        if pin:
+            if not (pin.isdigit() and len(pin) == 4):
+                flash('PIN deve ter 4 dígitos.', 'danger')
+                return redirect(url_for('caronte_perfil'))
+            usuario.pin = pin
+        _upsert_tag(usuario, f.get('tag', ''))
+        db.commit()
+        _create_audit_log(
+            event_type='perfil_atualizado',
+            result='sucesso',
+            message='Usuário atualizou TAG/PIN no portal',
+            usuario=usuario,
+        )
+        flash('Perfil atualizado.', 'success')
+        return redirect(url_for('caronte_perfil'))
+    return render_template('caronte/perfil.html', user_nome=session.get('user_nome'), usuario=usuario)
+
+
 @app.route('/caronte/logout')
 def caronte_logout():
     usuario = None
@@ -724,10 +830,9 @@ def admin_login():
     if request.method == 'POST':
         matricula = request.form.get('matricula', '').strip()
         senha = request.form.get('senha', '').strip()
-        usuario = db.query(Usuario).filter(
-            Usuario.matricula == matricula,
-            Usuario.admin == True
-        ).first()
+        usuario = db.query(Usuario).filter(Usuario.matricula == matricula).first()
+        if usuario and not (usuario.admin or usuario.papeis):
+            usuario = None
 
         autenticado = False
         if usuario:
@@ -776,24 +881,40 @@ def admin_logout():
 
 
 @app.route('/admin/')
-@admin_required
+@painel_required
 def admin_index():
-    stats = {
-        'ambientes': db.query(Ambiente).count(),
-        'cerberoses': db.query(Cerberos).count(),
-        'carontes': db.query(Caronte).count(),
-        'usuarios': db.query(Usuario).count(),
-        'logs': db.query(AccessLog).count(),
-    }
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente', 'colaborador', 'leitor'))
+
+    if ambiente_ids is None:  # admin geral
+        stats = {
+            'ambientes': db.query(Ambiente).count(),
+            'cerberoses': db.query(Cerberos).count(),
+            'carontes': db.query(Caronte).count(),
+            'usuarios': db.query(Usuario).count(),
+            'logs': db.query(AccessLog).count(),
+        }
+        device_q = db.query(AccessLog)
+        access_q = db.query(AccessLog)
+    else:
+        stats = {
+            'cerberoses': db.query(Cerberos).filter(Cerberos.ambiente_id.in_(ambiente_ids)).count(),
+            'carontes': db.query(Caronte).filter(Caronte.ambiente_id.in_(ambiente_ids)).count(),
+            'usuarios': db.query(Usuario).join(Usuario.ambientes).filter(Ambiente.id.in_(ambiente_ids)).distinct().count(),
+            'logs': db.query(AccessLog).filter(AccessLog.ambiente_id.in_(ambiente_ids)).count(),
+        }
+        device_q = db.query(AccessLog).filter(AccessLog.ambiente_id.in_(ambiente_ids))
+        access_q = db.query(AccessLog).filter(AccessLog.ambiente_id.in_(ambiente_ids))
+
     recent_device_events = (
-        db.query(AccessLog)
+        device_q
         .filter(AccessLog.event_type.in_(['device_coldstart', 'device_offline']))
         .order_by(AccessLog.timestamp.desc())
         .limit(15)
         .all()
     )
     recent_access_events = (
-        db.query(AccessLog)
+        access_q
         .filter(AccessLog.event_type.in_([
             'tentativa_tag', 'tentativa_web', 'comando_abertura', 'entrada_fisica'
         ]))
@@ -871,22 +992,35 @@ def admin_ambiente_excluir(id):
 # Cerberoses ─────────────────────────────────
 
 @app.route('/admin/cerberoses')
-@admin_required
+@painel_required
 def admin_cerberoses():
-    cerberoses = db.query(Cerberos).all()
-    return render_template('admin/cerberoses.html', cerberoses=cerberoses)
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    q = db.query(Cerberos)
+    if ambiente_ids is not None:
+        q = q.filter(Cerberos.ambiente_id.in_(ambiente_ids))
+    return render_template('admin/cerberoses.html', cerberoses=q.all())
 
 
 @app.route('/admin/cerberoses/novo', methods=['GET', 'POST'])
-@admin_required
+@painel_required
 def admin_cerberos_novo():
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    if ambiente_ids is not None and not ambiente_ids:
+        abort(403)
     ambientes = db.query(Ambiente).all()
+    if ambiente_ids is not None:
+        ambientes = [a for a in ambientes if a.id in ambiente_ids]
     brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
+        ambiente_id = int(f['ambiente_id'])
+        if ambiente_ids is not None and ambiente_id not in ambiente_ids:
+            abort(403)
         broker_id = int(f['broker_id']) if f.get('broker_id') else None
         c = Cerberos(nome=f['nome'], mac=f['mac'], chave=f['chave'],
-                     ambiente_id=int(f['ambiente_id']),
+                     ambiente_id=ambiente_id,
                      protocolo=f.get('protocolo', 'rest'),
                      broker_id=broker_id)
         db.add(c)
@@ -898,19 +1032,28 @@ def admin_cerberos_novo():
 
 
 @app.route('/admin/cerberoses/<int:id>/editar', methods=['GET', 'POST'])
-@admin_required
+@painel_required
 def admin_cerberos_editar(id):
+    usuario = _current_session_usuario()
     c = db.query(Cerberos).filter(Cerberos.id == id).first()
     if c is None:
         abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
     ambientes = db.query(Ambiente).all()
+    if ambiente_ids is not None:
+        ambientes = [a for a in ambientes if a.id in ambiente_ids]
     brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
+        ambiente_id = int(f['ambiente_id'])
+        if ambiente_ids is not None and ambiente_id not in ambiente_ids:
+            abort(403)
         c.nome       = f['nome']
         c.mac        = f['mac']
         c.chave      = f['chave']
-        c.ambiente_id = int(f['ambiente_id'])
+        c.ambiente_id = ambiente_id
         c.protocolo  = f.get('protocolo', 'rest')
         c.broker_id  = int(f['broker_id']) if f.get('broker_id') else None
         db.commit()
@@ -921,16 +1064,16 @@ def admin_cerberos_editar(id):
 
 
 @app.route('/admin/cerberoses/<int:id>/abrir', methods=['POST'])
-@admin_required
+@painel_required
 def admin_cerberos_abrir(id):
+    usuario = _current_session_usuario()
     c = db.query(Cerberos).filter(Cerberos.id == id).first()
     if c is None:
         abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
     Tartaro().acionarCerberos(c.mac)
     _mqtt().unlock_cerberos(c)
-    usuario = None
-    if session.get('admin_id'):
-        usuario = db.query(Usuario).filter(Usuario.id == session.get('admin_id')).first()
     _create_audit_log(
         event_type='comando_abertura',
         result='sucesso',
@@ -944,11 +1087,14 @@ def admin_cerberos_abrir(id):
 
 
 @app.route('/admin/cerberoses/<int:id>/excluir', methods=['POST'])
-@admin_required
+@painel_required
 def admin_cerberos_excluir(id):
+    usuario = _current_session_usuario()
     c = db.query(Cerberos).filter(Cerberos.id == id).first()
     if c is None:
         abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
     db.delete(c)
     db.commit()
     flash('Cerberos removido.', 'success')
@@ -958,21 +1104,34 @@ def admin_cerberos_excluir(id):
 # Carontes ───────────────────────────────────
 
 @app.route('/admin/carontes')
-@admin_required
+@painel_required
 def admin_carontes():
-    carontes = db.query(Caronte).all()
-    return render_template('admin/carontes.html', carontes=carontes)
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    q = db.query(Caronte)
+    if ambiente_ids is not None:
+        q = q.filter(Caronte.ambiente_id.in_(ambiente_ids))
+    return render_template('admin/carontes.html', carontes=q.all())
 
 
 @app.route('/admin/carontes/novo', methods=['GET', 'POST'])
-@admin_required
+@painel_required
 def admin_caronte_novo():
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    if ambiente_ids is not None and not ambiente_ids:
+        abort(403)
     ambientes = db.query(Ambiente).all()
+    if ambiente_ids is not None:
+        ambientes = [a for a in ambientes if a.id in ambiente_ids]
     brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
+        ambiente_id = int(f['ambiente_id'])
+        if ambiente_ids is not None and ambiente_id not in ambiente_ids:
+            abort(403)
         broker_id = int(f['broker_id']) if f.get('broker_id') else None
-        c = Caronte(mac=f['mac'], chave=f['chave'], ambiente_id=int(f['ambiente_id']),
+        c = Caronte(mac=f['mac'], chave=f['chave'], ambiente_id=ambiente_id,
                     protocolo=f.get('protocolo', 'rest'),
                     broker_id=broker_id)
         db.add(c)
@@ -984,18 +1143,27 @@ def admin_caronte_novo():
 
 
 @app.route('/admin/carontes/<int:id>/editar', methods=['GET', 'POST'])
-@admin_required
+@painel_required
 def admin_caronte_editar(id):
+    usuario = _current_session_usuario()
     c = db.query(Caronte).filter(Caronte.id == id).first()
     if c is None:
         abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
     ambientes = db.query(Ambiente).all()
+    if ambiente_ids is not None:
+        ambientes = [a for a in ambientes if a.id in ambiente_ids]
     brokers   = db.query(BrokerMQTT).filter(BrokerMQTT.ativo == True).all()
     if request.method == 'POST':
         f = request.form
+        ambiente_id = int(f['ambiente_id'])
+        if ambiente_ids is not None and ambiente_id not in ambiente_ids:
+            abort(403)
         c.mac        = f['mac']
         c.chave      = f['chave']
-        c.ambiente_id = int(f['ambiente_id'])
+        c.ambiente_id = ambiente_id
         c.protocolo  = f.get('protocolo', 'rest')
         c.broker_id  = int(f['broker_id']) if f.get('broker_id') else None
         db.commit()
@@ -1006,11 +1174,14 @@ def admin_caronte_editar(id):
 
 
 @app.route('/admin/carontes/<int:id>/excluir', methods=['POST'])
-@admin_required
+@painel_required
 def admin_caronte_excluir(id):
+    usuario = _current_session_usuario()
     c = db.query(Caronte).filter(Caronte.id == id).first()
     if c is None:
         abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
     db.delete(c)
     db.commit()
     flash('Caronte removido.', 'success')
@@ -1090,16 +1261,26 @@ def admin_broker_excluir(id):
 # Usuários ───────────────────────────────────
 
 @app.route('/admin/logs')
-@admin_required
+@painel_required
 def admin_logs():
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
     search = request.args.get('search', '').strip()
     event_type = request.args.get('event_type', '').strip()
     result = request.args.get('result', '').strip()
     ambiente_id = request.args.get('ambiente_id', '').strip()
-    query = _logs_query(search, event_type, result, ambiente_id).order_by(AccessLog.timestamp.desc())
+    if ambiente_ids is not None and ambiente_id:
+        try:
+            if int(ambiente_id) not in ambiente_ids:
+                ambiente_id = ''
+        except ValueError:
+            ambiente_id = ''
+    query = _logs_query(search, event_type, result, ambiente_id, ambiente_ids).order_by(AccessLog.timestamp.desc())
     total = query.count()
     logs = query.limit(200).all()
     ambientes = db.query(Ambiente).order_by(Ambiente.nome).all()
+    if ambiente_ids is not None:
+        ambientes = [a for a in ambientes if a.id in ambiente_ids]
     event_types = [
         ('', 'Todos os eventos'),
         ('tentativa_tag', 'Tentativas por tag'),
@@ -1132,8 +1313,10 @@ def admin_logs():
     )
 
 
-def _logs_query(search='', event_type='', result='', ambiente_id=''):
+def _logs_query(search='', event_type='', result='', ambiente_id='', ambiente_ids=None):
     query = db.query(AccessLog)
+    if ambiente_ids is not None:
+        query = query.filter(AccessLog.ambiente_id.in_(ambiente_ids))
     if event_type:
         query = query.filter(AccessLog.event_type == event_type)
     if result:
@@ -1206,81 +1389,159 @@ def admin_logs_limpar():
     return redirect(url_for('admin_logs'))
 
 
+def _upsert_tag(usuario, numero):
+    numero = (numero or '').strip()
+    existing = db.query(TAG).filter(TAG.usuario_id == usuario.id).first()
+    if numero:
+        if existing:
+            existing.numero = numero
+        else:
+            db.add(TAG(numero=numero, usuario_id=usuario.id))
+    elif existing:
+        db.delete(existing)
+
+
 @app.route('/admin/usuarios')
-@admin_required
+@painel_required
 def admin_usuarios():
-    usuarios = db.query(Usuario).all()
-    return render_template('admin/usuarios.html', usuarios=usuarios)
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente', 'colaborador'))
+    if ambiente_ids is None:
+        usuarios = db.query(Usuario).all()
+    elif not ambiente_ids:
+        usuarios = []
+    else:
+        usuarios = (
+            db.query(Usuario)
+            .join(Usuario.ambientes)
+            .filter(Ambiente.id.in_(ambiente_ids))
+            .distinct()
+            .all()
+        )
+    ambientes_gerente_ids = set(_ambientes_com_papel(usuario, ('gerente',)) or [])
+
+    def _pode_editar(u):
+        if usuario.admin:
+            return True
+        if u.admin:
+            return False
+        u_ids = {a.id for a in u.ambientes} | {p.ambiente_id for p in u.papeis}
+        return bool(u_ids & ambientes_gerente_ids)
+
+    def _pode_excluir(u):
+        if not _pode_editar(u):
+            return False
+        if usuario.admin:
+            return True
+        return not any(p.papel == 'gerente' for p in u.papeis)
+
+    pode_editar_map = {u.id: _pode_editar(u) for u in usuarios}
+    pode_excluir_map = {u.id: _pode_excluir(u) for u in usuarios}
+    return render_template('admin/usuarios.html', usuarios=usuarios,
+                           pode_editar_map=pode_editar_map, pode_excluir_map=pode_excluir_map)
 
 
 @app.route('/admin/usuarios/novo', methods=['GET', 'POST'])
-@admin_required
+@painel_required
 def admin_usuario_novo():
-    ambientes = db.query(Ambiente).all()
+    usuario = _current_session_usuario()
+    ambientes = [a for a in db.query(Ambiente).all() if pode_criar_usuarios(usuario, a.id)]
+    if not usuario.admin and not ambientes:
+        abort(403)
+    ambientes_gerente_ids = set(_ambientes_com_papel(usuario, ('gerente',)) or [])
+    if usuario.admin:
+        ambientes_gerente_ids = {a.id for a in db.query(Ambiente).all()}
     if request.method == 'POST':
         f = request.form
-        is_admin = 'admin' in f
+        is_admin = usuario.admin and 'admin' in f
         senha_raw = f.get('senha', '').strip()
         u = Usuario(nome=f['nome'], matricula=f['matricula'],
                     pin=f['pin'][:4], admin=is_admin,
                     senha=generate_password_hash(senha_raw) if senha_raw else None)
         db.add(u)
         db.flush()
-        tag_numero = f.get('tag', '').strip()
-        if tag_numero:
-            db.add(TAG(numero=tag_numero, usuario_id=u.id))
-        for amb_id in request.form.getlist('ambientes'):
-            amb = db.query(Ambiente).filter(Ambiente.id == int(amb_id)).first()
-            if amb:
-                u.ambientes.append(amb)
+        _upsert_tag(u, f.get('tag', ''))
+        amb_ids_escopo = {a.id for a in ambientes}
+        amb_ids_form = {int(x) for x in request.form.getlist('ambientes')} & amb_ids_escopo
+        for amb_id in amb_ids_form:
+            amb = db.query(Ambiente).filter(Ambiente.id == amb_id).first()
+            u.ambientes.append(amb)
+            papel = f.get(f'papel_{amb_id}', '').strip()
+            papeis_validos = ('gerente', 'colaborador', 'leitor') if usuario.admin else ('colaborador', 'leitor')
+            if papel in papeis_validos and amb_id in ambientes_gerente_ids:
+                db.add(PapelAmbiente(usuario_id=u.id, ambiente_id=amb_id, papel=papel))
         db.commit()
         flash('Usuário criado.', 'success')
         return redirect(url_for('admin_usuarios'))
-    return render_template('admin/usuario_form.html', usuario=None, ambientes=ambientes)
+    return render_template('admin/usuario_form.html', usuario=None, ambientes=ambientes,
+                           papeis_atuais={}, pode_papel={a.id: a.id in ambientes_gerente_ids for a in ambientes})
 
 
 @app.route('/admin/usuarios/<int:id>/editar', methods=['GET', 'POST'])
-@admin_required
+@painel_required
 def admin_usuario_editar(id):
+    usuario = _current_session_usuario()
     u = db.query(Usuario).filter(Usuario.id == id).first()
     if u is None:
         abort(404)
-    ambientes = db.query(Ambiente).all()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    if ambiente_ids is not None:
+        u_ambiente_ids = {a.id for a in u.ambientes} | {p.ambiente_id for p in u.papeis}
+        if u.admin or not (u_ambiente_ids & set(ambiente_ids)):
+            abort(403)
+    ambientes = [a for a in db.query(Ambiente).all() if pode_editar_usuarios(usuario, a.id)]
+    ambientes_gerente_ids = {a.id for a in ambientes} if not usuario.admin else {a.id for a in db.query(Ambiente).all()}
+    papeis_atuais = {p.ambiente_id: p.papel for p in u.papeis}
     if request.method == 'POST':
         f = request.form
         u.nome = f['nome']
         u.matricula = f['matricula']
         if f.get('pin'):
             u.pin = f['pin'][:4]
-        u.admin = 'admin' in f
+        if usuario.admin:
+            u.admin = 'admin' in f
         if f.get('senha'):
             u.senha = generate_password_hash(f['senha'])
-        tag_numero = f.get('tag', '').strip()
-        existing_tag = db.query(TAG).filter(TAG.usuario_id == u.id).first()
-        if tag_numero:
-            if existing_tag:
-                existing_tag.numero = tag_numero
-            else:
-                db.add(TAG(numero=tag_numero, usuario_id=u.id))
-        elif existing_tag:
-            db.delete(existing_tag)
-        u.ambientes = []
-        for amb_id in request.form.getlist('ambientes'):
-            amb = db.query(Ambiente).filter(Ambiente.id == int(amb_id)).first()
-            if amb:
-                u.ambientes.append(amb)
+        _upsert_tag(u, f.get('tag', ''))
+
+        amb_ids_escopo = {a.id for a in ambientes}
+        amb_ids_form = {int(x) for x in request.form.getlist('ambientes')} & amb_ids_escopo
+        fora_do_escopo = [a for a in u.ambientes if a.id not in amb_ids_escopo]
+        dentro = db.query(Ambiente).filter(Ambiente.id.in_(amb_ids_form)).all() if amb_ids_form else []
+        u.ambientes = fora_do_escopo + dentro
+
+        papeis_validos = ('gerente', 'colaborador', 'leitor') if usuario.admin else ('colaborador', 'leitor')
+        for amb_id in amb_ids_escopo:
+            papel = f.get(f'papel_{amb_id}', '').strip()
+            pa = db.query(PapelAmbiente).filter_by(usuario_id=u.id, ambiente_id=amb_id).first()
+            if papel in papeis_validos and amb_id in ambientes_gerente_ids:
+                if pa:
+                    pa.papel = papel
+                else:
+                    db.add(PapelAmbiente(usuario_id=u.id, ambiente_id=amb_id, papel=papel))
+            elif pa and amb_id in ambientes_gerente_ids:
+                db.delete(pa)
         db.commit()
         flash('Usuário atualizado.', 'success')
         return redirect(url_for('admin_usuarios'))
-    return render_template('admin/usuario_form.html', usuario=u, ambientes=ambientes)
+    return render_template('admin/usuario_form.html', usuario=u, ambientes=ambientes,
+                           papeis_atuais=papeis_atuais,
+                           pode_papel={a.id: a.id in ambientes_gerente_ids for a in ambientes})
 
 
 @app.route('/admin/usuarios/<int:id>/excluir', methods=['POST'])
-@admin_required
+@painel_required
 def admin_usuario_excluir(id):
+    usuario = _current_session_usuario()
     u = db.query(Usuario).filter(Usuario.id == id).first()
     if u is None:
         abort(404)
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    if ambiente_ids is not None:
+        u_ambiente_ids = {a.id for a in u.ambientes} | {p.ambiente_id for p in u.papeis}
+        is_gerente_em_algum_lugar = any(p.papel == 'gerente' for p in u.papeis)
+        if u.admin or is_gerente_em_algum_lugar or not (u_ambiente_ids & set(ambiente_ids)):
+            abort(403)
     db.delete(u)
     db.commit()
     flash('Usuário removido.', 'success')

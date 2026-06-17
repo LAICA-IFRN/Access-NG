@@ -6,6 +6,7 @@
     <h5 style="color:#c9a227; margin:0;">Auditoria</h5>
     <small style="color:#888;">{{ total }} registro(s); exibindo ate 200.</small>
   </div>
+  {% if current_usuario.admin %}
   <form method="POST" action="{{ url_for('admin_logs_limpar') }}"
         onsubmit="return confirm('Apagar todos os logs conforme os filtros atuais?')">
     <input type="hidden" name="search" value="{{ search }}">
@@ -14,6 +15,7 @@
     <input type="hidden" name="ambiente_id" value="{{ ambiente_id }}">
     <button class="btn btn-sm btn-outline-danger">Apagar filtrados</button>
   </form>
+  {% endif %}
 </div>
 
 <form method="GET" class="mb-3">
@@ -61,7 +63,9 @@
   <input type="hidden" name="ambiente_id" value="{{ ambiente_id }}">
   <div class="d-flex justify-content-between align-items-center mb-2">
     <small style="color:#888;">Use os filtros para ver acessos por Tartaro, tentativas negadas e logins.</small>
+    {% if current_usuario.admin %}
     <button class="btn btn-sm btn-outline-danger">Apagar selecionados</button>
+    {% endif %}
   </div>
   <div class="card">
     <div class="card-body p-0">
@@ -69,7 +73,9 @@
         <table class="table mb-0">
           <thead>
             <tr>
+              {% if current_usuario.admin %}
               <th style="width:36px;"><input type="checkbox" id="select-all-logs" title="Selecionar todos"></th>
+              {% endif %}
               <th>Data</th>
               <th>Evento</th>
               <th>Resultado</th>
@@ -84,7 +90,9 @@
           <tbody>
             {% for log in logs %}
             <tr>
+              {% if current_usuario.admin %}
               <td><input type="checkbox" name="log_ids" value="{{ log.id }}" class="log-check"></td>
+              {% endif %}
               <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
               <td>{{ event_label_map.get(log.event_type, log.event_type) or 'api_request' }}</td>
               <td>

@@ -35,18 +35,28 @@
     <nav class="nav flex-column px-2">
       <a class="nav-link {% if request.endpoint == 'admin_index' %}active{% endif %}"
          href="{{ url_for('admin_index') }}">Visão Geral</a>
+      {% if current_usuario.admin %}
       <a class="nav-link {% if 'ambiente' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_ambientes') }}">Tartaros</a>
+      {% endif %}
+      {% if nav_visivel.dispositivos %}
       <a class="nav-link {% if 'cerberos' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_cerberoses') }}">Cerberoses</a>
       <a class="nav-link {% if 'caronte' in request.endpoint and 'admin' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_carontes') }}">Carontes</a>
+      {% endif %}
+      {% if nav_visivel.usuarios %}
       <a class="nav-link {% if 'usuario' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_usuarios') }}">Usuários</a>
+      {% endif %}
+      {% if nav_visivel.logs %}
       <a class="nav-link {% if 'logs' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_logs') }}">Logs</a>
+      {% endif %}
+      {% if current_usuario.admin %}
       <a class="nav-link {% if 'broker' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_brokers') }}" style="font-size:.85rem; color:#4e9;">Brokers MQTT</a>
+      {% endif %}
       <hr style="border-color:#2d2d4e; margin:.5rem 0;">
       <a class="nav-link" href="{{ url_for('admin_logout') }}" style="color:#7e1e1e;">Sair</a>
     </nav>

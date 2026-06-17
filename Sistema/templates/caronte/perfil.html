@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+  <title>Caronte — Meu Perfil</title>
+  <style>
+    * { box-sizing:border-box; }
+    body { background:#0d0d1a; color:#e0e0e0; min-height:100vh; font-size:16px; }
+    .topbar { background:#12122a; border-bottom:1px solid #2d2d4e;
+              padding:.75rem 1rem; display:flex; justify-content:space-between; align-items:center; }
+    .topbar .brand { color:#c9a227; font-weight:bold; letter-spacing:2px; }
+    .topbar .user  { color:#888; font-size:.85rem; }
+    .topbar a      { color:#555; font-size:.8rem; text-decoration:none; }
+    .topbar a:hover { color:#c9a227; }
+
+    .container-perfil { max-width:480px; margin:0 auto; padding:1.25rem 1rem; }
+
+    .page-title { color:#c9a227; font-weight:bold; font-size:1.1rem; margin-bottom:.25rem; }
+    .page-subtitle { color:#555; font-size:.8rem; margin-bottom:1.25rem; }
+
+    .card { background:#1a1a2e; border:1px solid #2d2d4e; border-radius:10px; }
+    .form-control { background:#0d0d1a; border:1px solid #2d2d4e; color:#e0e0e0; }
+    .form-control:focus { background:#0d0d1a; border-color:#c9a227; color:#e0e0e0; box-shadow:none; }
+    .form-control[readonly] { color:#888; }
+    .btn-gold { background:#c9a227; color:#000; border:none; }
+    .btn-gold:hover { background:#e0b830; color:#000; }
+    .alert { border-radius:4px; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">&#9760; CARONTE</span>
+  <span>
+    <span class="user">{{ user_nome }}</span>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('caronte_portal') }}">Portal</a>
+    &nbsp;·&nbsp;
+    <a href="{{ url_for('caronte_logout') }}">Sair</a>
+  </span>
+</div>
+
+<div class="container-perfil">
+  <div class="page-title">Meu Perfil</div>
+  <div class="page-subtitle">Nome e matrícula são gerenciados pelo administrador do seu Tartaro.</div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }} alert-dismissible fade show py-2" role="alert">
+        {{ msg }}
+        <button type="button" class="close py-2" data-dismiss="alert">&times;</button>
+      </div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="card">
+    <div class="card-body">
+      <form method="POST">
+        <div class="form-group">
+          <label>Nome</label>
+          <input type="text" class="form-control" value="{{ usuario.nome }}" readonly>
+        </div>
+        <div class="form-group">
+          <label>Matrícula</label>
+          <input type="text" class="form-control" value="{{ usuario.matricula }}" readonly>
+        </div>
+        <div class="form-group">
+          <label>TAG RFID <small style="color:#555;">(deixe em branco para remover)</small></label>
+          <input name="tag" type="text" class="form-control"
+                 value="{{ usuario.tag.numero if usuario.tag else '' }}"
+                 placeholder="Ex: A3F2E1B0">
+        </div>
+        <div class="form-group">
+          <label>Novo PIN <small style="color:#555;">(em branco = não altera)</small></label>
+          <input name="pin" type="password" class="form-control" maxlength="4"
+                 placeholder="4 dígitos" autocomplete="off">
+        </div>
+        <button type="submit" class="btn btn-gold">Salvar</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
