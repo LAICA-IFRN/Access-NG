@@ -3,6 +3,7 @@
 .vscode
 *.Identifier
 config.json
+.claude
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
