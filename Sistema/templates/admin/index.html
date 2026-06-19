@@ -26,6 +26,61 @@
   {% endfor %}
 </div>
 
+{% if analytics %}
+<div class="row mt-2">
+  {% set ad = analytics.devices %}
+  <div class="col-6 col-md-4 mb-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div style="font-size:2.5rem; font-weight:bold; color:#1e7e34;">{{ ad.online }}</div>
+        <div style="font-size:.8rem; color:#888; text-transform:uppercase; letter-spacing:1px;">Online</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-4 mb-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div style="font-size:2.5rem; font-weight:bold; color:#7e1e1e;">{{ ad.offline }}</div>
+        <div style="font-size:.8rem; color:#888; text-transform:uppercase; letter-spacing:1px;">Offline</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-4 mb-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div style="font-size:2.5rem; font-weight:bold; color:#888;">{{ ad.unknown }}</div>
+        <div style="font-size:.8rem; color:#888; text-transform:uppercase; letter-spacing:1px;">Desconhecido</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row mt-2">
+  <div class="col-12 col-lg-6 mb-4">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Latência média por hora (24h)</span>
+        <span style="font-size:.78rem; color:#888;">
+          {% if analytics.latencia_media_ms is not none %}média: {{ analytics.latencia_media_ms }} ms{% else %}sem dados{% endif %}
+        </span>
+      </div>
+      <div class="card-body">
+        <canvas id="latenciaChart" height="90"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6 mb-4">
+    <div class="card">
+      <div class="card-header">Aberturas por dia (últimos 14 dias)</div>
+      <div class="card-body">
+        <canvas id="aberturasChart" height="90"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if analytics %}
 <div class="row mt-2">
 
   {# Atividade de dispositivos #}
@@ -113,4 +168,59 @@
   </div>
 
 </div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if analytics %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  var latenciaData = {{ analytics.latencia_serie | tojson }};
+  new Chart(document.getElementById('latenciaChart'), {
+    type: 'line',
+    data: {
+      labels: latenciaData.map(function (d) { return d.hora; }),
+      datasets: [{
+        label: 'Latência média (ms)',
+        data: latenciaData.map(function (d) { return d.media_ms; }),
+        borderColor: '#c9a227',
+        backgroundColor: 'rgba(201,162,39,0.15)',
+        spanGaps: true,
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true, ticks: { color: '#888' }, grid: { color: '#2d2d4e' } },
+        x: { ticks: { color: '#888' }, grid: { display: false } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+
+  var aberturasData = {{ analytics.aberturas_por_dia | tojson }};
+  new Chart(document.getElementById('aberturasChart'), {
+    type: 'line',
+    data: {
+      labels: aberturasData.map(function (d) { return d.dia; }),
+      datasets: [{
+        label: 'Aberturas',
+        data: aberturasData.map(function (d) { return d.total; }),
+        borderColor: '#1e7e34',
+        backgroundColor: 'rgba(30,126,52,0.15)',
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true, ticks: { precision: 0, color: '#888' }, grid: { color: '#2d2d4e' } },
+        x: { ticks: { color: '#888' }, grid: { display: false } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+</script>
+{% endif %}
 {% endblock %}

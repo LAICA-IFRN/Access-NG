@@ -1,8 +1,8 @@
 # Access-NG
 
 Sistema de controle de acesso para ambientes físicos usando ESP32/ESP8266,
-RFID, fechaduras acionadas por relé, API Flask, painel administrativo,
-dashboard de status e uma versão web/mobile do Caronte com geolocalização.
+RFID, fechaduras acionadas por relé, API Flask, painel administrativo com
+dashboard de estatísticas e uma versão web/mobile do Caronte com geolocalização.
 
 Cerberoses e Carontes podem se comunicar com o Sistema por **REST** (HTTP/HTTPS,
 modo padrão) ou por **MQTT**, configurável por dispositivo no painel admin.
@@ -13,7 +13,6 @@ O projeto usa a seguinte nomenclatura:
 - **Cerberos**: dispositivo/fechadura que consulta a API para saber se deve abrir.
 - **Caronte fixo**: leitor RFID físico que autentica tags e solicita abertura.
 - **Caronte web**: portal mobile em navegador, com login por matrícula/PIN e validação por geolocalização.
-- **Dashboard**: tela separada de monitoramento de status dos Tartaros, Cerberoses e Carontes.
 
 ## Estrutura do repositório
 
@@ -26,13 +25,8 @@ Access-NG/
 │   ├── mqtt_service.py                # Serviço MQTT de background (brokers, tópicos, handlers)
 │   ├── requirements.txt               # Dependências do Sistema
 │   └── templates/
-│       ├── admin/                     # Painel administrativo (inclui CRUD de Brokers MQTT)
+│       ├── admin/                     # Painel administrativo (Visão Geral com dashboard de estatísticas, CRUD de Brokers MQTT etc.)
 │       └── caronte/                   # Portal mobile do Caronte web
-├── Dashboard/
-│   ├── api.py                         # Dashboard e proxy de /api/status
-│   ├── requeriments.txt               # Dependências do Dashboard
-│   └── templates/
-│       └── index.html                 # Monitoramento com polling
 └── Hardware/
     ├── Fechadura/
     │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID
@@ -75,8 +69,8 @@ Fluxo de status:
 1. Cerberos e Carontes informam inicialização em `POST /device/coldstart`.
 2. Dispositivos enviam presença em `POST /device/heartbeat` ou usam endpoints legados, que também atualizam `last_seen`.
 3. Uma thread de background marca como `offline` dispositivos sem contato há mais de 30 segundos.
-4. `GET /api/status` expõe todos os Tartaros com seus dispositivos.
-5. O Dashboard consulta o Sistema e atualiza a tela a cada 10 segundos.
+4. `GET /api/status` e `GET /api/dashboard` expõem todos os Tartaros com seus dispositivos e estatísticas, para uso por integrações externas.
+5. A própria Visão Geral do painel admin (`GET /admin/`) mostra esse status, sem precisar de uma aplicação separada.
 
 Fluxo MQTT (alternativo ao REST, por dispositivo):
 
@@ -117,17 +111,6 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Para o Dashboard:
-
-```bash
-cd Dashboard
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requeriments.txt
-```
-
-Observação: o arquivo do Dashboard se chama `requeriments.txt` no repositório.
 No Windows, use `.venv\Scripts\activate` no lugar de `source .venv/bin/activate`.
 
 ## Execução
@@ -144,27 +127,6 @@ Por padrão ele sobe em:
 ```text
 http://0.0.0.0:9001
 ```
-
-Execute o Dashboard em outro terminal:
-
-```bash
-cd Dashboard
-python api.py
-```
-
-Por padrão ele sobe em:
-
-```text
-http://0.0.0.0:3002
-```
-
-O Dashboard espera encontrar o Sistema em:
-
-```python
-SISTEMA_URL = "http://127.0.0.1:9001"
-```
-
-Se o Sistema estiver em outro IP/porta, altere `Dashboard/api.py`.
 
 ## Banco de dados
 
@@ -351,6 +313,8 @@ http://127.0.0.1:9001
 | Método | Rota | Descrição |
 | --- | --- | --- |
 | `GET` | `/` | Renderiza a tela inicial simples do Sistema. |
+| `GET` | `/api/status` | JSON com todos os Tartaros e o status (`online`/`offline`/`unknown`) de seus dispositivos. Sem autenticação — pensado para integrações externas. |
+| `GET` | `/api/dashboard` | JSON com contagens de dispositivos, estatísticas de acesso do dia, eventos recentes e detalhamento por Tartaro. Mesma finalidade do `/api/status`, com mais detalhe. |
 
 ### Endpoints IoT legados
 
@@ -550,9 +514,10 @@ só vê/gerencia os Tartaros onde tem papel.
 | --- | --- | --- |
 | `GET/POST` | `/admin/login` | Login administrativo. |
 | `GET` | `/admin/logout` | Logout administrativo. |
-| `GET` | `/admin/` | Resumo com contagens de ambientes, Cerberoses, Carontes e usuários. |
+| `GET` | `/admin/` | Visão Geral: contagens de ambientes/Cerberoses/Carontes/usuários, dispositivos online/offline, gráficos de linha de latência média da API (24h) e de aberturas por dia (14 dias), e últimas atividades/tentativas de acesso. |
 | `GET` | `/admin/ambientes` | Lista Tartaros. |
 | `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
+| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia, com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias). |
 | `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro. |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
 | `GET` | `/admin/cerberoses` | Lista Cerberoses. |
@@ -576,10 +541,22 @@ só vê/gerencia os Tartaros onde tem papel.
 | `POST` | `/admin/logs/excluir` | Exclui logs selecionados. |
 | `POST` | `/admin/logs/limpar` | Limpa logs conforme filtros aplicados. |
 
-> As rotas de Tartaros e Brokers MQTT, e a exclusão/limpeza de logs, exigem
-> `admin=True`. As demais rotas desta tabela aceitam também `gerente`,
-> `colaborador` ou `leitor`, mas filtradas/restritas ao Tartaro onde o
-> usuário tem papel — ver [Papéis e permissões](#papéis-e-permissões).
+> A listagem e o CRUD de Tartaros (`/admin/ambientes`, `novo`, `editar`,
+> `excluir`) e de Brokers MQTT, além da exclusão/limpeza de logs, exigem
+> `admin=True`. A exceção é `/admin/ambientes/<id>` (visão/gráfico do
+> Tartaro): aceita também quem tem papel `gerente` ou `leitor` *nesse*
+> Tartaro especificamente — é a página que aparece como "Meu Tartaro" no
+> menu para esses papéis, já que eles não veem a listagem completa. As
+> demais rotas desta tabela aceitam também `gerente`, `colaborador` ou
+> `leitor`, mas filtradas/restritas ao Tartaro onde o usuário tem papel —
+> ver [Papéis e permissões](#papéis-e-permissões).
+>
+> O dashboard de estatísticas em `/admin/` (online/offline, gráficos de
+> linha de latência média e de aberturas por dia, e atividades recentes) é
+> restrito ao administrador geral (todos os Tartaros) e a quem tem papel
+> `gerente` ou `leitor` (só do(s) Tartaro(s) onde tem o papel). Quem só tem
+> papel `colaborador` vê a Visão Geral sem esses widgets e não tem acesso a
+> `/admin/ambientes/<id>` nem a `/admin/logs`.
 
 > Se não houver um administrador cadastrado, o sistema agora cria um usuário padrão automaticamente na primeira execução:
 > - Matrícula: `admin`
@@ -603,38 +580,13 @@ A API registra todos os acessos em `access_logs`, no banco `Sistema/Acesso.db`. 
 - `status_code` — código HTTP retornado
 - `payload` — corpo da requisição
 - `message` — resposta ou mensagem retornada pela API
+- `duration_ms` — tempo de processamento da requisição em milissegundos, usado para a latência média mostrada na Visão Geral do painel
 
 Isso permite auditar o que acontece na API, incluindo tentativas de dispositivos
 cadastrados ou não, logins administrativos, logouts e comandos manuais de abertura.
 
 O formulário de Tartaro usa Leaflet/OpenStreetMap para selecionar latitude e
 longitude no mapa e configurar o raio de acesso do Caronte web.
-
-## Dashboard
-
-Base local padrão:
-
-```text
-http://127.0.0.1:3002
-```
-
-Rotas:
-
-| Método | Rota | Descrição |
-| --- | --- | --- |
-| `GET` | `/` | Dashboard com cards por Tartaro e status dos dispositivos. |
-| `GET` | `/api/status` | Proxy para `Sistema /api/status`, evitando CORS no JavaScript. |
-| `GET` | `/Porta` | Tela legada que consulta a API externa `laica.ifrn.edu.br`. |
-| `GET` | `/Ambiente` | Tela legada de temperatura/umidade com dados da API externa. |
-
-Recursos do dashboard atual:
-
-- Consome `GET /api/status` do Sistema.
-- Mostra cards por Tartaro.
-- Exibe Cerberoses e Carontes com badges `online`, `offline` ou `unknown`.
-- Mostra `last_seen` em formato relativo, como `agora`, `20s atrás`, `3min atrás`.
-- Atualiza a cada 10 segundos com `fetch`, sem recarregar a página.
-- Mantém `/api/status` local como proxy para evitar problemas de CORS.
 
 ## Status online/offline
 
@@ -678,8 +630,8 @@ ci  →  deploy (somente push em main)
 **Job `ci`**
 
 1. Faz checkout do repositório.
-2. Instala `Sistema/requirements.txt` e `Dashboard/requeriments.txt`.
-3. Executa `python -m compileall Sistema Dashboard`.
+2. Instala `Sistema/requirements.txt`.
+3. Executa `python -m compileall Sistema`.
 
 **Job `deploy`**
 
@@ -702,12 +654,11 @@ Configure em **Settings → Secrets and variables → Actions** do repositório:
 
 ### PM2 — `ecosystem.config.js`
 
-O arquivo `ecosystem.config.js` na raiz do repositório define os dois processos:
+O arquivo `ecosystem.config.js` na raiz do repositório define o processo:
 
 | Nome PM2 | Diretório | Porta |
 | --- | --- | --- |
 | `access-ng-api` | `./Sistema` | 9001 |
-| `access-ng-dashboard` | `./Dashboard` | 3002 |
 
 Logs ficam em `logs/` na raiz do repositório (criado automaticamente pelo PM2).
 
@@ -1052,10 +1003,16 @@ python Sistema/api.py
 
 ## Problemas comuns
 
-### Dashboard vazio
+### Visão Geral sem estatísticas
 
-Verifique se o Sistema está rodando em `127.0.0.1:9001` ou altere `SISTEMA_URL` em
-`Dashboard/api.py`.
+Se a Visão Geral (`/admin/`) não mostra os cards de online/offline e os
+gráficos de latência/aberturas, confirme que o usuário logado é
+administrador geral ou tem papel `gerente`/`leitor` em algum Tartaro — quem
+só tem papel `colaborador` não vê esses widgets (veja [Painel
+administrativo](#painel-administrativo)). Os gráficos aparecem vazios até
+que existam requisições e aberturas registradas no período correspondente
+(24h para latência, 14 dias por padrão para aberturas — ajustável em
+`/admin/ambientes/<id>`).
 
 ### Dispositivo aparece como unknown
 
@@ -1100,12 +1057,11 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
 ## Estado atual importante
 
 - O backend do Sistema já possui endpoints novos de coldstart, heartbeat e status.
-- O Dashboard já consome o status local do Sistema.
 - O painel admin e o Caronte web estão presentes em `Sistema/templates/`.
 - O firmware ainda precisa ser ajustado para usar `/device/coldstart` com MAC real.
 - Carontes fixos precisam de heartbeat periódico para status online confiável.
 - Pipeline CI/CD configurado em `.github/workflows/deploy.yml`; configure os 5 secrets no repositório para ativar o deploy automático.
-- `ecosystem.config.js` na raiz define os dois processos PM2 (`access-ng-api` e `access-ng-dashboard`).
+- `ecosystem.config.js` na raiz define o processo PM2 `access-ng-api`.
 - Suporte a MQTT adicionado: `mqtt_service.py`, CRUD de Brokers em `/admin/brokers`,
   campos `protocolo`/`broker_id` em Cerberos e Caronte, e firmware
   `Cerberos_BitDogLab_MQTT.py`. Requer `paho-mqtt` no Sistema e `umqtt` na placa.
@@ -1117,3 +1073,13 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   tabela `PapelAmbiente`, com painel admin compartilhado (`painel_required`)
   e autoatendimento do usuário regular em `/caronte/perfil` (TAG e PIN) —
   veja [Papéis e permissões](#papéis-e-permissões).
+- O Dashboard separado (porta 3002) foi removido. A Visão Geral do painel
+  (`/admin/`) passou a mostrar o dashboard de estatísticas (dispositivos
+  online/offline, gráficos de linha de latência média da API e de
+  aberturas por dia, e atividades recentes), restrito a admin geral,
+  `gerente` ou `leitor`.
+- Cada Tartaro tem sua própria página (`/admin/ambientes/<id>`) com um
+  gráfico de linha de aberturas por dia e período personalizável
+  (`desde`/`ate`). Admin geral acessa qualquer Tartaro pela listagem; quem
+  tem papel `gerente`/`leitor` acessa o próprio pelo link "Meu Tartaro" no
+  menu.

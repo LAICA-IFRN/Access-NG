@@ -1,0 +1,65 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ ambiente.nome }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 style="color:#c9a227; margin:0;">{{ ambiente.nome }}</h5>
+    <small style="color:#888;">{{ ambiente.local }}</small>
+  </div>
+  {% if current_usuario.admin %}
+  <a href="{{ url_for('admin_ambiente_editar', id=ambiente.id) }}" class="btn btn-sm btn-outline-secondary">Editar Tartaro</a>
+  {% endif %}
+</div>
+
+<form method="GET" class="mb-3">
+  <div class="form-row align-items-end">
+    <div class="form-group col-auto">
+      <label style="font-size:.78rem; color:#888; display:block;">De</label>
+      <input type="date" name="desde" class="form-control" value="{{ desde }}">
+    </div>
+    <div class="form-group col-auto">
+      <label style="font-size:.78rem; color:#888; display:block;">Até</label>
+      <input type="date" name="ate" class="form-control" value="{{ ate }}">
+    </div>
+    <div class="form-group col-auto d-flex">
+      <button type="submit" class="btn btn-gold mr-2">Filtrar</button>
+      <a href="{{ url_for('admin_ambiente_ver', id=ambiente.id) }}" class="btn btn-outline-secondary">Últimos 14 dias</a>
+    </div>
+  </div>
+</form>
+
+<div class="card mb-4">
+  <div class="card-header">Aberturas por dia</div>
+  <div class="card-body">
+    <canvas id="aberturasChartTartaro" height="90"></canvas>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  var aberturasData = {{ aberturas_por_dia | tojson }};
+  new Chart(document.getElementById('aberturasChartTartaro'), {
+    type: 'line',
+    data: {
+      labels: aberturasData.map(function (d) { return d.dia; }),
+      datasets: [{
+        label: 'Aberturas',
+        data: aberturasData.map(function (d) { return d.total; }),
+        borderColor: '#1e7e34',
+        backgroundColor: 'rgba(30,126,52,0.15)',
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      scales: {
+        y: { beginAtZero: true, ticks: { precision: 0, color: '#888' }, grid: { color: '#2d2d4e' } },
+        x: { ticks: { color: '#888' }, grid: { display: false } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+</script>
+{% endblock %}

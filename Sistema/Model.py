@@ -155,6 +155,7 @@ class AccessLog(Base):
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     payload: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     message: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 meta.create_all(engine)
@@ -190,3 +191,5 @@ _add_column_if_missing('access_logs', 'usuario_nome', 'VARCHAR(100)')
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'protocolo', "VARCHAR(10) DEFAULT 'rest'")
     _add_column_if_missing(_table, 'broker_id', 'INTEGER')
+
+_add_column_if_missing('access_logs', 'duration_ms', 'INTEGER')

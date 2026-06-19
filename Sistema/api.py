@@ -5,6 +5,7 @@ from flask_bootstrap import Bootstrap
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+from collections import defaultdict
 from sqlalchemy import or_
 import datetime
 import threading
@@ -147,6 +148,7 @@ def _create_device_event_log(event_type, mac, ambiente=None, message=None):
 
 @app.before_request
 def log_request():
+    request._t0 = time.time()
     if request.path.startswith('/static'):
         return
     log = _create_log_entry()
@@ -162,6 +164,8 @@ def log_response(response):
             if log:
                 log.status_code = response.status_code
                 log.message = response.get_data(as_text=True)[:2000]
+                if hasattr(request, '_t0'):
+                    log.duration_ms = round((time.time() - request._t0) * 1000)
                 db.commit()
         except Exception as e:
             print(f"[Log] Falha ao atualizar log: {e}")
@@ -264,16 +268,20 @@ def painel_required(f):
 @app.context_processor
 def _inject_current_usuario():
     usuario = _current_session_usuario() if session.get('admin_id') else None
-    nav = {'dispositivos': False, 'usuarios': False, 'logs': False}
+    nav = {'dispositivos': False, 'usuarios': False, 'logs': False, 'meu_tartaro_id': None}
     if usuario:
         if usuario.admin:
-            nav = {'dispositivos': True, 'usuarios': True, 'logs': True}
+            nav = {'dispositivos': True, 'usuarios': True, 'logs': True, 'meu_tartaro_id': None}
         else:
             papeis = {p.papel for p in usuario.papeis}
+            meu_tartaro_id = next(
+                (p.ambiente_id for p in usuario.papeis if p.papel in ('gerente', 'leitor')), None
+            )
             nav = {
                 'dispositivos': 'gerente' in papeis,
                 'usuarios': bool(papeis & {'gerente', 'colaborador'}),
                 'logs': bool(papeis & {'gerente', 'leitor'}),
+                'meu_tartaro_id': meu_tartaro_id,
             }
     return {'current_usuario': usuario, 'nav_visivel': nav}
 
@@ -880,11 +888,115 @@ def admin_logout():
     return redirect(url_for('admin_login'))
 
 
+def _parse_date(value, default):
+    """Converte string ISO 'YYYY-MM-DD' em date; cai no default em qualquer erro."""
+    if not value:
+        return default
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        return default
+
+
+def _latencia_series(ambiente_ids):
+    """Série horária de latência média (ms) das últimas 24h, e a média geral.
+
+    ambiente_ids=None => todos os Tartaros.
+    """
+    now = datetime.datetime.utcnow()
+    since = now - datetime.timedelta(hours=24)
+
+    log_q = db.query(AccessLog)
+    if ambiente_ids is not None:
+        log_q = log_q.filter(AccessLog.ambiente_id.in_(ambiente_ids))
+    rows = log_q.filter(
+        AccessLog.event_type == 'api_request',
+        AccessLog.duration_ms.isnot(None),
+        AccessLog.timestamp >= since,
+    ).with_entities(AccessLog.timestamp, AccessLog.duration_ms).all()
+
+    buckets = defaultdict(list)
+    for ts, dur in rows:
+        buckets[ts.replace(minute=0, second=0, microsecond=0)].append(dur)
+
+    start_hour = since.replace(minute=0, second=0, microsecond=0)
+    serie = []
+    todas_amostras = []
+    for i in range(25):
+        hora = start_hour + datetime.timedelta(hours=i)
+        if hora > now:
+            break
+        valores = buckets.get(hora, [])
+        todas_amostras.extend(valores)
+        media = round(sum(valores) / len(valores)) if valores else None
+        serie.append({'hora': hora.strftime('%H:%M'), 'media_ms': media})
+
+    media_geral = round(sum(todas_amostras) / len(todas_amostras)) if todas_amostras else None
+    return serie, media_geral
+
+
+def _aberturas_series(ambiente_ids, desde, ate):
+    """Contagem diária de aberturas bem-sucedidas entre desde/ate (inclusive).
+
+    ambiente_ids=None => todos os Tartaros.
+    """
+    access_types = ['tentativa_tag', 'tentativa_web', 'comando_abertura', 'entrada_fisica']
+    if ate < desde:
+        desde, ate = ate, desde
+    if (ate - desde).days > 365:
+        desde = ate - datetime.timedelta(days=365)
+
+    log_q = db.query(AccessLog)
+    if ambiente_ids is not None:
+        log_q = log_q.filter(AccessLog.ambiente_id.in_(ambiente_ids))
+    timestamps = [ts for (ts,) in log_q.filter(
+        AccessLog.event_type.in_(access_types),
+        AccessLog.result == 'sucesso',
+        AccessLog.timestamp >= datetime.datetime.combine(desde, datetime.time.min),
+        AccessLog.timestamp <= datetime.datetime.combine(ate, datetime.time.max),
+    ).with_entities(AccessLog.timestamp).all()]
+
+    por_dia = defaultdict(int)
+    for ts in timestamps:
+        por_dia[ts.date()] += 1
+    dias = [desde + datetime.timedelta(days=i) for i in range((ate - desde).days + 1)]
+    return [{'dia': d.strftime('%d/%m'), 'total': por_dia.get(d, 0)} for d in dias]
+
+
+def _build_dashboard_analytics(ambiente_ids):
+    """Estatísticas da home do painel. ambiente_ids=None => todos os Tartaros."""
+    now = datetime.datetime.utcnow()
+    hoje = now.date()
+
+    cerb_q = db.query(Cerberos)
+    car_q = db.query(Caronte)
+    if ambiente_ids is not None:
+        cerb_q = cerb_q.filter(Cerberos.ambiente_id.in_(ambiente_ids))
+        car_q = car_q.filter(Caronte.ambiente_id.in_(ambiente_ids))
+
+    devices = cerb_q.all() + car_q.all()
+    online = sum(1 for d in devices if d.status == 'online')
+    offline = sum(1 for d in devices if d.status == 'offline')
+    unknown = len(devices) - online - offline
+
+    latencia_serie, latencia_media_ms = _latencia_series(ambiente_ids)
+    aberturas_por_dia = _aberturas_series(ambiente_ids, hoje - datetime.timedelta(days=13), hoje)
+
+    return {
+        'devices': {'online': online, 'offline': offline, 'unknown': unknown, 'total': len(devices)},
+        'latencia_media_ms': latencia_media_ms,
+        'latencia_serie': latencia_serie,
+        'aberturas_por_dia': aberturas_por_dia,
+    }
+
+
 @app.route('/admin/')
 @painel_required
 def admin_index():
     usuario = _current_session_usuario()
     ambiente_ids = _ambientes_com_papel(usuario, ('gerente', 'colaborador', 'leitor'))
+    analytics_ids = None if usuario.admin else _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    pode_ver_analytics = usuario.admin or bool(analytics_ids)
 
     if ambiente_ids is None:  # admin geral
         stats = {
@@ -894,8 +1006,6 @@ def admin_index():
             'usuarios': db.query(Usuario).count(),
             'logs': db.query(AccessLog).count(),
         }
-        device_q = db.query(AccessLog)
-        access_q = db.query(AccessLog)
     else:
         stats = {
             'cerberoses': db.query(Cerberos).filter(Cerberos.ambiente_id.in_(ambiente_ids)).count(),
@@ -903,28 +1013,36 @@ def admin_index():
             'usuarios': db.query(Usuario).join(Usuario.ambientes).filter(Ambiente.id.in_(ambiente_ids)).distinct().count(),
             'logs': db.query(AccessLog).filter(AccessLog.ambiente_id.in_(ambiente_ids)).count(),
         }
-        device_q = db.query(AccessLog).filter(AccessLog.ambiente_id.in_(ambiente_ids))
-        access_q = db.query(AccessLog).filter(AccessLog.ambiente_id.in_(ambiente_ids))
 
-    recent_device_events = (
-        device_q
-        .filter(AccessLog.event_type.in_(['device_coldstart', 'device_offline']))
-        .order_by(AccessLog.timestamp.desc())
-        .limit(15)
-        .all()
-    )
-    recent_access_events = (
-        access_q
-        .filter(AccessLog.event_type.in_([
-            'tentativa_tag', 'tentativa_web', 'comando_abertura', 'entrada_fisica'
-        ]))
-        .order_by(AccessLog.timestamp.desc())
-        .limit(10)
-        .all()
-    )
+    analytics = None
+    recent_device_events = []
+    recent_access_events = []
+    if pode_ver_analytics:
+        analytics = _build_dashboard_analytics(analytics_ids)
+        scoped_log_q = db.query(AccessLog) if analytics_ids is None else (
+            db.query(AccessLog).filter(AccessLog.ambiente_id.in_(analytics_ids))
+        )
+        recent_device_events = (
+            scoped_log_q
+            .filter(AccessLog.event_type.in_(['device_coldstart', 'device_offline']))
+            .order_by(AccessLog.timestamp.desc())
+            .limit(15)
+            .all()
+        )
+        recent_access_events = (
+            scoped_log_q
+            .filter(AccessLog.event_type.in_([
+                'tentativa_tag', 'tentativa_web', 'comando_abertura', 'entrada_fisica'
+            ]))
+            .order_by(AccessLog.timestamp.desc())
+            .limit(10)
+            .all()
+        )
+
     return render_template(
         'admin/index.html',
         stats=stats,
+        analytics=analytics,
         recent_device_events=recent_device_events,
         recent_access_events=recent_access_events
     )
@@ -937,6 +1055,31 @@ def admin_index():
 def admin_ambientes():
     ambientes = db.query(Ambiente).all()
     return render_template('admin/ambientes.html', ambientes=ambientes)
+
+
+@app.route('/admin/ambientes/<int:id>')
+@painel_required
+def admin_ambiente_ver(id):
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    papel_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    if papel_ids is not None and id not in papel_ids:
+        abort(403)
+
+    hoje = datetime.datetime.utcnow().date()
+    desde = _parse_date(request.args.get('desde'), hoje - datetime.timedelta(days=13))
+    ate = _parse_date(request.args.get('ate'), hoje)
+    aberturas_por_dia = _aberturas_series([id], desde, ate)
+
+    return render_template(
+        'admin/ambiente_ver.html',
+        ambiente=ambiente,
+        aberturas_por_dia=aberturas_por_dia,
+        desde=desde.isoformat(),
+        ate=ate.isoformat(),
+    )
 
 
 @app.route('/admin/ambientes/novo', methods=['GET', 'POST'])

@@ -23,19 +23,5 @@ module.exports = {
       out_file: '../logs/api-out.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },
-    {
-      name: 'access-ng-dashboard',
-      script: 'api.py',
-      interpreter: 'python3',
-      cwd: './Dashboard',
-      watch: false,
-      env: {
-        FLASK_ENV: 'production',
-        FLASK_DEBUG: '0',
-      },
-      error_file: '../logs/dashboard-error.log',
-      out_file: '../logs/dashboard-out.log',
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-    },
   ],
 };

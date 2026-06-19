@@ -38,6 +38,9 @@
       {% if current_usuario.admin %}
       <a class="nav-link {% if 'ambiente' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_ambientes') }}">Tartaros</a>
+      {% elif nav_visivel.meu_tartaro_id %}
+      <a class="nav-link {% if 'ambiente' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_ambiente_ver', id=nav_visivel.meu_tartaro_id) }}">Meu Tartaro</a>
       {% endif %}
       {% if nav_visivel.dispositivos %}
       <a class="nav-link {% if 'cerberos' in request.endpoint %}active{% endif %}"

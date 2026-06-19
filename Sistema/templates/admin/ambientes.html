@@ -24,6 +24,7 @@
         <td>{{ a.cerberoses|length }}</td>
         <td>{{ a.carontes|length }}</td>
         <td class="text-right">
+          <a href="{{ url_for('admin_ambiente_ver', id=a.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Ver</a>
           <a href="{{ url_for('admin_ambiente_editar', id=a.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
           <form method="POST" action="{{ url_for('admin_ambiente_excluir', id=a.id) }}" style="display:inline;"
                 onsubmit="return confirm('Remover {{ a.nome }}?')">

@@ -1,5 +1,0 @@
-flask
-werkzeug
-pandas
-flask_bootstrap
-sqlalchemy
