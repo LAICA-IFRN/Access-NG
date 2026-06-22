@@ -1,0 +1,103 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ c.mac }}{% endblock %}
+{% block content %}
+{% set sla_color = '#1e7e34' if sla_24h >= 95 else ('#c9a227' if sla_24h >= 80 else '#7e1e1e') %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 style="color:#c9a227; margin:0; font-family:monospace;">{{ c.mac }}</h5>
+    <small style="color:#888;">{{ c.ambiente.nome }}</small>
+    <span class="badge badge-{{ c.status or 'unknown' }} ml-2">{{ c.status or 'unknown' }}</span>
+  </div>
+  {% if pode_editar %}
+  <a href="{{ url_for('admin_caronte_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
+  {% endif %}
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-4 mb-4">
+    <div class="card h-100">
+      <div class="card-header">SLA — Últimas 24 horas</div>
+      <div class="card-body text-center" style="position:relative;">
+        <canvas id="slaGauge" height="160"></canvas>
+        <div style="position:absolute; left:0; right:0; top:60%; text-align:center;">
+          <div style="font-size:1.9rem; font-weight:bold; color:{{ sla_color }};">{{ sla_24h }}%</div>
+          <div style="font-size:.75rem; color:#888; text-transform:uppercase; letter-spacing:1px;">online</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-8 mb-4">
+    <div class="card">
+      <div class="card-header">Uptime ao longo do tempo</div>
+      <div class="card-body">
+        <form method="GET" class="mb-3">
+          <div class="form-row align-items-end">
+            <div class="form-group col-auto">
+              <label style="font-size:.78rem; color:#888; display:block;">Unidade</label>
+              <select name="unidade" class="form-control">
+                <option value="hora" {% if unidade == 'hora' %}selected{% endif %}>Horas</option>
+                <option value="dia" {% if unidade == 'dia' %}selected{% endif %}>Dias</option>
+              </select>
+            </div>
+            <div class="form-group col-auto">
+              <label style="font-size:.78rem; color:#888; display:block;">Quantidade</label>
+              <input type="number" name="quantidade" min="1" max="168" value="{{ quantidade }}" class="form-control" style="width:100px;">
+            </div>
+            <div class="form-group col-auto d-flex">
+              <button type="submit" class="btn btn-gold mr-2">Filtrar</button>
+              <a href="{{ url_for('admin_caronte_ver', id=c.id) }}" class="btn btn-outline-secondary">Últimas 24 horas</a>
+            </div>
+          </div>
+        </form>
+        <canvas id="slaChart" height="90"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  var slaPct = {{ sla_24h | tojson }};
+  new Chart(document.getElementById('slaGauge'), {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [slaPct, Math.max(0, 100 - slaPct)],
+        backgroundColor: ['{{ sla_color }}', '#2d2d4e'],
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      circumference: 180,
+      rotation: 270,
+      cutout: '75%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } }
+    }
+  });
+
+  var slaData = {{ sla_serie | tojson }};
+  new Chart(document.getElementById('slaChart'), {
+    type: 'line',
+    data: {
+      labels: slaData.map(function (d) { return d.periodo; }),
+      datasets: [{
+        label: '% online',
+        data: slaData.map(function (d) { return d.pct; }),
+        borderColor: '#1e7e34',
+        backgroundColor: 'rgba(30,126,52,0.15)',
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      scales: {
+        y: { min: 0, max: 100, ticks: { color: '#888' }, grid: { color: '#2d2d4e' } },
+        x: { ticks: { color: '#888' }, grid: { display: false } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+</script>
+{% endblock %}

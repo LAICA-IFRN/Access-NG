@@ -517,16 +517,18 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/` | Visão Geral: contagens de ambientes/Cerberoses/Carontes/usuários, dispositivos online/offline, gráficos de linha de latência média da API (24h) e de aberturas por dia (14 dias), e últimas atividades/tentativas de acesso. |
 | `GET` | `/admin/ambientes` | Lista Tartaros. |
 | `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
-| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia, com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias). |
+| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia, com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias), e a lista dos equipamentos daquele Tartaro com o SLA (24h) de cada um. |
 | `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro. |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
 | `GET` | `/admin/cerberoses` | Lista Cerberoses. |
 | `GET/POST` | `/admin/cerberoses/novo` | Cria Cerberos. |
+| `GET` | `/admin/cerberoses/<id>` | Visão do Cerberos: gauge de SLA (% online) das últimas 24h e gráfico de uptime com período personalizável em horas ou dias (`?unidade=hora\|dia&quantidade=N`). |
 | `GET/POST` | `/admin/cerberoses/<id>/editar` | Edita Cerberos. |
 | `POST` | `/admin/cerberoses/<id>/abrir` | Envia comando manual de abertura para o Cerberos. |
 | `POST` | `/admin/cerberoses/<id>/excluir` | Remove Cerberos. |
 | `GET` | `/admin/carontes` | Lista Carontes fixos. |
 | `GET/POST` | `/admin/carontes/novo` | Cria Caronte fixo. |
+| `GET` | `/admin/carontes/<id>` | Visão do Caronte: gauge de SLA (% online) das últimas 24h e gráfico de uptime com período personalizável em horas ou dias (`?unidade=hora\|dia&quantidade=N`). |
 | `GET/POST` | `/admin/carontes/<id>/editar` | Edita Caronte fixo. |
 | `POST` | `/admin/carontes/<id>/excluir` | Remove Caronte fixo. |
 | `GET` | `/admin/brokers` | Lista Brokers MQTT. |
@@ -550,6 +552,17 @@ só vê/gerencia os Tartaros onde tem papel.
 > demais rotas desta tabela aceitam também `gerente`, `colaborador` ou
 > `leitor`, mas filtradas/restritas ao Tartaro onde o usuário tem papel —
 > ver [Papéis e permissões](#papéis-e-permissões).
+>
+> `/admin/cerberoses/<id>` e `/admin/carontes/<id>` (a página de SLA de cada
+> equipamento) seguem a mesma regra de `/admin/ambientes/<id>`: admin geral
+> ou quem tem papel `gerente`/`leitor` no Tartaro daquele dispositivo —
+> diferente das rotas de editar/abrir/excluir, que exigem papel `gerente`
+> (ou admin) via `pode_gerenciar_dispositivos`. Um `leitor` chega até essa
+> página pelo link "Ver" na tabela de equipamentos de "Meu Tartaro", já que
+> o menu lateral só mostra "Cerberoses"/"Carontes" para quem tem papel
+> `gerente`. O SLA é calculado em cima do histórico de contato já registrado
+> em `AccessLog` (toda requisição de um dispositivo — REST ou heartbeat
+> MQTT — grava uma linha com o `mac`); não há tabela nova nem coluna nova.
 >
 > O dashboard de estatísticas em `/admin/` (online/offline, gráficos de
 > linha de latência média e de aberturas por dia, e atividades recentes) é
@@ -1083,3 +1096,10 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   (`desde`/`ate`). Admin geral acessa qualquer Tartaro pela listagem; quem
   tem papel `gerente`/`leitor` acessa o próprio pelo link "Meu Tartaro" no
   menu.
+- Cada Cerberos/Caronte tem sua própria página de SLA
+  (`/admin/cerberoses/<id>` / `/admin/carontes/<id>`) com um gauge da % de
+  tempo online nas últimas 24h e um gráfico de uptime com período
+  personalizável em horas ou dias. O SLA é derivado do histórico de
+  contato em `AccessLog` (sem tabela nova), usando o mesmo limiar de
+  `OFFLINE_THRESHOLD` do monitor de offline. A página do Tartaro lista
+  todos os seus equipamentos com o SLA (24h) de cada um e um link "Ver".

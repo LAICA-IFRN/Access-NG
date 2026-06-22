@@ -34,6 +34,38 @@
     <canvas id="aberturasChartTartaro" height="90"></canvas>
   </div>
 </div>
+
+<div class="card mb-4">
+  <div class="card-header">Equipamentos</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr>
+        <th>Dispositivo</th><th>Tipo</th><th>Status</th><th>SLA (24h)</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for d in dispositivos %}
+      {% set sla_color = '#1e7e34' if d.sla_24h >= 95 else ('#c9a227' if d.sla_24h >= 80 else '#7e1e1e') %}
+      <tr>
+        <td>
+          {% if d.tipo == 'cerberos' %}{{ d.obj.nome }}{% else %}Caronte{% endif %}
+          <br><small style="font-family:monospace; color:#666;">{{ d.obj.mac }}</small>
+        </td>
+        <td>{{ 'Cerberos' if d.tipo == 'cerberos' else 'Caronte' }}</td>
+        <td><span class="badge badge-{{ d.obj.status or 'unknown' }}">{{ d.obj.status or 'unknown' }}</span></td>
+        <td style="color:{{ sla_color }}; font-weight:bold;">{{ d.sla_24h }}%</td>
+        <td class="text-right">
+          <a href="{{ url_for('admin_cerberos_ver' if d.tipo == 'cerberos' else 'admin_caronte_ver', id=d.obj.id) }}"
+             class="btn btn-sm btn-outline-secondary py-0 px-2">Ver</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-center" style="color:#555;">Nenhum equipamento cadastrado.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<style>.badge-online{background:#1e7e34}.badge-offline{background:#7e1e1e}.badge-unknown{background:#444}</style>
 {% endblock %}
 
 {% block extra_js %}

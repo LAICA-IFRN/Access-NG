@@ -963,6 +963,70 @@ def _aberturas_series(ambiente_ids, desde, ate):
     return [{'dia': d.strftime('%d/%m'), 'total': por_dia.get(d, 0)} for d in dias]
 
 
+def _intervalos_online(mac, desde, ate):
+    """Intervalos (inicio, fim) em que o dispositivo esteve online, derivados dos
+    contatos em AccessLog (qualquer linha com esse mac), usando o mesmo limiar do
+    monitor de offline: sem contato por OFFLINE_THRESHOLD segundos = offline.
+    """
+    delta = datetime.timedelta(seconds=OFFLINE_THRESHOLD)
+    contatos = [ts for (ts,) in db.query(AccessLog).filter(
+        AccessLog.mac.ilike(mac),
+        AccessLog.event_type != 'device_offline',
+        AccessLog.timestamp >= desde - delta,
+        AccessLog.timestamp <= ate,
+    ).with_entities(AccessLog.timestamp).order_by(AccessLog.timestamp).all()]
+
+    intervalos = []
+    for ts in contatos:
+        fim = ts + delta
+        if intervalos and ts <= intervalos[-1][1]:
+            intervalos[-1] = (intervalos[-1][0], max(intervalos[-1][1], fim))
+        else:
+            intervalos.append((ts, fim))
+    return intervalos
+
+
+def _online_pct(intervalos, ini, fim):
+    """% do intervalo [ini, fim] coberto pelos intervalos online (já ordenados)."""
+    total = (fim - ini).total_seconds()
+    if total <= 0:
+        return 0.0
+    coberto = sum(
+        (min(b, fim) - max(a, ini)).total_seconds()
+        for a, b in intervalos if b > ini and a < fim
+    )
+    return round(min(coberto, total) / total * 100, 1)
+
+
+def _sla_series(mac, desde, ate, unidade):
+    """Série de % online por hora ou por dia entre desde/ate.
+
+    Buckets alinhados à hora cheia (unidade='hora') ou à meia-noite
+    (unidade='dia'), mesma convenção de _latencia_series/_aberturas_series —
+    sem isso, o rótulo do bucket (ex. "09/06") podia não corresponder ao dia
+    em que o contato de fato ocorreu.
+    """
+    intervalos = _intervalos_online(mac, desde, ate)
+    if unidade == 'hora':
+        passo = datetime.timedelta(hours=1)
+        cursor = desde.replace(minute=0, second=0, microsecond=0)
+        fmt = '%d/%m %Hh'
+    else:
+        passo = datetime.timedelta(days=1)
+        cursor = datetime.datetime.combine(desde.date(), datetime.time.min)
+        fmt = '%d/%m'
+
+    serie = []
+    while cursor < ate:
+        prox = cursor + passo
+        serie.append({
+            'periodo': cursor.strftime(fmt),
+            'pct': _online_pct(intervalos, max(cursor, desde), min(prox, ate)),
+        })
+        cursor = prox
+    return serie
+
+
 def _build_dashboard_analytics(ambiente_ids):
     """Estatísticas da home do painel. ambiente_ids=None => todos os Tartaros."""
     now = datetime.datetime.utcnow()
@@ -1073,12 +1137,24 @@ def admin_ambiente_ver(id):
     ate = _parse_date(request.args.get('ate'), hoje)
     aberturas_por_dia = _aberturas_series([id], desde, ate)
 
+    now = datetime.datetime.utcnow()
+    desde_24h = now - datetime.timedelta(hours=24)
+    dispositivos = (
+        [{'tipo': 'cerberos', 'obj': c,
+          'sla_24h': _online_pct(_intervalos_online(c.mac, desde_24h, now), desde_24h, now)}
+         for c in ambiente.cerberoses] +
+        [{'tipo': 'caronte', 'obj': c,
+          'sla_24h': _online_pct(_intervalos_online(c.mac, desde_24h, now), desde_24h, now)}
+         for c in ambiente.carontes]
+    )
+
     return render_template(
         'admin/ambiente_ver.html',
         ambiente=ambiente,
         aberturas_por_dia=aberturas_por_dia,
         desde=desde.isoformat(),
         ate=ate.isoformat(),
+        dispositivos=dispositivos,
     )
 
 
@@ -1143,6 +1219,42 @@ def admin_cerberoses():
     if ambiente_ids is not None:
         q = q.filter(Cerberos.ambiente_id.in_(ambiente_ids))
     return render_template('admin/cerberoses.html', cerberoses=q.all())
+
+
+@app.route('/admin/cerberoses/<int:id>')
+@painel_required
+def admin_cerberos_ver(id):
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    papel_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    if papel_ids is not None and c.ambiente_id not in papel_ids:
+        abort(403)
+
+    now = datetime.datetime.utcnow()
+    sla_24h = _online_pct(
+        _intervalos_online(c.mac, now - datetime.timedelta(hours=24), now),
+        now - datetime.timedelta(hours=24), now,
+    )
+    unidade = request.args.get('unidade', 'hora')
+    if unidade not in ('hora', 'dia'):
+        unidade = 'hora'
+    default_qtd = 24 if unidade == 'hora' else 14
+    try:
+        quantidade = int(request.args.get('quantidade', default_qtd))
+    except ValueError:
+        quantidade = default_qtd
+    quantidade = max(1, min(quantidade, 168 if unidade == 'hora' else 90))
+    desde = now - (datetime.timedelta(hours=quantidade) if unidade == 'hora'
+                   else datetime.timedelta(days=quantidade))
+    sla_serie = _sla_series(c.mac, desde, now, unidade)
+
+    return render_template(
+        'admin/cerberos_ver.html', c=c, sla_24h=sla_24h, sla_serie=sla_serie,
+        unidade=unidade, quantidade=quantidade,
+        pode_editar=pode_gerenciar_dispositivos(usuario, c.ambiente_id),
+    )
 
 
 @app.route('/admin/cerberoses/novo', methods=['GET', 'POST'])
@@ -1255,6 +1367,42 @@ def admin_carontes():
     if ambiente_ids is not None:
         q = q.filter(Caronte.ambiente_id.in_(ambiente_ids))
     return render_template('admin/carontes.html', carontes=q.all())
+
+
+@app.route('/admin/carontes/<int:id>')
+@painel_required
+def admin_caronte_ver(id):
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    papel_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    if papel_ids is not None and c.ambiente_id not in papel_ids:
+        abort(403)
+
+    now = datetime.datetime.utcnow()
+    sla_24h = _online_pct(
+        _intervalos_online(c.mac, now - datetime.timedelta(hours=24), now),
+        now - datetime.timedelta(hours=24), now,
+    )
+    unidade = request.args.get('unidade', 'hora')
+    if unidade not in ('hora', 'dia'):
+        unidade = 'hora'
+    default_qtd = 24 if unidade == 'hora' else 14
+    try:
+        quantidade = int(request.args.get('quantidade', default_qtd))
+    except ValueError:
+        quantidade = default_qtd
+    quantidade = max(1, min(quantidade, 168 if unidade == 'hora' else 90))
+    desde = now - (datetime.timedelta(hours=quantidade) if unidade == 'hora'
+                   else datetime.timedelta(days=quantidade))
+    sla_serie = _sla_series(c.mac, desde, now, unidade)
+
+    return render_template(
+        'admin/caronte_ver.html', c=c, sla_24h=sla_24h, sla_serie=sla_serie,
+        unidade=unidade, quantidade=quantidade,
+        pode_editar=pode_gerenciar_dispositivos(usuario, c.ambiente_id),
+    )
 
 
 @app.route('/admin/carontes/novo', methods=['GET', 'POST'])

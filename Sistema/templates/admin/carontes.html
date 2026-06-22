@@ -27,6 +27,7 @@
         </td>
         <td><span class="badge badge-{{ c.status or 'unknown' }}">{{ c.status or 'unknown' }}</span></td>
         <td class="text-right">
+          <a href="{{ url_for('admin_caronte_ver', id=c.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Ver</a>
           <a href="{{ url_for('admin_caronte_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
           <form method="POST" action="{{ url_for('admin_caronte_excluir', id=c.id) }}" style="display:inline;"
                 onsubmit="return confirm('Remover este Caronte?')">
