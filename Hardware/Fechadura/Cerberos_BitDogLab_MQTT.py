@@ -29,7 +29,14 @@ Para o modo REST (HTTP/HTTPS) use Cerberos_BitDogLab.py.
     "LED_GREEN_PIN"      : 11,
     "LED_BLUE_PIN"       : 12,
     "RELAY_PIN"          : 15,
-    "RELAY_ACTIVE_MS"    : 2000
+    "RELAY_ACTIVE_MS"    : 2000,
+
+    "OLED_ENABLED"       : true,
+    "OLED_SCL_PIN"       : 15,
+    "OLED_SDA_PIN"       : 14,
+    "OLED_WIDTH"         : 128,
+    "OLED_HEIGHT"        : 64,
+    "OLED_ADDR"          : 60
 }
 
 ─── Tópicos MQTT ─────────────────────────────────────────────────────────────
@@ -51,6 +58,8 @@ Para o modo REST (HTTP/HTTPS) use Cerberos_BitDogLab.py.
 
   O MAC usa '-' no lugar de ':' nos tópicos.
   HEARTBEAT_INTERVAL deve ser menor que OFFLINE_THRESHOLD do servidor (padrão 30s).
+  Na BitDogLab, o OLED usa SCL=15 e SDA=14. Se RELAY_PIN também for 15 ou 14,
+  o relé é desativado automaticamente para não conflitar com o display.
 ──────────────────────────────────────────────────────────────────────────────
 """
 
@@ -81,6 +90,12 @@ _DEFAULTS = {
     "LED_BLUE_PIN"        : 12,
     "RELAY_PIN"           : 15,
     "RELAY_ACTIVE_MS"     : 2000,
+    "OLED_ENABLED"        : True,
+    "OLED_SCL_PIN"        : 15,
+    "OLED_SDA_PIN"        : 14,
+    "OLED_WIDTH"          : 128,
+    "OLED_HEIGHT"         : 64,
+    "OLED_ADDR"           : 0x3C,
 }
 
 try:
@@ -112,6 +127,12 @@ LED_GREEN_PIN      = cfg('LED_GREEN_PIN')
 LED_BLUE_PIN       = cfg('LED_BLUE_PIN')
 RELAY_PIN          = cfg('RELAY_PIN')
 RELAY_ACTIVE_MS    = cfg('RELAY_ACTIVE_MS')
+OLED_ENABLED       = cfg('OLED_ENABLED')
+OLED_SCL_PIN       = cfg('OLED_SCL_PIN')
+OLED_SDA_PIN       = cfg('OLED_SDA_PIN')
+OLED_WIDTH         = cfg('OLED_WIDTH')
+OLED_HEIGHT        = cfg('OLED_HEIGHT')
+OLED_ADDR          = cfg('OLED_ADDR')
 
 MQTT_PREFIX = 'access-ng'
 DEVICE_MAC  = None
@@ -124,6 +145,8 @@ led_r     = None
 led_g     = None
 led_b     = None
 relay     = None
+oled      = None
+oled_ok   = False
 _btn_flag = False
 
 
@@ -139,7 +162,11 @@ def init_gpio():
     led_r = machine.PWM(machine.Pin(LED_RED_PIN));   led_r.freq(1000)
     led_g = machine.PWM(machine.Pin(LED_GREEN_PIN)); led_g.freq(1000)
     led_b = machine.PWM(machine.Pin(LED_BLUE_PIN));  led_b.freq(1000)
-    relay = machine.Pin(RELAY_PIN, machine.Pin.OUT, value=0)
+    if oled_ok and RELAY_PIN in (OLED_SCL_PIN, OLED_SDA_PIN):
+        relay = None
+        print(f"[GPIO] RELAY_PIN {RELAY_PIN} conflita com OLED; relé desativado")
+    else:
+        relay = machine.Pin(RELAY_PIN, machine.Pin.OUT, value=0)
     _led(0, 0, 0)
     print("[GPIO] Inicializado")
 
@@ -160,13 +187,85 @@ def led_denied(): _pulse(255, 0, 0, 1000)
 
 def unlock_door():
     print("[Lock] Abrindo porta...")
+    display_message("PORTA", "Abrindo", "aguarde...")
     for _ in range(3):
         _led(0, 0, 255); time.sleep_ms(200)
         _led(0, 0, 0);   time.sleep_ms(100)
-    relay.value(1)
-    time.sleep_ms(RELAY_ACTIVE_MS)
-    relay.value(0)
+    if relay is not None:
+        relay.value(1)
+        time.sleep_ms(RELAY_ACTIVE_MS)
+        relay.value(0)
+    else:
+        time.sleep_ms(RELAY_ACTIVE_MS)
     print("[Lock] Porta fechada")
+    display_message("PORTA", "Fechada", "Sistema pronto")
+
+
+def init_display():
+    global oled, oled_ok
+    if not OLED_ENABLED:
+        return False
+    try:
+        from machine import Pin, SoftI2C
+        from ssd1306 import SSD1306_I2C
+        i2c = SoftI2C(scl=Pin(OLED_SCL_PIN), sda=Pin(OLED_SDA_PIN))
+        oled = SSD1306_I2C(OLED_WIDTH, OLED_HEIGHT, i2c, addr=OLED_ADDR)
+        oled_ok = True
+        display_message("ACCESS-NG", "Cerberos", "Iniciando...")
+        print("[OLED] Inicializado")
+        return True
+    except Exception as e:
+        oled = None
+        oled_ok = False
+        print(f"[OLED] Indisponível: {e}")
+        return False
+
+
+def _wrap_display_line(text, width=16):
+    text = str(text)
+    lines = []
+    for raw in text.split("\n"):
+        words = raw.split(" ")
+        line = ""
+        for word in words:
+            if not word:
+                continue
+            if len(word) > width:
+                if line:
+                    lines.append(line)
+                    line = ""
+                while len(word) > width:
+                    lines.append(word[:width])
+                    word = word[width:]
+            candidate = word if not line else line + " " + word
+            if len(candidate) <= width:
+                line = candidate
+            else:
+                lines.append(line)
+                line = word
+        lines.append(line)
+    return lines
+
+
+def display_message(title, *lines):
+    if not oled_ok or oled is None:
+        return
+    try:
+        oled.fill(0)
+        oled.text(str(title)[:16], 0, 0)
+        oled.hline(0, 10, OLED_WIDTH, 1)
+        y = 16
+        for line in lines:
+            for wrapped in _wrap_display_line(line):
+                if y > OLED_HEIGHT - 8:
+                    break
+                oled.text(wrapped[:16], 0, y)
+                y += 10
+            if y > OLED_HEIGHT - 8:
+                break
+        oled.show()
+    except Exception as e:
+        print(f"[OLED] Falha ao atualizar: {e}")
 
 
 # ─── WiFi ──────────────────────────────────────────────────────────────────────
@@ -176,15 +275,19 @@ def connect_wifi():
     wlan.active(True)
     if wlan.isconnected():
         print(f"[WiFi] IP: {wlan.ifconfig()[0]}")
+        display_message("WIFI", "Conectado", wlan.ifconfig()[0])
         return True
     print(f"[WiFi] Conectando em {WIFI_SSID}...")
+    display_message("WIFI", "Conectando", WIFI_SSID)
     wlan.connect(WIFI_SSID, WIFI_PASS)
     for _ in range(30):
         if wlan.isconnected():
             print(f"[WiFi] IP: {wlan.ifconfig()[0]}")
+            display_message("WIFI", "Conectado", wlan.ifconfig()[0])
             return True
         time.sleep(0.5)
     print("[WiFi] Falha")
+    display_message("WIFI", "Falha", "verifique rede")
     return False
 
 
@@ -233,14 +336,17 @@ def _on_message(topic, payload):
     elif topic_str == topics.get('command'):
         if data.get('command') == 'unlock':
             print("[MQTT] Comando de abertura recebido!")
+            display_message("COMANDO", "Abertura", "recebida")
             _unlock_flag = True
 
     elif topic_str == topics.get('result'):
         if data.get('allow'):
             print("[MQTT] Acesso autorizado!")
+            display_message("ACESSO", "Autorizado", "abrindo porta")
             unlock_door()
         else:
             print(f"[MQTT] Acesso negado: {data.get('motivo', '')}")
+            display_message("ACESSO", "Negado", data.get('motivo', ''))
             led_denied()
 
 
@@ -339,6 +445,7 @@ def mqtt_connect():
     c.subscribe(_t()['coldstart_result'])
     _client = c
     print(f"[MQTT] Conectado ao broker {MQTT_BROKER}:{MQTT_PORT}")
+    display_message("MQTT", "Conectado", MQTT_BROKER)
 
 
 def do_coldstart():
@@ -354,6 +461,7 @@ def do_coldstart():
                         json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY}),
                         qos=1)
         print("[MQTT] Coldstart publicado, aguardando confirmação...")
+        display_message("COLDSTART", "Publicado", "aguardando...")
 
         t0 = time.time()
         while time.time() - t0 < 5:
@@ -368,10 +476,12 @@ def do_coldstart():
             _client.subscribe(topics['command'])
             _client.subscribe(topics['result'])
             print(f"[MQTT] Coldstart OK — ambiente_id={AMBIENTE_ID}")
+            display_message("COLDSTART OK", f"Ambiente {AMBIENTE_ID}", "Sistema pronto")
             led_ok()
             return
 
         print(f"[MQTT] Coldstart negado/sem resposta ({_coldstart_result}) — tentando em 15s...")
+        display_message("COLDSTART", "Sem resposta", "tentando em 15s")
         led_denied()
         time.sleep(15)
 
@@ -387,6 +497,7 @@ def publish_heartbeat():
 
 def publish_tag():
     print("[MQTT] Publicando TAG do botão...")
+    display_message("BOTAO", "Autenticando", BUTTON_TAG)
     _client.publish(_t()['tag'], json.dumps({
         'tag'  : BUTTON_TAG,
         'chave': DEVICE_KEY,
@@ -403,6 +514,7 @@ def main():
     print("  CERBEROS + CARONTE — BitDogLab V6 (MQTT)")
     print("=" * 48)
 
+    init_display()
     init_gpio()
 
     wlan = network.WLAN(network.STA_IF)
@@ -410,6 +522,7 @@ def main():
         wlan.active(True)
     DEVICE_MAC = ubinascii.hexlify(wlan.config('mac'), ':').decode()
     print(f"[Device] MAC: {DEVICE_MAC}")
+    display_message("DISPOSITIVO", "MAC", DEVICE_MAC)
 
     # WiFi
     while not connect_wifi():
@@ -421,21 +534,25 @@ def main():
     while True:
         _diag_broker()
         try:
+            display_message("MQTT", "Conectando", MQTT_BROKER)
             mqtt_connect()
             break
         except Exception as e:
             print(f"[MQTT] Falha na conexão: {e} — tentando em 10s...")
+            display_message("MQTT", "Falha conexao", "tentando em 10s")
             led_denied(); time.sleep(10)
 
     do_coldstart()
     last_heartbeat = time.time()
     print("[Main] Operacional\n")
+    display_message("ACCESS-NG", "Operacional", f"Ambiente {AMBIENTE_ID}")
 
     while True:
         try:
             # Reconexão WiFi
             if not network.WLAN(network.STA_IF).isconnected():
                 print("[WiFi] Reconectando...")
+                display_message("WIFI", "Reconectando", WIFI_SSID)
                 if connect_wifi():
                     mqtt_connect()
                     do_coldstart()
@@ -467,6 +584,7 @@ def main():
 
         except OSError as e:
             print(f"[MQTT] Erro de rede: {e} — reconectando...")
+            display_message("MQTT", "Erro de rede", "reconectando")
             try:
                 mqtt_connect()
                 do_coldstart()
@@ -475,6 +593,7 @@ def main():
                 time.sleep(5)
         except Exception as e:
             print(f"[Main] Erro: {e}")
+            display_message("ERRO", "Loop principal", e)
             time.sleep(1)
 
 
