@@ -82,6 +82,23 @@ class MqttService:
         self._log_mqtt_command(cerberos, topic)
         print(f'[MQTT] Unlock → {cerberos.nome} ({cerberos.mac})')
 
+    def notify_check_update(self, device, tipo):
+        """Publica {"command":"check_update"} no tópico de comando do dispositivo,
+        pedindo que ele verifique agora se há firmware novo (em vez de esperar o
+        próximo polling periódico). `tipo` é 'cerberos' ou 'caronte'."""
+        if not _PAHO_AVAILABLE or not device.broker_id:
+            return False
+        with self._lock:
+            client = self._clients.get(device.broker_id)
+        if not client:
+            print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
+            return False
+        mac_safe = device.mac.replace(':', '-')
+        topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
+        client.publish(topic, json.dumps({'command': 'check_update'}), qos=1)
+        print(f'[MQTT] check_update → {tipo} {device.mac}')
+        return True
+
     def is_connected(self, broker_id: int) -> bool:
         with self._lock:
             client = self._clients.get(broker_id)
@@ -235,6 +252,8 @@ class MqttService:
             device.coldstart_at = now
             device.last_seen    = now
             device.status       = 'online'
+            if payload.get('versao'):
+                device.versao_firmware = payload['versao']
             label_name = getattr(device, 'nome', mac)
             db.add(AccessLog(
                 timestamp=now, path='mqtt:coldstart', method='MQTT', mac=mac,
@@ -266,6 +285,8 @@ class MqttService:
                 if device:
                     device.last_seen = now
                     device.status    = 'online'
+                    if payload.get('versao'):
+                        device.versao_firmware = payload['versao']
                     updated = True
                     found_device = device
             if updated:

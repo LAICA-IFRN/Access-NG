@@ -111,6 +111,7 @@ class Cerberos(Base):
     protocolo: Mapped[str] = mapped_column(String(10), default='rest', server_default='rest')
     broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
     broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="cerberoses")
+    versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
 
 class Caronte(Base):
@@ -126,6 +127,7 @@ class Caronte(Base):
     protocolo: Mapped[str] = mapped_column(String(10), default='rest', server_default='rest')
     broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
     broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="carontes")
+    versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
     def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
@@ -193,3 +195,6 @@ for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'broker_id', 'INTEGER')
 
 _add_column_if_missing('access_logs', 'duration_ms', 'INTEGER')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'versao_firmware', 'VARCHAR(30)')

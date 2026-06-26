@@ -3,7 +3,13 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h5 style="color:#c9a227; margin:0;">Cerberoses (Fechaduras)</h5>
-  <a href="{{ url_for('admin_cerberos_novo') }}" class="btn btn-gold btn-sm">+ Novo</a>
+  <div>
+    <form method="POST" action="{{ url_for('admin_cerberoses_verificar_atualizacao') }}" style="display:inline;"
+          onsubmit="return confirm('Notificar todos os cerberoses listados para verificarem atualização agora?')">
+      <button class="btn btn-outline-secondary btn-sm">Verificar atualizações</button>
+    </form>
+    <a href="{{ url_for('admin_cerberos_novo') }}" class="btn btn-gold btn-sm">+ Novo</a>
+  </div>
 </div>
 <div class="card">
   <div class="card-body p-0">
@@ -32,6 +38,9 @@
             <button class="btn btn-sm btn-gold py-0 px-2">Abrir</button>
           </form>
           <a href="{{ url_for('admin_cerberos_ver', id=c.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Ver</a>
+          <form method="POST" action="{{ url_for('admin_cerberos_verificar_atualizacao', id=c.id) }}" style="display:inline;">
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2">Verificar atualização</button>
+          </form>
           <a href="{{ url_for('admin_cerberos_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
           <form method="POST" action="{{ url_for('admin_cerberos_excluir', id=c.id) }}" style="display:inline;"
                 onsubmit="return confirm('Remover {{ c.nome }}?')">

@@ -521,15 +521,19 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro. |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
 | `GET` | `/admin/cerberoses` | Lista Cerberoses. |
+| `POST` | `/admin/cerberoses/verificar-atualizacao` | Notifica via MQTT (`check_update`) todos os Cerberoses listados (escopados ao papel do usuário) para verificarem se há firmware novo agora. |
 | `GET/POST` | `/admin/cerberoses/novo` | Cria Cerberos. |
-| `GET` | `/admin/cerberoses/<id>` | Visão do Cerberos: gauge de SLA (% online) das últimas 24h e gráfico de uptime com período personalizável em horas ou dias (`?unidade=hora\|dia&quantidade=N`). |
+| `GET` | `/admin/cerberoses/<id>` | Visão do Cerberos: gauge de SLA (% online) das últimas 24h, versão de firmware reportada, e gráfico de uptime com período personalizável em horas ou dias (`?unidade=hora\|dia&quantidade=N`). |
 | `GET/POST` | `/admin/cerberoses/<id>/editar` | Edita Cerberos. |
 | `POST` | `/admin/cerberoses/<id>/abrir` | Envia comando manual de abertura para o Cerberos. |
+| `POST` | `/admin/cerberoses/<id>/verificar-atualizacao` | Notifica esse Cerberos via MQTT para verificar atualização de firmware agora. |
 | `POST` | `/admin/cerberoses/<id>/excluir` | Remove Cerberos. |
 | `GET` | `/admin/carontes` | Lista Carontes fixos. |
+| `POST` | `/admin/carontes/verificar-atualizacao` | Notifica via MQTT todos os Carontes listados (escopados ao papel do usuário) para verificarem atualização agora. |
 | `GET/POST` | `/admin/carontes/novo` | Cria Caronte fixo. |
-| `GET` | `/admin/carontes/<id>` | Visão do Caronte: gauge de SLA (% online) das últimas 24h e gráfico de uptime com período personalizável em horas ou dias (`?unidade=hora\|dia&quantidade=N`). |
+| `GET` | `/admin/carontes/<id>` | Visão do Caronte: gauge de SLA (% online) das últimas 24h, versão de firmware reportada, e gráfico de uptime com período personalizável em horas ou dias (`?unidade=hora\|dia&quantidade=N`). |
 | `GET/POST` | `/admin/carontes/<id>/editar` | Edita Caronte fixo. |
+| `POST` | `/admin/carontes/<id>/verificar-atualizacao` | Notifica esse Caronte via MQTT para verificar atualização de firmware agora. |
 | `POST` | `/admin/carontes/<id>/excluir` | Remove Caronte fixo. |
 | `GET` | `/admin/brokers` | Lista Brokers MQTT. |
 | `GET/POST` | `/admin/brokers/novo` | Cria Broker MQTT e conecta o `mqtt_service`. |
@@ -563,6 +567,11 @@ só vê/gerencia os Tartaros onde tem papel.
 > `gerente`. O SLA é calculado em cima do histórico de contato já registrado
 > em `AccessLog` (toda requisição de um dispositivo — REST ou heartbeat
 > MQTT — grava uma linha com o `mac`); não há tabela nova nem coluna nova.
+>
+> As rotas `verificar-atualizacao` (por dispositivo e em massa) exigem
+> `pode_gerenciar_dispositivos` — a mesma regra de `abrir`/`excluir` (admin
+> geral ou papel `gerente` no Tartaro daquele dispositivo); ver
+> [OTA (atualização remota de firmware)](#ota-atualização-remota-de-firmware).
 >
 > O dashboard de estatísticas em `/admin/` (online/offline, gráficos de
 > linha de latência média e de aberturas por dia, e atividades recentes) é
@@ -871,6 +880,67 @@ a TAG e publica via MQTT.
 - Segue o mesmo fluxo de coldstart/heartbeat MQTT dos demais firmwares e também
   requer `umqtt` instalado via `mip`.
 
+## OTA (atualização remota de firmware)
+
+Os dois firmwares MQTT em campo (`Cerberos_BitDogLab_MQTT.py` e
+`CaronteESP32C3.py`) atualizam a si mesmos sem precisar reconectar via
+USB/Thonny. O firmware continua vivendo só no GitHub — não há upload pelo
+painel nem tabela no banco guardando o código.
+
+### Como funciona
+
+1. Cada dispositivo tem uma constante `FIRMWARE_VERSAO` no topo do arquivo.
+2. Existe um `version.json` no repositório, ao lado do firmware:
+   `Hardware/Fechadura/version.json` e `Hardware/Autenticador/version.json`,
+   no formato `{"versao": "1.0.0", "ref": "main"}`.
+3. O dispositivo busca esse `version.json` via HTTPS em
+   `raw.githubusercontent.com/LAICA-IFRN/Access-NG/{ref}/...` (repositório
+   público, sem autenticação). Se a `versao` remota for diferente da local,
+   baixa o `.py` do `ref` indicado, valida o conteúdo, grava como `main.new`,
+   troca com `main.py` (guardando o anterior em `main.bak`) e reinicia.
+4. A checagem ocorre em três momentos: (a) logo após o coldstart, (b)
+   periodicamente a cada `OTA_CHECK_INTERVAL` segundos (padrão 3600), e (c)
+   imediatamente ao receber `{"command":"check_update"}` no tópico MQTT de
+   comando do dispositivo — publicado pelo painel ao clicar em "Verificar
+   atualização" (por dispositivo ou em massa) nas páginas
+   `/admin/cerberoses` e `/admin/carontes`.
+
+### Publicando uma nova versão
+
+1. Edite o firmware e suba a constante `FIRMWARE_VERSAO`.
+2. Crie uma tag e publique (ex.: `git tag fw-cerberos-1.1.0 && git push --tags`)
+   — usar uma tag em vez de `main` evita que qualquer commit do `Sistema`
+   (que já tem deploy automático a cada push, veja [CI/CD](#cicd)) vire
+   candidato a atualização de fechadura.
+3. Atualize o `version.json` correspondente em `main` apontando
+   `{"versao": "1.1.0", "ref": "fw-cerberos-1.1.0"}` e faça push.
+4. (Opcional) clique em "Verificar atualização" no painel para notificar os
+   dispositivos na hora; senão, eles encontram a atualização no próximo
+   polling periódico.
+
+`raw.githubusercontent.com` cacheia por alguns minutos — pode levar um
+pouco para propagar depois do push.
+
+### Rede de segurança contra "brick"
+
+Se a versão nova não conseguir completar um coldstart com sucesso em até 3
+boots, o dispositivo restaura automaticamente `main.bak` (a versão anterior,
+conhecida como boa) e reinicia — sem isso, um firmware com bug exigiria
+reconectar a placa fisicamente, exatamente o que a OTA existe para evitar.
+
+### Visibilidade da versão instalada
+
+Coldstart e heartbeat (REST e MQTT) podem incluir um campo opcional
+`versao`, gravado em `Cerberos.versao_firmware`/`Caronte.versao_firmware`.
+A versão reportada por último aparece nas páginas
+`/admin/cerberoses/<id>` e `/admin/carontes/<id>`.
+
+### Fora de escopo desta versão
+
+A variante REST do Cerberos (`Cerberos_BitDogLab.py`) e os firmwares
+legados Arduino/`CerberosESP32.py` não recebem OTA — o mecanismo cobre só
+os dois firmwares MQTT atualmente em campo.
+
 ### Configuração de IP
 
 No sketch `Hardware/Fechadura/Cerberos_UART.ino`, ajuste:
@@ -1103,3 +1173,10 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   contato em `AccessLog` (sem tabela nova), usando o mesmo limiar de
   `OFFLINE_THRESHOLD` do monitor de offline. A página do Tartaro lista
   todos os seus equipamentos com o SLA (24h) de cada um e um link "Ver".
+- OTA para os firmwares MQTT (`Cerberos_BitDogLab_MQTT.py`,
+  `CaronteESP32C3.py`): cada um busca `version.json` no GitHub, baixa e
+  troca `main.py` quando há versão nova, com rollback automático via
+  `main.bak` se a versão nova falhar repetidamente no boot. O painel pode
+  notificar a verificação na hora via MQTT (`/admin/cerberoses/<id>/verificar-atualizacao`,
+  `/admin/carontes/<id>/verificar-atualizacao`, e as variantes em massa) —
+  veja [OTA (atualização remota de firmware)](#ota-atualização-remota-de-firmware).

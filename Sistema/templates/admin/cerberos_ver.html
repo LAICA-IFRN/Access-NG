@@ -8,9 +8,16 @@
     <small style="color:#888; font-family:monospace;">{{ c.mac }}</small>
     <small style="color:#888;"> — {{ c.ambiente.nome }}</small>
     <span class="badge badge-{{ c.status or 'unknown' }} ml-2">{{ c.status or 'unknown' }}</span>
+    <br>
+    <small style="color:#888;">Firmware: v{{ c.versao_firmware or 'desconhecida' }}</small>
   </div>
   {% if pode_editar %}
-  <a href="{{ url_for('admin_cerberos_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
+  <div>
+    <form method="POST" action="{{ url_for('admin_cerberos_verificar_atualizacao', id=c.id) }}" style="display:inline;">
+      <button class="btn btn-sm btn-outline-secondary">Verificar atualização</button>
+    </form>
+    <a href="{{ url_for('admin_cerberos_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
+  </div>
   {% endif %}
 </div>
 

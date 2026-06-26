@@ -288,7 +288,7 @@ def _inject_current_usuario():
 
 # ── Device helpers ───────────────────────────────────────────────────────────
 
-def _touch_device(mac: str):
+def _touch_device(mac: str, versao: str = None):
     now = datetime.datetime.utcnow()
     updated = False
     for model in (Cerberos, Caronte):
@@ -296,6 +296,8 @@ def _touch_device(mac: str):
         if device:
             device.last_seen = now
             device.status = 'online'
+            if versao:
+                device.versao_firmware = versao
             updated = True
     if updated:
         db.commit()
@@ -429,6 +431,8 @@ def coldstart():
     device.coldstart_at = now
     device.last_seen = now
     device.status = 'online'
+    if content.get('versao'):
+        device.versao_firmware = content['versao']
     db.commit()
     device_label = getattr(device, 'nome', mac)
     _create_audit_log(
@@ -444,10 +448,11 @@ def coldstart():
 
 @app.route('/device/heartbeat', methods=['POST'])
 def heartbeat():
-    mac = (request.json or {}).get('mac')
+    content = request.json or {}
+    mac = content.get('mac')
     if not mac:
         return jsonify({'error': 'mac required'}), 400
-    _touch_device(mac)
+    _touch_device(mac, versao=content.get('versao'))
     return jsonify({'received': mac})
 
 
@@ -1221,6 +1226,19 @@ def admin_cerberoses():
     return render_template('admin/cerberoses.html', cerberoses=q.all())
 
 
+@app.route('/admin/cerberoses/verificar-atualizacao', methods=['POST'])
+@painel_required
+def admin_cerberoses_verificar_atualizacao():
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    q = db.query(Cerberos)
+    if ambiente_ids is not None:
+        q = q.filter(Cerberos.ambiente_id.in_(ambiente_ids))
+    n = sum(_mqtt().notify_check_update(c, 'cerberos') for c in q.all())
+    flash(f'Verificação de atualização enviada para {n} cerberos(es).', 'success')
+    return redirect(url_for('admin_cerberoses'))
+
+
 @app.route('/admin/cerberoses/<int:id>')
 @painel_required
 def admin_cerberos_ver(id):
@@ -1341,6 +1359,22 @@ def admin_cerberos_abrir(id):
     return redirect(url_for('admin_cerberoses'))
 
 
+@app.route('/admin/cerberoses/<int:id>/verificar-atualizacao', methods=['POST'])
+@painel_required
+def admin_cerberos_verificar_atualizacao(id):
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().notify_check_update(c, 'cerberos')
+    flash(f'Verificação de atualização enviada para {c.nome}.' if ok else
+          f'{c.nome} sem broker MQTT conectado — não foi possível notificar.',
+          'success' if ok else 'warning')
+    return redirect(request.referrer or url_for('admin_cerberoses'))
+
+
 @app.route('/admin/cerberoses/<int:id>/excluir', methods=['POST'])
 @painel_required
 def admin_cerberos_excluir(id):
@@ -1367,6 +1401,19 @@ def admin_carontes():
     if ambiente_ids is not None:
         q = q.filter(Caronte.ambiente_id.in_(ambiente_ids))
     return render_template('admin/carontes.html', carontes=q.all())
+
+
+@app.route('/admin/carontes/verificar-atualizacao', methods=['POST'])
+@painel_required
+def admin_carontes_verificar_atualizacao():
+    usuario = _current_session_usuario()
+    ambiente_ids = _ambientes_com_papel(usuario, ('gerente',))
+    q = db.query(Caronte)
+    if ambiente_ids is not None:
+        q = q.filter(Caronte.ambiente_id.in_(ambiente_ids))
+    n = sum(_mqtt().notify_check_update(c, 'caronte') for c in q.all())
+    flash(f'Verificação de atualização enviada para {n} caronte(s).', 'success')
+    return redirect(url_for('admin_carontes'))
 
 
 @app.route('/admin/carontes/<int:id>')
@@ -1462,6 +1509,22 @@ def admin_caronte_editar(id):
         return redirect(url_for('admin_carontes'))
     return render_template('admin/caronte_form.html', caronte=c,
                            ambientes=ambientes, brokers=brokers)
+
+
+@app.route('/admin/carontes/<int:id>/verificar-atualizacao', methods=['POST'])
+@painel_required
+def admin_caronte_verificar_atualizacao(id):
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().notify_check_update(c, 'caronte')
+    flash('Verificação de atualização enviada.' if ok else
+          'Dispositivo sem broker MQTT conectado — não foi possível notificar.',
+          'success' if ok else 'warning')
+    return redirect(request.referrer or url_for('admin_carontes'))
 
 
 @app.route('/admin/carontes/<int:id>/excluir', methods=['POST'])
