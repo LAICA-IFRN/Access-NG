@@ -23,6 +23,7 @@ Nao possui logica de botao/Caronte nem publica TAG para autenticacao.
     "LED_STATUS_PIN"     : 13,
     "RELAY_PIN"          : 15,
     "RELAY_ACTIVE_MS"    : 2000,
+    "INPUT_ENABLED"      : true,
     "INPUT_PINS"         : [26, 34],
     "INPUT_DEBOUNCE_MS"  : 200
 }
@@ -37,6 +38,10 @@ Nao possui logica de botao/Caronte nem publica TAG para autenticacao.
 
 Observacao: no ESP32, GPIO34 e somente entrada e nao possui pull-up interno.
 Use resistor pull-up externo nessa entrada quando o sinal for ativo baixo.
+
+Para desativar a entrada fisica (ex.: pino com ruido/acionamento espurio),
+defina "INPUT_ENABLED": false no config.json - nenhum pino e inicializado
+nem gera IRQ, sem precisar mexer em INPUT_PINS.
 
 --- Topicos MQTT -------------------------------------------------------------
 
@@ -75,6 +80,7 @@ _DEFAULTS = {
     "LED_STATUS_PIN"     : 13,
     "RELAY_PIN"          : 15,
     "RELAY_ACTIVE_MS"    : 2000,
+    "INPUT_ENABLED"      : False,
     "INPUT_PINS"         : [26, 34],
     "INPUT_DEBOUNCE_MS"  : 200,
 }
@@ -109,6 +115,7 @@ LED_LINK_PIN       = cfg("LED_LINK_PIN")
 LED_STATUS_PIN     = cfg("LED_STATUS_PIN")
 RELAY_PIN          = cfg("RELAY_PIN")
 RELAY_ACTIVE_MS    = min(cfg("RELAY_ACTIVE_MS"), 2000)
+INPUT_ENABLED      = cfg("INPUT_ENABLED")
 INPUT_PINS         = cfg("INPUT_PINS")
 INPUT_DEBOUNCE_MS  = cfg("INPUT_DEBOUNCE_MS")
 
@@ -162,8 +169,8 @@ def init_gpio():
     led_link = machine.Pin(LED_LINK_PIN, machine.Pin.OUT, value=0)
     led_status = machine.Pin(LED_STATUS_PIN, machine.Pin.OUT, value=0)
     relay = machine.Pin(RELAY_PIN, machine.Pin.OUT, value=0)
-    inputs = [_init_input(pin_no) for pin_no in INPUT_PINS]
-    print("[GPIO] Inicializado")
+    inputs = [_init_input(pin_no) for pin_no in INPUT_PINS] if INPUT_ENABLED else []
+    print("[GPIO] Inicializado (entrada fisica %s)" % ("ativa" if INPUT_ENABLED else "desativada"))
 
 
 def unlock_door(source="remote"):

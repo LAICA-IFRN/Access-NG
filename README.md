@@ -85,6 +85,26 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 
 O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
 
+### Tópicos MQTT (referência)
+
+Prefixo fixo: `access-ng`. Tabela completa dos tópicos publicados/assinados pelo `mqtt_service.py`:
+
+| Tópico | Direção | Payload | Descrição |
+| --- | --- | --- | --- |
+| `access-ng/coldstart/{mac}` | dispositivo → Sistema | `{"mac":..., "chave":..., "versao"?}` | Boot do dispositivo. |
+| `access-ng/coldstart/{mac}/result` | Sistema → dispositivo | `{"status":"ok"\|"denied"\|"unknown", "ambiente_id"?}` | Resposta ao coldstart. |
+| `access-ng/heartbeat/{mac}` | dispositivo → Sistema | `{"mac":..., "uptime_ms":..., "uptime_s":..., "versao"?}` | Ping periódico. |
+| `access-ng/{amb_id}/caronte/{mac}/tag` | dispositivo → Sistema | `{"tag":..., "chave":...}` | TAG lida por um Caronte MQTT. |
+| `access-ng/{amb_id}/caronte/{mac}/result` | Sistema → dispositivo | `{"allow": true\|false, "motivo"?}` | Resultado da autenticação da TAG. |
+| `access-ng/{amb_id}/cerberos/{mac}/command` | Sistema → dispositivo | `{"command":"unlock"}` ou `{"command":"check_update"}` | Comando de abertura ou de checagem de OTA para o Cerberos. |
+| `access-ng/{amb_id}/caronte/{mac}/command` | Sistema → dispositivo | `{"command":"check_update"}` | Checagem de OTA para o Caronte (não recebe `unlock`, só o Cerberos aciona relé). |
+| `access-ng/{amb_id}/cerberos/{mac}/status` | dispositivo → Sistema | `{"status": "..."}` | Atualização de status enviada pelo próprio Cerberos (padrão `online` se omitido). |
+| `access-ng/{amb_id}/cerberos/{mac}/entrada` | dispositivo → Sistema | `{"mac":..., "pin":...}` | Entrada física (botão/contato local) detectada pelo Cerberos. |
+
+O Sistema assina `coldstart/+`, `heartbeat/+`, `+/caronte/+/tag`, `+/cerberos/+/status`
+e `+/cerberos/+/entrada`; os demais tópicos da tabela são publicados pelo próprio
+Sistema para os dispositivos assinarem.
+
 ## Requisitos
 
 - Python 3.10+ recomendado.
@@ -815,6 +835,7 @@ firmwares MicroPython, com campos próprios:
     "LED_STATUS_PIN"     : 13,
     "RELAY_PIN"          : 15,
     "RELAY_ACTIVE_MS"    : 2000,
+    "INPUT_ENABLED"      : true,
     "INPUT_PINS"         : [26, 34],
     "INPUT_DEBOUNCE_MS"  : 200
 }
@@ -824,6 +845,9 @@ firmwares MicroPython, com campos próprios:
   relé diretamente no firmware e publicam `access-ng/{ambiente_id}/cerberos/{mac}/entrada`
   com `{"mac":..., "pin":...}`; o Sistema grava isso como evento `entrada_fisica`
   no log, mesmo que o MAC não esteja cadastrado.
+- `INPUT_ENABLED` (padrão `true`) liga/desliga a entrada física por inteiro —
+  com `false` nenhum pino é inicializado nem gera IRQ, útil quando o botão/pino
+  está com ruído ou acionamento espúrio e ainda não há como corrigir o hardware.
 - Cada pino tem seu próprio debounce (`INPUT_DEBOUNCE_MS`) controlado por
   timestamp pré-alocado por pino, para evitar alocação de memória dentro da
   interrupção (IRQ).
