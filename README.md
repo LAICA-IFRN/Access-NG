@@ -31,7 +31,7 @@ Access-NG/
     ├── Fechadura/
     │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID
     │   ├── Cerberos.ino               # Sketch alternativo/legado
-    │   ├── CerberosESP32.py           # Firmware MicroPython (ESP32) — Cerberos MQTT enxuto, com entrada física
+    │   ├── CerberosESP32.py           # Firmware MicroPython (ESP32) — Cerberos MQTT enxuto, com entrada física e OTA
     │   ├── Cerberos_BitDogLab.py      # Firmware MicroPython (Pico W) — modo REST
     │   └── Cerberos_BitDogLab_MQTT.py # Firmware MicroPython (Pico W) — modo MQTT
     ├── Autenticador/
@@ -837,7 +837,9 @@ firmwares MicroPython, com campos próprios:
     "RELAY_ACTIVE_MS"    : 2000,
     "INPUT_ENABLED"      : true,
     "INPUT_PINS"         : [26, 34],
-    "INPUT_DEBOUNCE_MS"  : 200
+    "INPUT_DEBOUNCE_MS"  : 200,
+    "OTA_ENABLED"        : true,
+    "OTA_CHECK_INTERVAL" : 3600
 }
 ```
 
@@ -855,6 +857,9 @@ firmwares MicroPython, com campos próprios:
   resistor pull-up externo quando o sinal for ativo baixo.
 - Segue o mesmo fluxo de coldstart/heartbeat/comando MQTT dos demais firmwares
   e também requer `umqtt` instalado via `mip`.
+- Recebe OTA como o `Cerberos_BitDogLab_MQTT.py`, mas com arquivo de versão
+  próprio (`Hardware/Fechadura/version_esp32.json`) para ter ciclo de release
+  independente — veja [OTA (atualização remota de firmware)](#ota-atualização-remota-de-firmware).
 
 ### ESP32-C3 (MicroPython) — Caronte com leitor Wiegand
 
@@ -906,17 +911,21 @@ a TAG e publica via MQTT.
 
 ## OTA (atualização remota de firmware)
 
-Os dois firmwares MQTT em campo (`Cerberos_BitDogLab_MQTT.py` e
-`CaronteESP32C3.py`) atualizam a si mesmos sem precisar reconectar via
-USB/Thonny. O firmware continua vivendo só no GitHub — não há upload pelo
-painel nem tabela no banco guardando o código.
+Os três firmwares MQTT em campo (`Cerberos_BitDogLab_MQTT.py`,
+`CerberosESP32.py` e `CaronteESP32C3.py`) atualizam a si mesmos sem precisar
+reconectar via USB/Thonny. O firmware continua vivendo só no GitHub — não há
+upload pelo painel nem tabela no banco guardando o código.
 
 ### Como funciona
 
 1. Cada dispositivo tem uma constante `FIRMWARE_VERSAO` no topo do arquivo.
-2. Existe um `version.json` no repositório, ao lado do firmware:
-   `Hardware/Fechadura/version.json` e `Hardware/Autenticador/version.json`,
-   no formato `{"versao": "1.0.0", "ref": "main"}`.
+2. Existe um arquivo de versão no repositório, ao lado do firmware:
+   `Hardware/Fechadura/version.json` (`Cerberos_BitDogLab_MQTT.py`),
+   `Hardware/Fechadura/version_esp32.json` (`CerberosESP32.py`) e
+   `Hardware/Autenticador/version.json` (`CaronteESP32C3.py`) — um arquivo por
+   firmware, para que cada um tenha ciclo de release independente mesmo
+   compartilhando o diretório `Fechadura/`. Formato:
+   `{"versao": "1.0.0", "ref": "main"}`.
 3. O dispositivo busca esse `version.json` via HTTPS em
    `raw.githubusercontent.com/LAICA-IFRN/Access-NG/{ref}/...` (repositório
    público, sem autenticação). Se a `versao` remota for diferente da local,
@@ -961,9 +970,9 @@ A versão reportada por último aparece nas páginas
 
 ### Fora de escopo desta versão
 
-A variante REST do Cerberos (`Cerberos_BitDogLab.py`) e os firmwares
-legados Arduino/`CerberosESP32.py` não recebem OTA — o mecanismo cobre só
-os dois firmwares MQTT atualmente em campo.
+A variante REST do Cerberos (`Cerberos_BitDogLab.py`) e os firmwares legados
+Arduino (`Cerberos_UART.ino`, `Cerberos.ino`, `Caronte_RFID.ino`) não recebem
+OTA — o mecanismo cobre só os três firmwares MQTT atualmente em campo.
 
 ### Configuração de IP
 
@@ -1197,10 +1206,12 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   contato em `AccessLog` (sem tabela nova), usando o mesmo limiar de
   `OFFLINE_THRESHOLD` do monitor de offline. A página do Tartaro lista
   todos os seus equipamentos com o SLA (24h) de cada um e um link "Ver".
-- OTA para os firmwares MQTT (`Cerberos_BitDogLab_MQTT.py`,
-  `CaronteESP32C3.py`): cada um busca `version.json` no GitHub, baixa e
-  troca `main.py` quando há versão nova, com rollback automático via
-  `main.bak` se a versão nova falhar repetidamente no boot. O painel pode
-  notificar a verificação na hora via MQTT (`/admin/cerberoses/<id>/verificar-atualizacao`,
+- OTA para os firmwares MQTT (`Cerberos_BitDogLab_MQTT.py`, `CerberosESP32.py`,
+  `CaronteESP32C3.py`): cada um busca seu próprio arquivo de versão no GitHub
+  (`version.json`, `version_esp32.json` e `version.json` do Autenticador,
+  respectivamente), baixa e troca `main.py` quando há versão nova, com
+  rollback automático via `main.bak` se a versão nova falhar repetidamente no
+  boot. O painel pode notificar a verificação na hora via MQTT
+  (`/admin/cerberoses/<id>/verificar-atualizacao`,
   `/admin/carontes/<id>/verificar-atualizacao`, e as variantes em massa) —
   veja [OTA (atualização remota de firmware)](#ota-atualização-remota-de-firmware).

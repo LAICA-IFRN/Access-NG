@@ -25,7 +25,9 @@ Nao possui logica de botao/Caronte nem publica TAG para autenticacao.
     "RELAY_ACTIVE_MS"    : 2000,
     "INPUT_ENABLED"      : true,
     "INPUT_PINS"         : [26, 34],
-    "INPUT_DEBOUNCE_MS"  : 200
+    "INPUT_DEBOUNCE_MS"  : 200,
+    "OTA_ENABLED"        : true,
+    "OTA_CHECK_INTERVAL" : 3600
 }
 
 --- Pinagem ESP32 ------------------------------------------------------------
@@ -52,16 +54,43 @@ nem gera IRQ, sem precisar mexer em INPUT_PINS.
 
   Assina:
     access-ng/coldstart/{mac}/result          -> resposta do coldstart
-    access-ng/{amb_id}/cerberos/{mac}/command -> comando de abertura
+    access-ng/{amb_id}/cerberos/{mac}/command -> comando de abertura/check_update
 
   O MAC usa '-' no lugar de ':' nos topicos.
+
+--- OTA (atualizacao remota) --------------------------------------------------
+
+  Mesmo esquema do Cerberos_BitDogLab_MQTT.py, mas com arquivo de versao
+  proprio (version_esp32.json, ao lado de version.json do BitDogLab) para que
+  os dois firmwares deste diretorio tenham ciclos de release independentes.
+  Busca version_esp32.json em
+  https://raw.githubusercontent.com/{OTA_REPO}/main/{OTA_VERSION_PATH} (sem
+  autenticacao). Se a "versao" remota difere de FIRMWARE_VERSAO, baixa o .py
+  do "ref" indicado, valida, grava em main.new, troca com main.py (backup em
+  main.bak) e reinicia.
+
+  Checagem em tres momentos: apos o coldstart, a cada OTA_CHECK_INTERVAL
+  segundos, e imediatamente ao receber {"command":"check_update"} no topico
+  de comando (mesmo topico usado para "unlock").
+
+  Rede de seguranca: se a versao nova nao completar um coldstart em ate 3
+  boots, o dispositivo restaura main.bak (versao anterior conhecida como boa)
+  e reinicia.
 """
 
 import machine
 import network
+import socket
 import time
 import json
+import os
 import ubinascii
+
+try:
+    import ssl
+    _SSL_AVAILABLE = True
+except ImportError:
+    _SSL_AVAILABLE = False
 
 
 # --- CONFIGURACAO ------------------------------------------------------------
@@ -83,6 +112,8 @@ _DEFAULTS = {
     "INPUT_ENABLED"      : False,
     "INPUT_PINS"         : [26, 34],
     "INPUT_DEBOUNCE_MS"  : 200,
+    "OTA_ENABLED"        : True,
+    "OTA_CHECK_INTERVAL" : 3600,
 }
 
 try:
@@ -118,10 +149,22 @@ RELAY_ACTIVE_MS    = min(cfg("RELAY_ACTIVE_MS"), 2000)
 INPUT_ENABLED      = cfg("INPUT_ENABLED")
 INPUT_PINS         = cfg("INPUT_PINS")
 INPUT_DEBOUNCE_MS  = cfg("INPUT_DEBOUNCE_MS")
+OTA_ENABLED        = cfg("OTA_ENABLED")
+OTA_CHECK_INTERVAL = cfg("OTA_CHECK_INTERVAL")
 
 MQTT_PREFIX = "access-ng"
 DEVICE_MAC  = None
 AMBIENTE_ID = None
+
+# --- OTA -----------------------------------------------------------------
+
+FIRMWARE_VERSAO   = "1.0.0"   # bump manual a cada release publicada
+OTA_REPO          = "LAICA-IFRN/Access-NG"
+# Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
+# os dois firmwares deste diretorio tenham ciclos de release independentes.
+OTA_VERSION_PATH  = "Hardware/Fechadura/version_esp32.json"
+OTA_FIRMWARE_PATH = "Hardware/Fechadura/CerberosESP32.py"
+OTA_HOST          = "raw.githubusercontent.com"
 
 
 # --- HARDWARE ----------------------------------------------------------------
@@ -206,10 +249,224 @@ def connect_wifi():
     return False
 
 
+# --- OTA -----------------------------------------------------------------
+
+def _ota_boot_guard():
+    """Roda antes de tudo no boot. Se ha um update pendente que falhou em
+    completar um coldstart por 3 boots seguidos, restaura main.bak (versao
+    anterior conhecida como boa) e reinicia. Nunca levanta excecao - esse
+    codigo nao pode travar o boot normal (sem update pendente, e um no-op)."""
+    try:
+        with open("ota_pending.txt"):
+            pass
+    except OSError:
+        return
+    try:
+        try:
+            with open("ota_boot_attempts.txt") as f:
+                tentativas = int(f.read().strip())
+        except (OSError, ValueError):
+            tentativas = 0
+        tentativas += 1
+        if tentativas >= 3:
+            print("[OTA] Update pendente falhou %d vezes - restaurando main.bak" % tentativas)
+            try:
+                os.remove("main.py")
+                os.rename("main.bak", "main.py")
+            except OSError:
+                pass
+            for fname in ("ota_pending.txt", "ota_boot_attempts.txt"):
+                try:
+                    os.remove(fname)
+                except OSError:
+                    pass
+            time.sleep(2)
+            machine.reset()
+        else:
+            print("[OTA] Boot %d/3 com update pendente" % tentativas)
+            with open("ota_boot_attempts.txt", "w") as f:
+                f.write(str(tentativas))
+    except Exception as e:
+        print("[OTA] Erro no boot guard:", e)
+
+
+def _ota_confirmar_versao_boa():
+    """Chamado apos o primeiro coldstart+heartbeat bem-sucedidos na versao
+    atual: remove os marcadores de update pendente (a versao e considerada
+    estavel). main.bak permanece como rede de seguranca ate a proxima
+    atualizacao."""
+    for fname in ("ota_pending.txt", "ota_boot_attempts.txt"):
+        try:
+            os.remove(fname)
+            print("[OTA] Versao", FIRMWARE_VERSAO, "confirmada como estavel")
+        except OSError:
+            pass
+
+
+def _https_get(path, host=None, timeout=10):
+    """GET HTTPS simples. Retorna (status_code, body_str) ou (None, None)."""
+    return _https_request(host or OTA_HOST, path, timeout=timeout)
+
+
+def _https_request(host, path, dest_file=None, timeout=10):
+    """GET HTTPS em host+path. Se dest_file for informado, grava o corpo da
+    resposta direto nesse arquivo (streaming) e retorna (status, None);
+    senao acumula o corpo em memoria e retorna (status, body_str).
+    Retorna (None, None) em qualquer falha de rede."""
+    if not _SSL_AVAILABLE:
+        print("[OTA] ssl indisponivel neste build")
+        return None, None
+    sock = None
+    try:
+        ai   = socket.getaddrinfo(host, 443, 0, socket.SOCK_STREAM)
+        addr = ai[0][-1]
+        sock = socket.socket()
+        sock.settimeout(timeout)
+        sock.connect(addr)
+        try:
+            sock = ssl.wrap_socket(sock, server_hostname=host)
+        except TypeError:
+            sock = ssl.wrap_socket(sock)
+
+        req = (
+            "GET " + path + " HTTP/1.1\r\n"
+            "Host: " + host + "\r\n"
+            "User-Agent: access-ng-cerberos\r\n"
+            "Connection: close\r\n\r\n"
+        )
+        sock.write(req.encode("utf-8"))
+
+        buf = b""
+        status = None
+        out = None
+        if dest_file:
+            out = open(dest_file, "wb")
+        header_done = False
+        try:
+            while True:
+                chunk = sock.read(1024)
+                if not chunk:
+                    break
+                if not header_done:
+                    buf += chunk
+                    sep = buf.find(b"\r\n\r\n")
+                    if sep == -1:
+                        continue
+                    header_done = True
+                    header_str = buf[:sep].decode("utf-8", "ignore")
+                    status = int(header_str.split("\r\n", 1)[0].split()[1])
+                    rest = buf[sep + 4:]
+                    buf = b""
+                    if out:
+                        if rest:
+                            out.write(rest)
+                    else:
+                        buf = rest
+                else:
+                    if out:
+                        out.write(chunk)
+                    else:
+                        buf += chunk
+        finally:
+            if out:
+                out.close()
+
+        if status is None:
+            return None, None
+        return status, (None if out else buf.decode("utf-8", "ignore"))
+    except Exception as e:
+        print("[OTA] Erro HTTPS:", e)
+        return None, None
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
+def check_for_update():
+    """Busca version.json no repo. Retorna o dict remoto se houver uma
+    versao diferente da atual, ou None (sem update / qualquer falha)."""
+    if not OTA_ENABLED:
+        return None
+    status, body = _https_get("/" + OTA_REPO + "/main/" + OTA_VERSION_PATH)
+    if status != 200 or not body:
+        print("[OTA] Falha ao verificar version.json (status=%s)" % status)
+        return None
+    try:
+        remote = json.loads(body)
+    except Exception:
+        print("[OTA] version.json invalido")
+        return None
+    if remote.get("versao") == FIRMWARE_VERSAO:
+        return None
+    print("[OTA] Nova versao disponivel:", remote.get("versao"))
+    return remote
+
+
+def _valida_payload(path, versao):
+    """Checagem barata de sanidade do .py baixado antes de instalar."""
+    try:
+        if os.stat(path)[6] < 500:
+            return False
+        with open(path) as f:
+            conteudo = f.read()
+        return ("FIRMWARE_VERSAO" in conteudo) and (versao in conteudo)
+    except Exception:
+        return False
+
+
+def apply_update(remote):
+    """Baixa o firmware do ref indicado, valida, troca main.py e reinicia.
+    Nunca propaga excecao - qualquer falha apenas aborta a atualizacao."""
+    try:
+        ref = remote.get("ref", "main")
+        versao = remote.get("versao", "")
+        path = "/" + OTA_REPO + "/" + ref + "/" + OTA_FIRMWARE_PATH
+        print("[OTA] Baixando", path)
+        status, _ = _https_request(OTA_HOST, path, dest_file="main.new")
+        if status != 200 or not _valida_payload("main.new", versao):
+            print("[OTA] Download invalido (status=%s) - abortando" % status)
+            try:
+                os.remove("main.new")
+            except OSError:
+                pass
+            return False
+
+        try:
+            os.remove("main.bak")
+        except OSError:
+            pass
+        os.rename("main.py", "main.bak")
+        os.rename("main.new", "main.py")
+        with open("ota_pending.txt", "w") as f:
+            f.write(versao)
+        try:
+            os.remove("ota_boot_attempts.txt")
+        except OSError:
+            pass
+
+        print("[OTA] Atualizado para", versao, "- reiniciando")
+        time.sleep(1)
+        machine.reset()
+    except Exception as e:
+        print("[OTA] Erro ao aplicar atualizacao:", e)
+        return False
+
+
+def ota_check_and_maybe_apply():
+    """Verifica e, se houver versao nova, aplica (reinicia em caso de sucesso)."""
+    remote = check_for_update()
+    if remote:
+        apply_update(remote)
+
+
 # --- MQTT --------------------------------------------------------------------
 
 _client = None
 _coldstart_result = None
+_update_requested = False   # set pelo callback quando command=check_update chega
 
 
 def _mac_safe():
@@ -238,7 +495,7 @@ def _topics():
 
 
 def _on_message(topic, payload):
-    global _unlock_flag, _coldstart_result
+    global _unlock_flag, _coldstart_result, _update_requested
     topic_str = topic.decode("utf-8")
     status_pulse()
 
@@ -255,6 +512,9 @@ def _on_message(topic, payload):
         if data.get("command") in ("unlock", "open", "abrir"):
             print("[MQTT] Comando de abertura recebido")
             _unlock_flag = True
+        elif data.get("command") == "check_update":
+            print("[MQTT] Solicitacao de verificacao de atualizacao recebida")
+            _update_requested = True
 
 
 def mqtt_connect():
@@ -286,7 +546,7 @@ def do_coldstart():
         _set_link(False)
         _client.publish(
             _topics()["coldstart"],
-            json.dumps({"mac": DEVICE_MAC, "chave": DEVICE_KEY}),
+            json.dumps({"mac": DEVICE_MAC, "chave": DEVICE_KEY, "versao": FIRMWARE_VERSAO}),
             qos=1,
         )
         status_pulse()
@@ -336,6 +596,7 @@ def publish_heartbeat():
         "mac": DEVICE_MAC,
         "uptime_ms": uptime_ms,
         "uptime_s": uptime_ms // 1000,
+        "versao": FIRMWARE_VERSAO,
     }))
     status_pulse()
 
@@ -343,12 +604,13 @@ def publish_heartbeat():
 # --- MAIN --------------------------------------------------------------------
 
 def main():
-    global DEVICE_MAC, _input_pin, _unlock_flag
+    global DEVICE_MAC, _input_pin, _unlock_flag, _update_requested
 
     print("\n" + "=" * 48)
     print("  CERBEROS ESP32 - MQTT")
     print("=" * 48)
 
+    _ota_boot_guard()
     init_gpio()
 
     wlan = network.WLAN(network.STA_IF)
@@ -374,7 +636,11 @@ def main():
             time.sleep(10)
 
     last_heartbeat = time.time()
+    _ota_confirmar_versao_boa()
     print("[Main] Operacional\n")
+
+    last_ota_check = time.time()
+    ota_check_and_maybe_apply()
 
     while True:
         try:
@@ -399,11 +665,20 @@ def main():
                 publish_heartbeat()
                 last_heartbeat = time.time()
 
+            if OTA_ENABLED and time.time() - last_ota_check >= OTA_CHECK_INTERVAL:
+                ota_check_and_maybe_apply()
+                last_ota_check = time.time()
+
             _client.check_msg()
 
             if _unlock_flag:
                 _unlock_flag = False
                 unlock_door("mqtt")
+
+            if _update_requested:
+                _update_requested = False
+                ota_check_and_maybe_apply()
+                last_ota_check = time.time()
 
             time.sleep_ms(50)
 
