@@ -114,6 +114,13 @@ class Cerberos(Base):
     versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     uptime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    boot_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    hardware: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    mcu: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    ssid: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    rssi: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mem_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cpu_temp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class Caronte(Base):
@@ -132,6 +139,13 @@ class Caronte(Base):
     versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     uptime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    boot_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    hardware: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    mcu: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    ssid: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    rssi: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mem_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cpu_temp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
@@ -206,3 +220,12 @@ for _table in ('cerberoses', 'carontes'):
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'ip', 'VARCHAR(50)')
     _add_column_if_missing(_table, 'uptime', 'VARCHAR(20)')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'boot_count', 'INTEGER')
+    _add_column_if_missing(_table, 'hardware', 'VARCHAR(50)')
+    _add_column_if_missing(_table, 'mcu', 'VARCHAR(50)')
+    _add_column_if_missing(_table, 'ssid', 'VARCHAR(50)')
+    _add_column_if_missing(_table, 'rssi', 'INTEGER')
+    _add_column_if_missing(_table, 'mem_free', 'INTEGER')
+    _add_column_if_missing(_table, 'cpu_temp', 'FLOAT')

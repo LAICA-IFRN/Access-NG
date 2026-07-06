@@ -10,8 +10,6 @@
     <span class="badge badge-{{ c.status or 'unknown' }} ml-2">{{ c.status or 'unknown' }}</span>
     <br>
     <small style="color:#888;">Firmware: v{{ c.versao_firmware or 'desconhecida' }}</small>
-    <br>
-    <small style="color:#888;">IP: {{ c.ip or '—' }} &middot; Uptime: {{ c.uptime or '—' }}</small>
   </div>
   {% if pode_editar %}
   <div>
@@ -60,6 +58,34 @@
           </div>
         </form>
         <canvas id="slaChart" height="90"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .diag-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:.9rem 1.5rem; }
+  .diag-item { display:flex; justify-content:space-between; border-bottom:1px solid #2d2d4e; padding-bottom:.4rem; }
+  .diag-label { color:#888; font-size:.82rem; }
+  .diag-value { color:#e0e0e0; font-size:.82rem; font-weight:bold; text-align:right; }
+</style>
+<div class="row">
+  <div class="col-12 mb-4">
+    <div class="card">
+      <div class="card-header">Diagnóstico</div>
+      <div class="card-body">
+        <div class="diag-grid">
+          <div class="diag-item"><span class="diag-label">Contador de Boots</span><span class="diag-value">{{ c.boot_count if c.boot_count is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Hardware</span><span class="diag-value">{{ c.hardware or '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">MAC Address</span><span class="diag-value" style="font-family:monospace;">{{ c.mac }}</span></div>
+          <div class="diag-item"><span class="diag-label">MCU</span><span class="diag-value">{{ c.mcu or '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">IP</span><span class="diag-value">{{ c.ip or '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">SSID WiFi</span><span class="diag-value">{{ c.ssid or '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Sinal WiFi</span><span class="diag-value">{{ (c.rssi ~ ' dBm') if c.rssi is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Memória Livre</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free).replace(',', '.') ~ ' B') if c.mem_free is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Temperatura CPU</span><span class="diag-value">{{ (c.cpu_temp ~ ' °C') if c.cpu_temp is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Uptime</span><span class="diag-value">{{ c.uptime or '—' }}</span></div>
+        </div>
       </div>
     </div>
   </div>

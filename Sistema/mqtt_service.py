@@ -254,6 +254,14 @@ class MqttService:
             device.status       = 'online'
             if payload.get('versao'):
                 device.versao_firmware = payload['versao']
+            if payload.get('boot_count') is not None:
+                device.boot_count = payload['boot_count']
+            if payload.get('hardware'):
+                device.hardware = payload['hardware']
+            if payload.get('mcu'):
+                device.mcu = payload['mcu']
+            if payload.get('ssid'):
+                device.ssid = payload['ssid']
             label_name = getattr(device, 'nome', mac)
             db.add(AccessLog(
                 timestamp=now, path='mqtt:coldstart', method='MQTT', mac=mac,
@@ -291,6 +299,12 @@ class MqttService:
                         device.ip = payload['ip']
                     if payload.get('uptime'):
                         device.uptime = payload['uptime']
+                    if payload.get('rssi') is not None:
+                        device.rssi = payload['rssi']
+                    if payload.get('mem_free') is not None:
+                        device.mem_free = payload['mem_free']
+                    if payload.get('cpu_temp') is not None:
+                        device.cpu_temp = payload['cpu_temp']
                     updated = True
                     found_device = device
             if updated:

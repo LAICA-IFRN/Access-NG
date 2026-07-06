@@ -85,6 +85,7 @@ import time
 import json
 import os
 import ubinascii
+import gc
 
 try:
     import ssl
@@ -155,16 +156,61 @@ OTA_CHECK_INTERVAL = cfg("OTA_CHECK_INTERVAL")
 MQTT_PREFIX = "access-ng"
 DEVICE_MAC  = None
 AMBIENTE_ID = None
+BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.0.1"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.1.0"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 OTA_VERSION_PATH  = "Hardware/Fechadura/version_esp32.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/CerberosESP32.py"
 OTA_HOST          = "raw.githubusercontent.com"
+
+# --- DIAGNOSTICO ---------------------------------------------------------
+
+HARDWARE_INFO         = "Cerberos ESP32 DevKit"
+HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp vao a cada N heartbeats
+
+
+def _read_boot_count():
+    try:
+        with open("boot_count.txt") as f:
+            n = int(f.read().strip())
+    except (OSError, ValueError):
+        n = 0
+    n += 1
+    try:
+        with open("boot_count.txt", "w") as f:
+            f.write(str(n))
+    except OSError:
+        pass
+    return n
+
+
+def _read_mcu():
+    try:
+        return os.uname().machine
+    except Exception:
+        return None
+
+
+def _read_rssi():
+    try:
+        return network.WLAN(network.STA_IF).status("rssi")
+    except Exception:
+        return None
+
+
+def _read_cpu_temp():
+    """Sensor interno do ESP32 (nao documentado oficialmente, mas presente
+    na maioria dos builds); retorna None se indisponivel."""
+    try:
+        import esp32
+        return round((esp32.raw_temperature() - 32) * 5 / 9, 1)
+    except Exception:
+        return None
 
 
 # --- HARDWARE ----------------------------------------------------------------
@@ -546,7 +592,11 @@ def do_coldstart():
         _set_link(False)
         _client.publish(
             _topics()["coldstart"],
-            json.dumps({"mac": DEVICE_MAC, "chave": DEVICE_KEY, "versao": FIRMWARE_VERSAO}),
+            json.dumps({
+                "mac": DEVICE_MAC, "chave": DEVICE_KEY, "versao": FIRMWARE_VERSAO,
+                "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
+                "mcu": _read_mcu(), "ssid": WIFI_SSID,
+            }),
             qos=1,
         )
         status_pulse()
@@ -598,28 +648,39 @@ def _format_uptime(uptime_ms):
     return "%dT%02d:%02d:%02d" % (days, hours, minutes, seconds)
 
 
+_heartbeat_count = 0
+
+
 def publish_heartbeat():
+    global _heartbeat_count
     uptime_ms = time.ticks_ms()
-    _client.publish(_topics()["heartbeat"], json.dumps({
+    payload = {
         "mac": DEVICE_MAC,
         "uptime_ms": uptime_ms,
         "uptime_s": uptime_ms // 1000,
         "uptime": _format_uptime(uptime_ms),
         "ip": network.WLAN(network.STA_IF).ifconfig()[0],
         "versao": FIRMWARE_VERSAO,
-    }))
+    }
+    _heartbeat_count += 1
+    if _heartbeat_count % HEARTBEAT_DIAG_EVERY == 1:
+        payload["rssi"] = _read_rssi()
+        payload["mem_free"] = gc.mem_free()
+        payload["cpu_temp"] = _read_cpu_temp()
+    _client.publish(_topics()["heartbeat"], json.dumps(payload))
     status_pulse()
 
 
 # --- MAIN --------------------------------------------------------------------
 
 def main():
-    global DEVICE_MAC, _input_pin, _unlock_flag, _update_requested
+    global DEVICE_MAC, BOOT_COUNT, _input_pin, _unlock_flag, _update_requested
 
     print("\n" + "=" * 48)
     print("  CERBEROS ESP32 - MQTT")
     print("=" * 48)
 
+    BOOT_COUNT = _read_boot_count()
     _ota_boot_guard()
     init_gpio()
 

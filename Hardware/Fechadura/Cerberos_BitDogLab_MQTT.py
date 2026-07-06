@@ -93,6 +93,7 @@ import time
 import json
 import os
 import ubinascii
+import gc
 
 try:
     import ssl
@@ -171,14 +172,59 @@ OTA_CHECK_INTERVAL = cfg('OTA_CHECK_INTERVAL')
 MQTT_PREFIX = 'access-ng'
 DEVICE_MAC  = None
 AMBIENTE_ID = None   # obtido a partir da resposta do coldstart
+BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.0.1"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.1.0"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Fechadura/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py"
 OTA_HOST          = "raw.githubusercontent.com"
+
+# ─── DIAGNÓSTICO ────────────────────────────────────────────────────────────────
+
+HARDWARE_INFO         = "BitDogLab V6 (Pico W)"
+HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp vao a cada N heartbeats
+
+
+def _read_boot_count():
+    try:
+        with open('boot_count.txt') as f:
+            n = int(f.read().strip())
+    except (OSError, ValueError):
+        n = 0
+    n += 1
+    try:
+        with open('boot_count.txt', 'w') as f:
+            f.write(str(n))
+    except OSError:
+        pass
+    return n
+
+
+def _read_mcu():
+    try:
+        return os.uname().machine
+    except Exception:
+        return None
+
+
+def _read_rssi():
+    try:
+        return network.WLAN(network.STA_IF).status('rssi')
+    except Exception:
+        return None
+
+
+def _read_cpu_temp():
+    """Sensor interno de temperatura do RP2040 (ADC canal 4)."""
+    try:
+        sensor = machine.ADC(4)
+        volts = sensor.read_u16() * (3.3 / 65535)
+        return round(27 - (volts - 0.706) / 0.001721, 1)
+    except Exception:
+        return None
 
 # ─── HARDWARE ─────────────────────────────────────────────────────────────────
 
@@ -521,7 +567,7 @@ def apply_update(remote):
         path = "/" + OTA_REPO + "/" + ref + "/" + OTA_FIRMWARE_PATH
         print("[OTA] Baixando", path)
         display_message("OTA", "Baixando", versao)
-        status, _ = _https_request(OTA_HOST, path, dest_file='main.new', timeout=30)
+        status, _ = _https_request(OTA_HOST, path, dest_file='main.new')
         if status != 200 or not _valida_payload('main.new', versao):
             print("[OTA] Download inválido (status=%s) — abortando" % status)
             try:
@@ -733,7 +779,9 @@ def do_coldstart():
         _coldstart_result = None
         _client.publish(_t()['coldstart'],
                         json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY,
-                                    'versao': FIRMWARE_VERSAO}),
+                                    'versao': FIRMWARE_VERSAO,
+                                    'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
+                                    'mcu': _read_mcu(), 'ssid': WIFI_SSID}),
                         qos=1)
         print("[MQTT] Coldstart publicado, aguardando confirmação...")
         display_message("COLDSTART", "Publicado", "aguardando...")
@@ -769,16 +817,26 @@ def _format_uptime(uptime_ms):
     return "%dT%02d:%02d:%02d" % (days, hours, minutes, seconds)
 
 
+_heartbeat_count = 0
+
+
 def publish_heartbeat():
+    global _heartbeat_count
     uptime_ms = time.ticks_ms()
-    _client.publish(_t()['heartbeat'], json.dumps({
+    payload = {
         'mac': DEVICE_MAC,
         'uptime_ms': uptime_ms,
         'uptime_s': uptime_ms // 1000,
         'uptime': _format_uptime(uptime_ms),
         'ip': network.WLAN(network.STA_IF).ifconfig()[0],
         'versao': FIRMWARE_VERSAO,
-    }))
+    }
+    _heartbeat_count += 1
+    if _heartbeat_count % HEARTBEAT_DIAG_EVERY == 1:
+        payload['rssi'] = _read_rssi()
+        payload['mem_free'] = gc.mem_free()
+        payload['cpu_temp'] = _read_cpu_temp()
+    _client.publish(_t()['heartbeat'], json.dumps(payload))
 
 
 def publish_tag():
@@ -794,12 +852,13 @@ def publish_tag():
 # ─── MAIN ──────────────────────────────────────────────────────────────────────
 
 def main():
-    global DEVICE_MAC, _btn_flag, _unlock_flag, _update_requested
+    global DEVICE_MAC, BOOT_COUNT, _btn_flag, _unlock_flag, _update_requested
 
     print("\n" + "=" * 48)
     print("  CERBEROS + CARONTE — BitDogLab V6 (MQTT)")
     print("=" * 48)
 
+    BOOT_COUNT = _read_boot_count()
     init_display()
     _ota_boot_guard()
     init_gpio()
