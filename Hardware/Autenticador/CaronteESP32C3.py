@@ -177,7 +177,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.1.0"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.1.2"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Autenticador/CaronteESP32C3.py"
@@ -511,7 +511,7 @@ def apply_update(remote):
         ref = remote.get("ref", "main")
         versao = remote.get("versao", "")
         path = "/" + OTA_REPO + "/" + ref + "/" + OTA_FIRMWARE_PATH
-        print("[OTA] Baixando", path)
+        print("[OTA] Baixando", "https://" + OTA_HOST + path)
         beep(60)
         status, _ = _https_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):
@@ -623,23 +623,32 @@ def do_coldstart():
     global AMBIENTE_ID, _coldstart_result
     while True:
         _coldstart_result = None
-        _client.publish(
-            _topics()["coldstart"],
-            json.dumps({
-                "mac": DEVICE_MAC, "chave": DEVICE_KEY, "versao": FIRMWARE_VERSAO,
-                "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
-                "mcu": _read_mcu(), "ssid": WIFI_SSID,
-            }),
-            qos=1,
-        )
-        print("[MQTT] Coldstart publicado, aguardando confirmação...")
+        try:
+            _client.publish(
+                _topics()["coldstart"],
+                json.dumps({
+                    "mac": DEVICE_MAC, "chave": DEVICE_KEY, "versao": FIRMWARE_VERSAO,
+                    "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
+                    "mcu": _read_mcu(), "ssid": WIFI_SSID,
+                }),
+                qos=1,
+            )
+            print("[MQTT] Coldstart publicado, aguardando confirmação...")
 
-        t0 = time.time()
-        while time.time() - t0 < 5:
-            _client.check_msg()
-            if _coldstart_result is not None:
-                break
-            time.sleep_ms(100)
+            t0 = time.time()
+            while time.time() - t0 < 5:
+                _client.check_msg()
+                if _coldstart_result is not None:
+                    break
+                time.sleep_ms(100)
+        except OSError as e:
+            print("[MQTT] Erro de rede no coldstart: %s - reconectando..." % e)
+            try:
+                mqtt_connect()
+            except Exception:
+                pass
+            time.sleep(5)
+            continue
 
         if _coldstart_result and _coldstart_result.get("status") == "ok":
             AMBIENTE_ID = _coldstart_result.get("ambiente_id")

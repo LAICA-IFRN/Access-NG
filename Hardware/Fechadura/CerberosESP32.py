@@ -160,7 +160,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.1.0"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.1.2"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
@@ -470,7 +470,7 @@ def apply_update(remote):
         ref = remote.get("ref", "main")
         versao = remote.get("versao", "")
         path = "/" + OTA_REPO + "/" + ref + "/" + OTA_FIRMWARE_PATH
-        print("[OTA] Baixando", path)
+        print("[OTA] Baixando", "https://" + OTA_HOST + path)
         status, _ = _https_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):
             print("[OTA] Download invalido (status=%s) - abortando" % status)
@@ -590,28 +590,37 @@ def do_coldstart():
     while True:
         _coldstart_result = None
         _set_link(False)
-        _client.publish(
-            _topics()["coldstart"],
-            json.dumps({
-                "mac": DEVICE_MAC, "chave": DEVICE_KEY, "versao": FIRMWARE_VERSAO,
-                "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
-                "mcu": _read_mcu(), "ssid": WIFI_SSID,
-            }),
-            qos=1,
-        )
-        status_pulse()
-        print("[MQTT] Coldstart publicado, aguardando confirmacao...")
+        try:
+            _client.publish(
+                _topics()["coldstart"],
+                json.dumps({
+                    "mac": DEVICE_MAC, "chave": DEVICE_KEY, "versao": FIRMWARE_VERSAO,
+                    "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
+                    "mcu": _read_mcu(), "ssid": WIFI_SSID,
+                }),
+                qos=1,
+            )
+            status_pulse()
+            print("[MQTT] Coldstart publicado, aguardando confirmacao...")
 
-        t0 = time.time()
-        tick = 0
-        while time.time() - t0 < 5:
-            _client.check_msg()
-            if tick % 5 == 0:
-                led_link.value(1 - led_link.value())
-            tick += 1
-            if _coldstart_result is not None:
-                break
-            time.sleep_ms(100)
+            t0 = time.time()
+            tick = 0
+            while time.time() - t0 < 5:
+                _client.check_msg()
+                if tick % 5 == 0:
+                    led_link.value(1 - led_link.value())
+                tick += 1
+                if _coldstart_result is not None:
+                    break
+                time.sleep_ms(100)
+        except OSError as e:
+            print("[MQTT] Erro de rede no coldstart: %s - reconectando..." % e)
+            try:
+                mqtt_connect()
+            except Exception:
+                pass
+            time.sleep(5)
+            continue
 
         if _coldstart_result and _coldstart_result.get("status") == "ok":
             AMBIENTE_ID = _coldstart_result.get("ambiente_id")
