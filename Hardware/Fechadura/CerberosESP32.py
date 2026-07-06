@@ -425,7 +425,7 @@ def apply_update(remote):
         versao = remote.get("versao", "")
         path = "/" + OTA_REPO + "/" + ref + "/" + OTA_FIRMWARE_PATH
         print("[OTA] Baixando", path)
-        status, _ = _https_request(OTA_HOST, path, dest_file="main.new")
+        status, _ = _https_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):
             print("[OTA] Download invalido (status=%s) - abortando" % status)
             try:
