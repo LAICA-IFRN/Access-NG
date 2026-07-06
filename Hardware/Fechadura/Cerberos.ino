@@ -79,6 +79,23 @@ String deviceBody() {
   return "{\"mac\":\"" + WiFi.macAddress() + "\"}";
 }
 
+String formatUptime(unsigned long uptimeMs) {
+  unsigned long totalSeconds = uptimeMs / 1000;
+  unsigned long days = totalSeconds / 86400;
+  unsigned long hours = (totalSeconds % 86400) / 3600;
+  unsigned long minutes = (totalSeconds % 3600) / 60;
+  unsigned long seconds = totalSeconds % 60;
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%luT%02lu:%02lu:%02lu", days, hours, minutes, seconds);
+  return String(buf);
+}
+
+String heartbeatBody() {
+  return "{\"mac\":\"" + WiFi.macAddress() + "\","
+         "\"uptime\":\"" + formatUptime(millis()) + "\","
+         "\"ip\":\"" + WiFi.localIP().toString() + "\"}";
+}
+
 int postJson(const char* endpoint, const String& body, uint16_t timeoutMs, String& payload) {
   WiFiClient client;
   HTTPClient http;
@@ -138,7 +155,7 @@ void coldStart(){
 
 void heartbeat(){
   String payload;
-  postJson(HEARTBEAT_ENDPOINT, deviceBody(), API_TIMEOUT_MS, payload);
+  postJson(HEARTBEAT_ENDPOINT, heartbeatBody(), API_TIMEOUT_MS, payload);
 }
 
 void pollCommand(){

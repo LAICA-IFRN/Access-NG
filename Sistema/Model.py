@@ -112,6 +112,8 @@ class Cerberos(Base):
     broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
     broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="cerberoses")
     versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    uptime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
 
 class Caronte(Base):
@@ -128,6 +130,8 @@ class Caronte(Base):
     broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
     broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="carontes")
     versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    uptime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
@@ -198,3 +202,7 @@ _add_column_if_missing('access_logs', 'duration_ms', 'INTEGER')
 
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'versao_firmware', 'VARCHAR(30)')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'ip', 'VARCHAR(50)')
+    _add_column_if_missing(_table, 'uptime', 'VARCHAR(20)')

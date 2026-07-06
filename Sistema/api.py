@@ -288,7 +288,7 @@ def _inject_current_usuario():
 
 # ── Device helpers ───────────────────────────────────────────────────────────
 
-def _touch_device(mac: str, versao: str = None):
+def _touch_device(mac: str, versao: str = None, ip: str = None, uptime: str = None):
     now = datetime.datetime.utcnow()
     updated = False
     for model in (Cerberos, Caronte):
@@ -298,6 +298,10 @@ def _touch_device(mac: str, versao: str = None):
             device.status = 'online'
             if versao:
                 device.versao_firmware = versao
+            if ip:
+                device.ip = ip
+            if uptime:
+                device.uptime = uptime
             updated = True
     if updated:
         db.commit()
@@ -452,7 +456,7 @@ def heartbeat():
     mac = content.get('mac')
     if not mac:
         return jsonify({'error': 'mac required'}), 400
-    _touch_device(mac, versao=content.get('versao'))
+    _touch_device(mac, versao=content.get('versao'), ip=content.get('ip'), uptime=content.get('uptime'))
     return jsonify({'received': mac})
 
 

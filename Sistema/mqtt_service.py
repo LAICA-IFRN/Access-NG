@@ -287,6 +287,10 @@ class MqttService:
                     device.status    = 'online'
                     if payload.get('versao'):
                         device.versao_firmware = payload['versao']
+                    if payload.get('ip'):
+                        device.ip = payload['ip']
+                    if payload.get('uptime'):
+                        device.uptime = payload['uptime']
                     updated = True
                     found_device = device
             if updated:

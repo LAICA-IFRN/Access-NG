@@ -9,6 +9,8 @@
     <span class="badge badge-{{ c.status or 'unknown' }} ml-2">{{ c.status or 'unknown' }}</span>
     <br>
     <small style="color:#888;">Firmware: v{{ c.versao_firmware or 'desconhecida' }}</small>
+    <br>
+    <small style="color:#888;">IP: {{ c.ip or '—' }} &middot; Uptime: {{ c.uptime or '—' }}</small>
   </div>
   {% if pode_editar %}
   <div>

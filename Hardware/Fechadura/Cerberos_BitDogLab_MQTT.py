@@ -174,7 +174,7 @@ AMBIENTE_ID = None   # obtido a partir da resposta do coldstart
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.0.0"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.0.1"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Fechadura/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py"
@@ -761,12 +761,22 @@ def do_coldstart():
         time.sleep(15)
 
 
+def _format_uptime(uptime_ms):
+    total_s = uptime_ms // 1000
+    days, rem = divmod(total_s, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return "%dT%02d:%02d:%02d" % (days, hours, minutes, seconds)
+
+
 def publish_heartbeat():
     uptime_ms = time.ticks_ms()
     _client.publish(_t()['heartbeat'], json.dumps({
         'mac': DEVICE_MAC,
         'uptime_ms': uptime_ms,
         'uptime_s': uptime_ms // 1000,
+        'uptime': _format_uptime(uptime_ms),
+        'ip': network.WLAN(network.STA_IF).ifconfig()[0],
         'versao': FIRMWARE_VERSAO,
     }))
 
