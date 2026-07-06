@@ -177,7 +177,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.1.2"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.0"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Autenticador/CaronteESP32C3.py"
@@ -595,6 +595,10 @@ def _on_message(topic, payload):
         if data.get("command") == "check_update":
             print("[MQTT] Solicitação de verificação de atualização recebida")
             _update_requested = True
+        elif data.get("command") == "reboot":
+            print("[MQTT] Comando de reinício recebido - reiniciando...")
+            time.sleep_ms(300)
+            machine.reset()
 
 
 def mqtt_connect():

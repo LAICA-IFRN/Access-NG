@@ -1379,6 +1379,31 @@ def admin_cerberos_verificar_atualizacao(id):
     return redirect(request.referrer or url_for('admin_cerberoses'))
 
 
+@app.route('/admin/cerberoses/<int:id>/reiniciar', methods=['POST'])
+@painel_required
+def admin_cerberos_reiniciar(id):
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().reboot_device(c, 'cerberos')
+    _create_audit_log(
+        event_type='comando_reiniciar',
+        result='sucesso' if ok else 'falha',
+        message=f'Comando de reinício enviado para {c.nome}' if ok else
+                f'Falha ao enviar comando de reinício para {c.nome} — sem broker MQTT conectado',
+        mac=c.mac,
+        ambiente=c.ambiente,
+        usuario=usuario
+    )
+    flash(f'Comando de reinício enviado para {c.nome}.' if ok else
+          f'{c.nome} sem broker MQTT conectado — não foi possível reiniciar.',
+          'success' if ok else 'warning')
+    return redirect(request.referrer or url_for('admin_cerberoses'))
+
+
 @app.route('/admin/cerberoses/<int:id>/excluir', methods=['POST'])
 @painel_required
 def admin_cerberos_excluir(id):
@@ -1527,6 +1552,31 @@ def admin_caronte_verificar_atualizacao(id):
     ok = _mqtt().notify_check_update(c, 'caronte')
     flash('Verificação de atualização enviada.' if ok else
           'Dispositivo sem broker MQTT conectado — não foi possível notificar.',
+          'success' if ok else 'warning')
+    return redirect(request.referrer or url_for('admin_carontes'))
+
+
+@app.route('/admin/carontes/<int:id>/reiniciar', methods=['POST'])
+@painel_required
+def admin_caronte_reiniciar(id):
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().reboot_device(c, 'caronte')
+    _create_audit_log(
+        event_type='comando_reiniciar',
+        result='sucesso' if ok else 'falha',
+        message=f'Comando de reinício enviado para {c.mac}' if ok else
+                f'Falha ao enviar comando de reinício para {c.mac} — sem broker MQTT conectado',
+        mac=c.mac,
+        ambiente=c.ambiente,
+        usuario=usuario
+    )
+    flash('Comando de reinício enviado.' if ok else
+          'Dispositivo sem broker MQTT conectado — não foi possível reiniciar.',
           'success' if ok else 'warning')
     return redirect(request.referrer or url_for('admin_carontes'))
 

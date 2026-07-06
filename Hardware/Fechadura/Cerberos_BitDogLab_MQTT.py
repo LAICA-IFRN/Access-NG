@@ -176,7 +176,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.1.2"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.0"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Fechadura/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py"
@@ -658,6 +658,11 @@ def _on_message(topic, payload):
         elif data.get('command') == 'check_update':
             print("[MQTT] Solicitação de verificação de atualização recebida")
             _update_requested = True
+        elif data.get('command') == 'reboot':
+            print("[MQTT] Comando de reinício recebido - reiniciando...")
+            display_message("COMANDO", "Reiniciando", "aguarde...")
+            time.sleep_ms(300)
+            machine.reset()
 
     elif topic_str == topics.get('result'):
         if data.get('allow'):

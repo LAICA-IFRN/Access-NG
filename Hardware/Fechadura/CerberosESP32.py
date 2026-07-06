@@ -160,7 +160,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.1.2"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.0"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
@@ -561,6 +561,11 @@ def _on_message(topic, payload):
         elif data.get("command") == "check_update":
             print("[MQTT] Solicitacao de verificacao de atualizacao recebida")
             _update_requested = True
+        elif data.get("command") == "reboot":
+            print("[MQTT] Comando de reinicio recebido - reiniciando...")
+            status_pulse(200)
+            time.sleep_ms(300)
+            machine.reset()
 
 
 def mqtt_connect():

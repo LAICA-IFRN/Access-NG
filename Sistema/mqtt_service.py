@@ -99,6 +99,22 @@ class MqttService:
         print(f'[MQTT] check_update → {tipo} {device.mac}')
         return True
 
+    def reboot_device(self, device, tipo):
+        """Publica {"command":"reboot"} no tópico de comando do dispositivo,
+        pedindo que ele reinicie imediatamente. `tipo` é 'cerberos' ou 'caronte'."""
+        if not _PAHO_AVAILABLE or not device.broker_id:
+            return False
+        with self._lock:
+            client = self._clients.get(device.broker_id)
+        if not client:
+            print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
+            return False
+        mac_safe = device.mac.replace(':', '-')
+        topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
+        client.publish(topic, json.dumps({'command': 'reboot'}), qos=1)
+        print(f'[MQTT] reboot → {tipo} {device.mac}')
+        return True
+
     def is_connected(self, broker_id: int) -> bool:
         with self._lock:
             client = self._clients.get(broker_id)
