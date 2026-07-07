@@ -161,7 +161,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.9"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.10"   # bump manual a cada release publicada
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
@@ -493,7 +493,7 @@ def check_for_update():
     versao diferente da atual, ou None (sem update / qualquer falha)."""
     if not OTA_ENABLED:
         return None
-    status, body = _https_get("/ota/" + OTA_VERSION_PATH)
+    status, body = _https_get("/access-ng/ota/" + OTA_VERSION_PATH)
     if status != 200 or not body:
         print("[OTA] Falha ao verificar version.json (status=%s)" % status)
         return None
@@ -525,7 +525,7 @@ def apply_update(remote):
     Nunca propaga excecao - qualquer falha apenas aborta a atualizacao."""
     try:
         versao = remote.get("versao", "")
-        path = "/ota/" + OTA_FIRMWARE_PATH
+        path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
         print("[OTA] Baixando", "https://" + OTA_HOST + path)
         status, _ = _https_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):

@@ -178,7 +178,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.9"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.10"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
@@ -536,7 +536,7 @@ def check_for_update():
     versão diferente da atual, ou None (sem update / qualquer falha)."""
     if not OTA_ENABLED:
         return None
-    status, body = _https_get("/ota/" + OTA_VERSION_PATH)
+    status, body = _https_get("/access-ng/ota/" + OTA_VERSION_PATH)
     if status != 200 or not body:
         return None
     try:
@@ -566,7 +566,7 @@ def apply_update(remote):
     Nunca propaga exceção - qualquer falha apenas aborta a atualização."""
     try:
         versao = remote.get("versao", "")
-        path = "/ota/" + OTA_FIRMWARE_PATH
+        path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
         print("[OTA] Baixando", "https://" + OTA_HOST + path)
         beep(60)
         status, _ = _https_request(OTA_HOST, path, dest_file="main.new", timeout=30)
