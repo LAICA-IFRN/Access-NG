@@ -168,7 +168,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.0"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.1"   # bump manual a cada release publicada
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
@@ -403,6 +403,7 @@ def _https_request(host, path, dest_file=None, timeout=10):
         return None, None
     sock = None
     t0 = time.time()
+    gc.collect()
     try:
         ai   = socket.getaddrinfo(host, 443, 0, socket.SOCK_STREAM)
         addr = ai[0][-1]
@@ -463,6 +464,8 @@ def _https_request(host, path, dest_file=None, timeout=10):
                         if rest:
                             out.write(rest)
                             received += len(rest)
+                            if total_bytes and received >= total_bytes:
+                                break
                     else:
                         buf = rest
                 else:
@@ -475,6 +478,8 @@ def _https_request(host, path, dest_file=None, timeout=10):
                                       (received, total_bytes, received * 100 // total_bytes))
                             else:
                                 print("[OTA] Download: %d bytes" % received)
+                        if total_bytes and received >= total_bytes:
+                            break
                     else:
                         buf += chunk
         finally:
@@ -483,6 +488,11 @@ def _https_request(host, path, dest_file=None, timeout=10):
 
         if status is None:
             return None, None
+        if dest_file and total_bytes is not None and received < total_bytes:
+            print("[OTA] Download incompleto: %d/%d bytes" % (received, total_bytes))
+            return None, None
+        if dest_file:
+            print("[OTA] Download concluido: %d bytes" % received)
         return status, (None if out else buf.decode("utf-8", "ignore"))
     except Exception as e:
         print("[OTA] Erro HTTPS (%.1fs):" % (time.time() - t0), e)
@@ -493,6 +503,7 @@ def _https_request(host, path, dest_file=None, timeout=10):
                 sock.close()
             except Exception:
                 pass
+        gc.collect()
 
 
 def _parse_versao(v):
@@ -535,14 +546,34 @@ def check_for_update():
 
 
 def _valida_payload(path, versao):
-    """Checagem barata de sanidade do .py baixado antes de instalar."""
+    """Checagem barata de sanidade do .py baixado antes de instalar.
+
+    Le em blocos para nao carregar o firmware inteiro na RAM.
+    """
     try:
         if os.stat(path)[6] < 500:
             return False
-        with open(path) as f:
-            conteudo = f.read()
-        return ("FIRMWARE_VERSAO" in conteudo) and (versao in conteudo)
-    except Exception:
+        needle_fw = b"FIRMWARE_VERSAO"
+        needle_ver = str(versao).encode("utf-8")
+        found_fw = False
+        found_ver = False
+        tail = b""
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(512)
+                if not chunk:
+                    break
+                data = tail + chunk
+                if not found_fw and needle_fw in data:
+                    found_fw = True
+                if needle_ver and not found_ver and needle_ver in data:
+                    found_ver = True
+                if found_fw and found_ver:
+                    return True
+                tail = data[-64:]
+        return False
+    except Exception as e:
+        print("[OTA] Erro ao validar payload:", e)
         return False
 
 
