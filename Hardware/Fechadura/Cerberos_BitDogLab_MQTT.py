@@ -184,7 +184,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.5"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.6"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -745,6 +745,37 @@ def _t():
 _coldstart_result = None
 
 
+def _mqtt_close_current():
+    global _client
+    if _client is None:
+        return
+    try:
+        _client.disconnect()
+    except Exception:
+        pass
+    _client = None
+    gc.collect()
+
+
+def _mqtt_drain_pending(ms=300):
+    """Descarta mensagens já pendentes no socket após subscribe/reconnect.
+
+    O broker pode reenviar um result retido logo após a assinatura. Se esse
+    pacote ficar no socket, o publish com QoS 1 pode ler PUBLISH em vez de
+    PUBACK e o umqtt.simple levanta OSError(-1). Drenamos e depois o
+    coldstart zera _coldstart_result antes de publicar a nova tentativa.
+    """
+    if _client is None:
+        return
+    t0 = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), t0) < ms:
+        try:
+            _client.check_msg()
+        except OSError:
+            break
+        time.sleep_ms(50)
+
+
 def _publish_config():
     """Reporta o config efetivo atual: para cada chave de _DEFAULTS, o valor
     em uso agora (globals(), reflete tanto config.json quanto uma eventual
@@ -925,6 +956,7 @@ def mqtt_connect():
     except ImportError:
         from umqtt.simple import MQTTClient
 
+    _mqtt_close_current()
     kwargs = {'port': MQTT_PORT, 'keepalive': 90}
     if MQTT_USER:
         kwargs['user']     = MQTT_USER
@@ -937,6 +969,7 @@ def mqtt_connect():
     c.connect()
     c.subscribe(_t()['coldstart_result'])
     _client = c
+    _mqtt_drain_pending()
     print(f"[MQTT] Conectado ao broker {MQTT_BROKER}:{MQTT_PORT}")
     display_message("MQTT", "Conectado", MQTT_BROKER)
 
@@ -955,8 +988,7 @@ def do_coldstart():
                             json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY,
                                         'versao': FIRMWARE_VERSAO,
                                         'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
-                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID}),
-                            qos=1)
+                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID}))
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
             display_message("COLDSTART", "Publicado", "aguardando...")
 
@@ -1030,7 +1062,7 @@ def publish_tag():
         'tag'  : BUTTON_TAG,
         'chave': DEVICE_KEY,
         'mac'  : DEVICE_MAC,
-    }), qos=1)
+    }))
 
 
 # ─── MAIN ──────────────────────────────────────────────────────────────────────
