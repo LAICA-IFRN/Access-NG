@@ -1,0 +1,87 @@
+{% extends "admin/base.html" %}
+{% block title %}Configuração — {{ c.mac }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 style="color:#c9a227; margin:0;">Configuração remota — {{ c.mac }}</h5>
+    <small style="color:#888; font-family:monospace;">{{ c.mac }}</small>
+    <br>
+    <small style="color:#888;">
+      {% if atualizado_em %}
+        Última leitura do dispositivo: {{ atualizado_em.strftime('%d/%m/%Y %H:%M') }} UTC
+      {% else %}
+        Ainda não recebemos nenhuma configuração deste dispositivo.
+      {% endif %}
+    </small>
+  </div>
+  <div>
+    <a href="{{ url_for('admin_caronte_ver', id=c.id) }}" class="btn btn-sm btn-outline-secondary">← Voltar</a>
+    {% if pode_editar %}
+    <form method="POST" action="{{ url_for('admin_caronte_config_atualizar', id=c.id) }}" style="display:inline;">
+      <button class="btn btn-sm btn-outline-secondary">Atualizar do dispositivo</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<style>
+  .cfg-badge { font-size:.68rem; padding:.15rem .5rem; border-radius:3px; text-transform:uppercase; letter-spacing:.03em; }
+  .cfg-badge-persistido { background:#1e4e2e; color:#4e9; }
+  .cfg-badge-default { background:#4e3e1e; color:#c9a227; }
+  .cfg-badge-desconhecido { background:#2d2d4e; color:#888; }
+  .cfg-row { display:flex; align-items:center; gap:.75rem; padding:.5rem 0; border-bottom:1px solid #2d2d4e; }
+  .cfg-label { flex:0 0 240px; color:#ccc; font-size:.85rem; }
+  .cfg-input { flex:1; }
+  .cfg-badge-col { flex:0 0 140px; text-align:right; }
+</style>
+
+<div class="card">
+  <div class="card-header">Parâmetros (Caronte ESP32-C3)</div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('admin_caronte_config_salvar', id=c.id) }}">
+      {% for campo in campos %}
+      <div class="cfg-row">
+        <div class="cfg-label">{{ campo.label }}</div>
+        <div class="cfg-input">
+          {% if campo.tipo == 'bool' %}
+            <input type="checkbox" name="{{ campo.key }}" {% if campo.valor %}checked{% endif %}
+                   {% if not pode_editar %}disabled{% endif %}>
+          {% elif campo.sensivel %}
+            <input type="password" name="{{ campo.key }}" class="form-control form-control-sm"
+                   placeholder="(não exibido — deixe em branco para manter)"
+                   {% if not pode_editar %}disabled{% endif %}>
+          {% else %}
+            <input type="{{ 'number' if campo.tipo == 'int' else 'text' }}" name="{{ campo.key }}"
+                   class="form-control form-control-sm"
+                   value="{{ campo.valor if campo.conhecido else '' }}"
+                   placeholder="{{ '—' if not campo.conhecido else '' }}"
+                   {% if not pode_editar %}disabled{% endif %}>
+          {% endif %}
+        </div>
+        <div class="cfg-badge-col">
+          {% if not campo.conhecido %}
+            <span class="cfg-badge cfg-badge-desconhecido">Desconhecido</span>
+          {% else %}
+            <span class="cfg-badge {{ 'cfg-badge-persistido' if campo.persistido else 'cfg-badge-default' }}">
+              {{ 'Persistido' if campo.persistido else 'Padrão' }}
+            </span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if pode_editar %}
+      <div class="mt-3">
+        <button type="submit" class="btn btn-gold"
+                onclick="return confirm('Gravar essa configuração no dispositivo? Ele vai reiniciar para aplicar.')">
+          Salvar configuração
+        </button>
+        <small style="color:#888; display:block; margin-top:.4rem;">
+          Campos em branco não são alterados. Ao salvar, o dispositivo grava no config.json e reinicia.
+        </small>
+      </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}

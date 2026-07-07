@@ -10,8 +10,9 @@
     <br>
     <small style="color:#888;">Firmware: v{{ c.versao_firmware or 'desconhecida' }}</small>
   </div>
-  {% if pode_editar %}
   <div>
+    <a href="{{ url_for('admin_caronte_config', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Configuração remota</a>
+    {% if pode_editar %}
     <form method="POST" action="{{ url_for('admin_caronte_verificar_atualizacao', id=c.id) }}" style="display:inline;">
       <button class="btn btn-sm btn-outline-secondary">Verificar atualização</button>
     </form>
@@ -20,8 +21,8 @@
       <button class="btn btn-sm btn-outline-danger">Reiniciar</button>
     </form>
     <a href="{{ url_for('admin_caronte_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
 
 <div class="row">

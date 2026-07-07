@@ -208,6 +208,7 @@ class MqttService:
             client.subscribe(f'{PREFIX}/+/cerberos/+/status')
             client.subscribe(f'{PREFIX}/+/cerberos/+/entrada')
             client.subscribe(f'{PREFIX}/+/cerberos/+/config/result')
+            client.subscribe(f'{PREFIX}/+/caronte/+/config/result')
         else:
             codes = {1: 'versão inaceitável', 2: 'id rejeitado', 3: 'servidor indisponível',
                      4: 'credenciais inválidas', 5: 'não autorizado'}
@@ -241,9 +242,9 @@ class MqttService:
             # access-ng/{amb_id}/cerberos/{mac}/entrada
             elif len(parts) == 5 and parts[2] == 'cerberos' and parts[4] == 'entrada':
                 self._handle_entrada(parts[3].replace('-', ':'), payload)
-            # access-ng/{amb_id}/cerberos/{mac}/config/result
-            elif len(parts) == 6 and parts[2] == 'cerberos' and parts[4] == 'config' and parts[5] == 'result':
-                self._handle_config_result(parts[3].replace('-', ':'), payload)
+            # access-ng/{amb_id}/{cerberos|caronte}/{mac}/config/result
+            elif len(parts) == 6 and parts[2] in ('cerberos', 'caronte') and parts[4] == 'config' and parts[5] == 'result':
+                self._handle_config_result(parts[3].replace('-', ':'), parts[2], payload)
         except Exception as e:
             print(f'[MQTT] Erro no handler "{topic}": {e}')
 
@@ -458,20 +459,22 @@ class MqttService:
         finally:
             db.remove()
 
-    def _handle_config_result(self, mac, payload):
+    def _handle_config_result(self, mac, tipo, payload):
         """Recebe a configuração efetiva reportada pelo dispositivo (resposta
-        a get_config) e guarda em cache no registro do Cerberos, para a tela
-        de configuração remota exibir sem precisar de round-trip síncrono."""
-        from Model import Cerberos, db
+        a get_config) e guarda em cache no registro do Cerberos/Caronte, para
+        a tela de configuração remota exibir sem precisar de round-trip
+        síncrono. `tipo` é 'cerberos' ou 'caronte'."""
+        from Model import Cerberos, Caronte, db
+        Modelo = Cerberos if tipo == 'cerberos' else Caronte
         try:
-            device = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
+            device = db.query(Modelo).filter(Modelo.mac.ilike(mac)).first()
             if device is None:
-                print(f'[MQTT] config/result de MAC não cadastrado: {mac}')
+                print(f'[MQTT] config/result de MAC não cadastrado ({tipo}): {mac}')
                 return
             device.config_atual = json.dumps(payload.get('params', {}))
             device.config_atualizado_em = datetime.datetime.utcnow()
             db.commit()
-            print(f'[MQTT] Configuração recebida de {mac}')
+            print(f'[MQTT] Configuração recebida de {mac} ({tipo})')
         except Exception as e:
             print(f'[MQTT] Erro ao processar config/result {mac}: {e}')
             db.rollback()

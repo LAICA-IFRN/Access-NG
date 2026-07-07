@@ -148,6 +148,8 @@ class Caronte(Base):
     rssi: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     mem_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cpu_temp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
     def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
@@ -232,5 +234,6 @@ for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'mem_free', 'INTEGER')
     _add_column_if_missing(_table, 'cpu_temp', 'FLOAT')
 
-_add_column_if_missing('cerberoses', 'config_atual', 'VARCHAR(2000)')
-_add_column_if_missing('cerberoses', 'config_atualizado_em', 'DATETIME')
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'config_atual', 'VARCHAR(2000)')
+    _add_column_if_missing(_table, 'config_atualizado_em', 'DATETIME')

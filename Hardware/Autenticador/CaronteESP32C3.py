@@ -133,6 +133,14 @@ _DEFAULTS = {
     "OTA_CHECK_INTERVAL" : 3600,
 }
 
+# Nunca reportados por valor via MQTT (só é possível sobrescrever, não ler).
+_CONFIG_SENSITIVE = ("WIFI_PASS", "DEVICE_KEY", "MQTT_PASS")
+# Únicos que podem ser sobrescritos em memória (sem gravar em config.json) via
+# um bloco "config" na resposta do coldstart — os demais dependem de pinos/
+# hardware já inicializados antes do coldstart, exigindo reboot para valer.
+_CONFIG_RUNTIME_KEYS = ("HEARTBEAT_INTERVAL", "OTA_CHECK_INTERVAL", "OTA_ENABLED",
+                        "AUTH_TIMEOUT_S", "WG_TIMEOUT_MS")
+
 try:
     with open("config.json") as f:
         _cfg_file = json.load(f)
@@ -178,7 +186,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.11"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.0"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
@@ -531,9 +539,20 @@ def _https_request(host, path, dest_file=None, timeout=10):
                 pass
 
 
+def _parse_versao(v):
+    """Converte "1.3.10" em (1, 3, 10) para comparação numérica.
+    Comparar como string quebra em versões de dois dígitos (ex.:
+    "1.3.10" < "1.3.7" lexicograficamente)."""
+    try:
+        return tuple(int(p) for p in str(v).split("."))
+    except (ValueError, AttributeError):
+        return None
+
+
 def check_for_update():
-    """Busca version.json no repo. Retorna o dict remoto se houver uma
-    versão diferente da atual, ou None (sem update / qualquer falha)."""
+    """Busca version.json no repo. Retorna o dict remoto se a versão remota
+    for numericamente MAIOR que a atual, ou None (sem update / qualquer
+    falha). Nunca reinstala uma versão igual ou mais antiga."""
     if not OTA_ENABLED:
         return None
     status, body = _https_get("/access-ng/ota/" + OTA_VERSION_PATH)
@@ -543,9 +562,17 @@ def check_for_update():
         remote = json.loads(body)
     except Exception:
         return None
-    if remote.get("versao") == FIRMWARE_VERSAO:
+
+    remota_versao = remote.get("versao")
+    remota_t = _parse_versao(remota_versao)
+    atual_t = _parse_versao(FIRMWARE_VERSAO)
+    if remota_t is None or atual_t is None:
+        if remota_versao == FIRMWARE_VERSAO:
+            return None
+    elif remota_t <= atual_t:
         return None
-    print("[OTA] Nova versão disponível:", remote.get("versao"))
+
+    print("[OTA] Nova versão disponível:", remota_versao)
     return remote
 
 
@@ -630,7 +657,62 @@ def _topics():
         topics["tag"]     = "%s/%s/caronte/%s/tag"     % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
         topics["result"]  = "%s/%s/caronte/%s/result"  % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
         topics["command"] = "%s/%s/caronte/%s/command" % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
+        topics["config_result"] = "%s/%s/caronte/%s/config/result" % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
     return topics
+
+
+def _publish_config():
+    """Reporta o config efetivo atual: para cada chave de _DEFAULTS, o valor
+    em uso agora (globals(), reflete tanto config.json quanto uma eventual
+    sobrescrita de sessão via coldstart) e se ela está persistida no
+    config.json (True) ou vem só do default/sessão (False). Campos sensíveis
+    nunca têm o valor reportado, só a flag de persistência."""
+    params = {}
+    for key in _DEFAULTS:
+        persistido = key in _cfg_file
+        if key in _CONFIG_SENSITIVE:
+            params[key] = {"persistido": persistido}
+        else:
+            params[key] = {"valor": globals().get(key, _DEFAULTS[key]), "persistido": persistido}
+    topic = _topics().get("config_result")
+    if topic:
+        _client.publish(topic, json.dumps({"mac": DEVICE_MAC, "params": params}))
+        print("[Config] Configuração atual reportada")
+
+
+def _apply_set_config(params):
+    """Grava os parâmetros válidos em config.json e reinicia para aplicar
+    de forma limpa (vários parâmetros só têm efeito na inicialização do
+    hardware, ex. pinos)."""
+    validos = {k: v for k, v in (params or {}).items() if k in _DEFAULTS}
+    if not validos:
+        print("[Config] set_config sem parametros validos, ignorando")
+        return
+    _cfg_file.update(validos)
+    try:
+        with open("config.json", "w") as f:
+            json.dump(_cfg_file, f)
+    except Exception as e:
+        print("[Config] Erro ao gravar config.json:", e)
+        return
+    print("[Config] Novos parametros gravados, reiniciando:", list(validos.keys()))
+    time.sleep(1)
+    _soft_reset()
+
+
+def _apply_session_config(config_dict):
+    """Aplica em memória (sem tocar config.json) as chaves permitidas vindas
+    no coldstart_result — vale só até o próximo reboot."""
+    if not isinstance(config_dict, dict):
+        return
+    for key, value in config_dict.items():
+        if key not in _CONFIG_RUNTIME_KEYS or key not in _DEFAULTS:
+            continue
+        try:
+            globals()[key] = type(_DEFAULTS[key])(value)
+            print("[Config] %s sobrescrito para %r (somente sessão)" % (key, globals()[key]))
+        except Exception:
+            pass
 
 
 def _on_message(topic, payload):
@@ -655,6 +737,11 @@ def _on_message(topic, payload):
             print("[MQTT] Comando de reinício recebido - reiniciando...")
             time.sleep_ms(300)
             _soft_reset()
+        elif data.get("command") == "get_config":
+            print("[MQTT] Solicitação de configuração recebida")
+            _publish_config()
+        elif data.get("command") == "set_config":
+            _apply_set_config(data.get("params"))
 
 
 def mqtt_connect():
@@ -712,6 +799,7 @@ def do_coldstart():
 
         if _coldstart_result and _coldstart_result.get("status") == "ok":
             AMBIENTE_ID = _coldstart_result.get("ambiente_id")
+            _apply_session_config(_coldstart_result.get("config"))
             topics = _topics()
             _client.subscribe(topics["result"])
             _client.subscribe(topics["command"])

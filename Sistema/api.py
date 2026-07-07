@@ -1095,6 +1095,60 @@ _BITDOGLAB_CONFIG_FIELDS = [
     ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
 ]
 
+# Cerberos ESP32 "enxuto" (CerberosESP32.py) — sem OLED/botão/Caronte embutido.
+# INPUT_PINS é uma lista e não tem edição pelo formulário (fica de fora).
+_ESP32_CERBEROS_CONFIG_FIELDS = [
+    ('WIFI_SSID', 'SSID WiFi', 'str', False),
+    ('WIFI_PASS', 'Senha WiFi', 'str', True),
+    ('MQTT_BROKER', 'Broker MQTT', 'str', False),
+    ('MQTT_PORT', 'Porta MQTT', 'int', False),
+    ('MQTT_USER', 'Usuário MQTT', 'str', False),
+    ('MQTT_PASS', 'Senha MQTT', 'str', True),
+    ('MQTT_TLS', 'MQTT TLS', 'bool', False),
+    ('DEVICE_KEY', 'Chave do dispositivo', 'str', True),
+    ('HEARTBEAT_INTERVAL', 'Intervalo de heartbeat (s)', 'int', False),
+    ('LED_LINK_PIN', 'Pino LED link', 'int', False),
+    ('LED_STATUS_PIN', 'Pino LED status', 'int', False),
+    ('RELAY_PIN', 'Pino do relé', 'int', False),
+    ('RELAY_ACTIVE_MS', 'Tempo ativo do relé (ms)', 'int', False),
+    ('INPUT_ENABLED', 'Entrada física habilitada', 'bool', False),
+    ('INPUT_DEBOUNCE_MS', 'Debounce da entrada (ms)', 'int', False),
+    ('OTA_ENABLED', 'OTA habilitado', 'bool', False),
+    ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
+]
+
+# Caronte ESP32-C3 (CaronteESP32C3.py) — leitor Wiegand.
+_CARONTE_CONFIG_FIELDS = [
+    ('WIFI_SSID', 'SSID WiFi', 'str', False),
+    ('WIFI_PASS', 'Senha WiFi', 'str', True),
+    ('MQTT_BROKER', 'Broker MQTT', 'str', False),
+    ('MQTT_PORT', 'Porta MQTT', 'int', False),
+    ('MQTT_USER', 'Usuário MQTT', 'str', False),
+    ('MQTT_PASS', 'Senha MQTT', 'str', True),
+    ('MQTT_TLS', 'MQTT TLS', 'bool', False),
+    ('DEVICE_KEY', 'Chave do dispositivo', 'str', True),
+    ('HEARTBEAT_INTERVAL', 'Intervalo de heartbeat (s)', 'int', False),
+    ('WG_D0_PIN', 'Pino Wiegand D0', 'int', False),
+    ('WG_D1_PIN', 'Pino Wiegand D1', 'int', False),
+    ('BUZZER_PIN', 'Pino buzzer', 'int', False),
+    ('LED_VM_PIN', 'Pino LED vermelho', 'int', False),
+    ('LED_VD1_PIN', 'Pino LED verde 1', 'int', False),
+    ('LED_VD2_PIN', 'Pino LED verde 2', 'int', False),
+    ('LED_VD3_PIN', 'Pino LED verde 3', 'int', False),
+    ('WG_TIMEOUT_MS', 'Timeout Wiegand (ms)', 'int', False),
+    ('AUTH_TIMEOUT_S', 'Timeout de autenticação (s)', 'int', False),
+    ('OTA_ENABLED', 'OTA habilitado', 'bool', False),
+    ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
+]
+
+
+def _cerberos_config_fields(c):
+    """Escolhe o esquema de campos certo pelo HARDWARE_INFO reportado pelo
+    firmware — BitDogLab e o ESP32 "enxuto" têm config.json bem diferentes."""
+    if c.hardware and 'BitDogLab' in c.hardware:
+        return _BITDOGLAB_CONFIG_FIELDS
+    return _ESP32_CERBEROS_CONFIG_FIELDS
+
 
 _DIAG_METRICS = {
     'rssi': 'Sinal WiFi (dBm)',
@@ -1529,7 +1583,7 @@ def admin_cerberos_config(id):
         abort(403)
     reportado = json.loads(c.config_atual) if c.config_atual else {}
     campos = []
-    for key, label, tipo, sensivel in _BITDOGLAB_CONFIG_FIELDS:
+    for key, label, tipo, sensivel in _cerberos_config_fields(c):
         info = reportado.get(key, {})
         campos.append({
             'key': key, 'label': label, 'tipo': tipo, 'sensivel': sensivel,
@@ -1570,7 +1624,7 @@ def admin_cerberos_config_salvar(id):
         abort(403)
 
     params = {}
-    for key, _label, tipo, _sensivel in _BITDOGLAB_CONFIG_FIELDS:
+    for key, _label, tipo, _sensivel in _cerberos_config_fields(c):
         if tipo == 'bool':
             params[key] = key in request.form
             continue
@@ -1794,6 +1848,90 @@ def admin_caronte_reiniciar(id):
           'Dispositivo sem broker MQTT conectado — não foi possível reiniciar.',
           'success' if ok else 'warning')
     return redirect(request.referrer or url_for('admin_carontes'))
+
+
+@app.route('/admin/carontes/<int:id>/config')
+@painel_required
+def admin_caronte_config(id):
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    papel_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    if papel_ids is not None and c.ambiente_id not in papel_ids:
+        abort(403)
+    reportado = json.loads(c.config_atual) if c.config_atual else {}
+    campos = []
+    for key, label, tipo, sensivel in _CARONTE_CONFIG_FIELDS:
+        info = reportado.get(key, {})
+        campos.append({
+            'key': key, 'label': label, 'tipo': tipo, 'sensivel': sensivel,
+            'valor': info.get('valor'), 'persistido': info.get('persistido'),
+            'conhecido': key in reportado,
+        })
+    return render_template(
+        'admin/caronte_config.html', c=c, campos=campos,
+        atualizado_em=c.config_atualizado_em,
+        pode_editar=pode_gerenciar_dispositivos(usuario, c.ambiente_id),
+    )
+
+
+@app.route('/admin/carontes/<int:id>/config/atualizar', methods=['POST'])
+@painel_required
+def admin_caronte_config_atualizar(id):
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().request_config(c, 'caronte')
+    flash('Solicitação enviada — a configuração deve chegar em alguns segundos, recarregue a página.' if ok else
+          'Dispositivo sem broker MQTT conectado — não foi possível solicitar.',
+          'success' if ok else 'warning')
+    return redirect(url_for('admin_caronte_config', id=c.id))
+
+
+@app.route('/admin/carontes/<int:id>/config', methods=['POST'])
+@painel_required
+def admin_caronte_config_salvar(id):
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+
+    params = {}
+    for key, _label, tipo, _sensivel in _CARONTE_CONFIG_FIELDS:
+        if tipo == 'bool':
+            params[key] = key in request.form
+            continue
+        valor = request.form.get(key, '').strip()
+        if not valor:
+            continue  # em branco: não mexe (evita apagar senha/chave sem querer)
+        if tipo == 'int':
+            try:
+                valor = int(valor)
+            except ValueError:
+                continue
+        params[key] = valor
+
+    ok = _mqtt().set_config(c, 'caronte', params)
+    _create_audit_log(
+        event_type='comando_set_config',
+        result='sucesso' if ok else 'falha',
+        message=(f'Nova configuração enviada para {c.mac}: {list(params.keys())}' if ok else
+                 f'Falha ao enviar configuração para {c.mac} — sem broker MQTT conectado'),
+        mac=c.mac,
+        ambiente=c.ambiente,
+        usuario=usuario,
+        payload={k: v for k, v in params.items() if k not in {'WIFI_PASS', 'DEVICE_KEY', 'MQTT_PASS'}},
+    )
+    flash('Configuração enviada — o dispositivo vai gravar e reiniciar.' if ok else
+          'Dispositivo sem broker MQTT conectado — não foi possível enviar.',
+          'success' if ok else 'warning')
+    return redirect(url_for('admin_caronte_config', id=c.id))
 
 
 @app.route('/admin/carontes/<int:id>/excluir', methods=['POST'])
