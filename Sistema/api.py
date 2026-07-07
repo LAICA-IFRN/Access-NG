@@ -1063,6 +1063,41 @@ def _sla_series(mac, desde, ate, unidade):
     return serie
 
 
+_DIAG_METRICS = {
+    'rssi': 'Sinal WiFi (dBm)',
+    'mem_free': 'Memória Livre (B)',
+    'cpu_temp': 'Temperatura CPU (°C)',
+}
+
+
+def _diag_series(mac, metric, desde, ate):
+    """Série histórica de um indicador de diagnóstico (rssi/mem_free/cpu_temp)
+    extraído do payload dos heartbeats em AccessLog — só uma fração dos
+    heartbeats carrega esses campos (a cada N heartbeats), então a maioria
+    das linhas é ignorada aqui."""
+    logs = db.query(AccessLog).filter(
+        AccessLog.mac.ilike(mac),
+        AccessLog.event_type == 'mqtt_heartbeat',
+        AccessLog.timestamp >= desde,
+        AccessLog.timestamp <= ate,
+    ).order_by(AccessLog.timestamp.asc()).all()
+
+    labels, values = [], []
+    for log in logs:
+        if not log.payload:
+            continue
+        try:
+            data = json.loads(log.payload)
+        except Exception:
+            continue
+        valor = data.get(metric)
+        if valor is None:
+            continue
+        labels.append(log.timestamp.strftime('%d/%m %Hh%M'))
+        values.append(valor)
+    return labels, values
+
+
 def _build_dashboard_analytics(ambiente_ids):
     """Estatísticas da home do painel. ambiente_ids=None => todos os Tartaros."""
     now = datetime.datetime.utcnow()
@@ -1306,6 +1341,24 @@ def admin_cerberos_ver(id):
     )
 
 
+@app.route('/admin/cerberoses/<int:id>/historico/<metric>')
+@painel_required
+def admin_cerberos_historico(id, metric):
+    if metric not in _DIAG_METRICS:
+        abort(404)
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    papel_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    if papel_ids is not None and c.ambiente_id not in papel_ids:
+        abort(403)
+    ate = datetime.datetime.utcnow()
+    desde = ate - datetime.timedelta(hours=24)
+    labels, values = _diag_series(c.mac, metric, desde, ate)
+    return jsonify({'label': _DIAG_METRICS[metric], 'labels': labels, 'values': values})
+
+
 @app.route('/admin/cerberoses/novo', methods=['GET', 'POST'])
 @painel_required
 def admin_cerberos_novo():
@@ -1506,6 +1559,24 @@ def admin_caronte_ver(id):
         unidade=unidade, quantidade=quantidade,
         pode_editar=pode_gerenciar_dispositivos(usuario, c.ambiente_id),
     )
+
+
+@app.route('/admin/carontes/<int:id>/historico/<metric>')
+@painel_required
+def admin_caronte_historico(id, metric):
+    if metric not in _DIAG_METRICS:
+        abort(404)
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    papel_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    if papel_ids is not None and c.ambiente_id not in papel_ids:
+        abort(403)
+    ate = datetime.datetime.utcnow()
+    desde = ate - datetime.timedelta(hours=24)
+    labels, values = _diag_series(c.mac, metric, desde, ate)
+    return jsonify({'label': _DIAG_METRICS[metric], 'labels': labels, 'values': values})
 
 
 @app.route('/admin/carontes/novo', methods=['GET', 'POST'])

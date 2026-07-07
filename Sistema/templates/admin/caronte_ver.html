@@ -71,6 +71,14 @@
   .diag-item { display:flex; justify-content:space-between; border-bottom:1px solid #2d2d4e; padding-bottom:.4rem; }
   .diag-label { color:#888; font-size:.82rem; }
   .diag-value { color:#e0e0e0; font-size:.82rem; font-weight:bold; text-align:right; }
+  .diag-clickable { cursor:pointer; }
+  .diag-clickable:hover .diag-label, .diag-clickable:hover .diag-value { color:#c9a227; }
+  .hist-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:1050; align-items:center; justify-content:center; }
+  .hist-modal-overlay.show { display:flex; }
+  .hist-modal-box { background:#1a1a2e; border:1px solid #2d2d4e; border-radius:6px; padding:1.2rem; width:90%; max-width:640px; }
+  .hist-modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+  .hist-modal-header span { color:#c9a227; font-weight:bold; }
+  .hist-modal-close { background:none; border:none; color:#888; font-size:1.4rem; cursor:pointer; line-height:1; }
 </style>
 <div class="row">
   <div class="col-12 mb-4">
@@ -84,13 +92,23 @@
           <div class="diag-item"><span class="diag-label">MCU</span><span class="diag-value">{{ c.mcu or '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">IP</span><span class="diag-value">{{ c.ip or '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">SSID WiFi</span><span class="diag-value">{{ c.ssid or '—' }}</span></div>
-          <div class="diag-item"><span class="diag-label">Sinal WiFi</span><span class="diag-value">{{ (c.rssi ~ ' dBm') if c.rssi is not none else '—' }}</span></div>
-          <div class="diag-item"><span class="diag-label">Memória Livre</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free).replace(',', '.') ~ ' B') if c.mem_free is not none else '—' }}</span></div>
-          <div class="diag-item"><span class="diag-label">Temperatura CPU</span><span class="diag-value">{{ (c.cpu_temp ~ ' °C') if c.cpu_temp is not none else '—' }}</span></div>
+          <div class="diag-item diag-clickable" onclick="abrirHistorico('Sinal WiFi', '{{ url_for('admin_caronte_historico', id=c.id, metric='rssi') }}')"><span class="diag-label">Sinal WiFi</span><span class="diag-value">{{ (c.rssi ~ ' dBm') if c.rssi is not none else '—' }}</span></div>
+          <div class="diag-item diag-clickable" onclick="abrirHistorico('Memória Livre', '{{ url_for('admin_caronte_historico', id=c.id, metric='mem_free') }}')"><span class="diag-label">Memória Livre</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free).replace(',', '.') ~ ' B') if c.mem_free is not none else '—' }}</span></div>
+          <div class="diag-item diag-clickable" onclick="abrirHistorico('Temperatura CPU', '{{ url_for('admin_caronte_historico', id=c.id, metric='cpu_temp') }}')"><span class="diag-label">Temperatura CPU</span><span class="diag-value">{{ (c.cpu_temp ~ ' °C') if c.cpu_temp is not none else '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">Uptime</span><span class="diag-value">{{ c.uptime or '—' }}</span></div>
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="histModal" class="hist-modal-overlay" onclick="if (event.target === this) fecharHistorico()">
+  <div class="hist-modal-box">
+    <div class="hist-modal-header">
+      <span id="histModalTitle">Histórico</span>
+      <button type="button" class="hist-modal-close" onclick="fecharHistorico()">&times;</button>
+    </div>
+    <canvas id="histChart" height="140"></canvas>
   </div>
 </div>
 {% endblock %}
@@ -138,5 +156,40 @@
       plugins: { legend: { display: false } }
     }
   });
+
+  var histChart = null;
+  function abrirHistorico(titulo, url) {
+    document.getElementById('histModalTitle').textContent = titulo;
+    document.getElementById('histModal').classList.add('show');
+    fetch(url).then(function (r) { return r.json(); }).then(function (d) {
+      var ctx = document.getElementById('histChart');
+      if (histChart) { histChart.destroy(); }
+      histChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: d.labels,
+          datasets: [{
+            label: d.label,
+            data: d.values,
+            borderColor: '#c9a227',
+            backgroundColor: 'rgba(201,162,39,0.15)',
+            tension: 0.3,
+            fill: true,
+            pointRadius: 2,
+          }]
+        },
+        options: {
+          scales: {
+            y: { ticks: { color: '#888' }, grid: { color: '#2d2d4e' } },
+            x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { display: false } }
+          },
+          plugins: { legend: { display: false } }
+        }
+      });
+    });
+  }
+  function fecharHistorico() {
+    document.getElementById('histModal').classList.remove('show');
+  }
 </script>
 {% endblock %}
