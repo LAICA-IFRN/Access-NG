@@ -184,7 +184,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.2"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.3"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -894,10 +894,6 @@ def mqtt_connect():
     c = MQTTClient(f'cerberos-{_mac_safe()}', MQTT_BROKER, **kwargs)
     c.set_callback(_on_message)
     c.connect()
-    try:
-        c.sock.settimeout(15)
-    except Exception:
-        pass
     c.subscribe(_t()['coldstart_result'])
     _client = c
     print(f"[MQTT] Conectado ao broker {MQTT_BROKER}:{MQTT_PORT}")
@@ -914,16 +910,12 @@ def do_coldstart():
     while True:
         _coldstart_result = None
         try:
-            try:
-                _client.sock.settimeout(15)
-            except Exception:
-                pass
             _client.publish(_t()['coldstart'],
                             json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY,
                                         'versao': FIRMWARE_VERSAO,
                                         'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
                                         'mcu': _read_mcu(), 'ssid': WIFI_SSID}),
-                            qos=0)
+                            qos=1)
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
             display_message("COLDSTART", "Publicado", "aguardando...")
 
