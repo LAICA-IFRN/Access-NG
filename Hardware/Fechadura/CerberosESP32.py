@@ -160,7 +160,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.0"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.2"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
@@ -174,19 +174,49 @@ HARDWARE_INFO         = "Cerberos ESP32 DevKit"
 HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp vao a cada N heartbeats
 
 
+_SOFT_RESET_FLAG = "soft_reset.flag"
+
+
 def _read_boot_count():
+    """Conta reinicios "soft" (machine.reset() chamado pelo proprio firmware:
+    OTA, comando de reboot, rollback). Um boot sem a flag de soft-reset e
+    tratado como reinicio completo (energia caiu) e zera o contador."""
     try:
-        with open("boot_count.txt") as f:
-            n = int(f.read().strip())
-    except (OSError, ValueError):
+        with open(_SOFT_RESET_FLAG):
+            is_soft = True
+    except OSError:
+        is_soft = False
+
+    if is_soft:
+        try:
+            with open("boot_count.txt") as f:
+                n = int(f.read().strip())
+        except (OSError, ValueError):
+            n = 0
+        n += 1
+    else:
         n = 0
-    n += 1
+
+    try:
+        os.remove(_SOFT_RESET_FLAG)
+    except OSError:
+        pass
     try:
         with open("boot_count.txt", "w") as f:
             f.write(str(n))
     except OSError:
         pass
     return n
+
+
+def _soft_reset():
+    """Marca o proximo boot como soft-reset (mantem o contador) e reinicia."""
+    try:
+        with open(_SOFT_RESET_FLAG, "w") as f:
+            f.write("1")
+    except OSError:
+        pass
+    machine.reset()
 
 
 def _read_mcu():
@@ -327,7 +357,7 @@ def _ota_boot_guard():
                 except OSError:
                     pass
             time.sleep(2)
-            machine.reset()
+            _soft_reset()
         else:
             print("[OTA] Boot %d/3 com update pendente" % tentativas)
             with open("ota_boot_attempts.txt", "w") as f:
@@ -369,10 +399,14 @@ def _https_request(host, path, dest_file=None, timeout=10):
         sock = socket.socket()
         sock.settimeout(timeout)
         sock.connect(addr)
+        if dest_file:
+            print("[OTA] TCP conectado, iniciando TLS...")
         try:
             sock = ssl.wrap_socket(sock, server_hostname=host)
         except TypeError:
             sock = ssl.wrap_socket(sock)
+        if dest_file:
+            print("[OTA] TLS OK, enviando requisicao...")
 
         req = (
             "GET " + path + " HTTP/1.1\r\n"
@@ -385,6 +419,8 @@ def _https_request(host, path, dest_file=None, timeout=10):
         buf = b""
         status = None
         out = None
+        total_bytes = None
+        received = 0
         if dest_file:
             out = open(dest_file, "wb")
         header_done = False
@@ -401,16 +437,33 @@ def _https_request(host, path, dest_file=None, timeout=10):
                     header_done = True
                     header_str = buf[:sep].decode("utf-8", "ignore")
                     status = int(header_str.split("\r\n", 1)[0].split()[1])
+                    for line in header_str.split("\r\n")[1:]:
+                        if line.lower().startswith("content-length:"):
+                            try:
+                                total_bytes = int(line.split(":", 1)[1].strip())
+                            except ValueError:
+                                pass
+                    if dest_file:
+                        print("[OTA] Resposta recebida (status=%s, tamanho=%s)" %
+                              (status, total_bytes if total_bytes is not None else "?"))
                     rest = buf[sep + 4:]
                     buf = b""
                     if out:
                         if rest:
                             out.write(rest)
+                            received += len(rest)
                     else:
                         buf = rest
                 else:
                     if out:
                         out.write(chunk)
+                        received += len(chunk)
+                        if dest_file:
+                            if total_bytes:
+                                print("[OTA] Download: %d/%d bytes (%d%%)" %
+                                      (received, total_bytes, received * 100 // total_bytes))
+                            else:
+                                print("[OTA] Download: %d bytes" % received)
                     else:
                         buf += chunk
         finally:
@@ -495,7 +548,7 @@ def apply_update(remote):
 
         print("[OTA] Atualizado para", versao, "- reiniciando")
         time.sleep(1)
-        machine.reset()
+        _soft_reset()
     except Exception as e:
         print("[OTA] Erro ao aplicar atualizacao:", e)
         return False
@@ -565,7 +618,7 @@ def _on_message(topic, payload):
             print("[MQTT] Comando de reinicio recebido - reiniciando...")
             status_pulse(200)
             time.sleep_ms(300)
-            machine.reset()
+            _soft_reset()
 
 
 def mqtt_connect():
