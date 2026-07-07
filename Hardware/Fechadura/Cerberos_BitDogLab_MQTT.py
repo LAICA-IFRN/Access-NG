@@ -184,7 +184,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.6"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.7"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -988,7 +988,8 @@ def do_coldstart():
                             json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY,
                                         'versao': FIRMWARE_VERSAO,
                                         'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
-                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID}))
+                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID}),
+                            qos=1)
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
             display_message("COLDSTART", "Publicado", "aguardando...")
 
