@@ -67,9 +67,10 @@ Para o modo REST (HTTP/HTTPS) use Cerberos_BitDogLab.py.
 ─── OTA (atualização remota) ──────────────────────────────────────────────────
 
   O firmware se atualiza buscando version.json em
-  https://raw.githubusercontent.com/{OTA_REPO}/{ref}/{OTA_VERSION_PATH} (sem
-  autenticação — repositório público). Se a versão remota difere de
-  FIRMWARE_VERSAO, baixa o .py do ref indicado em OTA_FIRMWARE_PATH, valida,
+  https://{OTA_HOST}/ota/{OTA_VERSION_PATH}, servido pelo proprio Access-NG
+  (nao pelo raw.githubusercontent.com — a rede da IFRN nao entrega de forma
+  confiavel arquivos maiores vindos do CDN do GitHub). Se a versão remota
+  difere de FIRMWARE_VERSAO, baixa o .py em OTA_FIRMWARE_PATH, valida,
   grava em main.new, troca com main.py (backup em main.bak) e reinicia.
 
   A checagem ocorre: (1) após o coldstart, (2) periodicamente a cada
@@ -176,11 +177,14 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.2.6"   # bump manual a cada release publicada
-OTA_REPO          = "LAICA-IFRN/Access-NG"
+FIRMWARE_VERSAO   = "1.2.11"   # bump manual a cada release publicada
+# Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
+# da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
+# GitHub, mas o dispositivo ja tem conectividade comprovada com este host
+# (mesmo dominio do broker MQTT).
 OTA_VERSION_PATH  = "Hardware/Fechadura/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py"
-OTA_HOST          = "raw.githubusercontent.com"
+OTA_HOST          = "laica.ifrn.edu.br"
 
 # ─── DIAGNÓSTICO ────────────────────────────────────────────────────────────────
 
@@ -583,7 +587,7 @@ def check_for_update():
     versão diferente da atual, ou None (sem update / qualquer falha)."""
     if not OTA_ENABLED:
         return None
-    status, body = _https_get("/" + OTA_REPO + "/main/" + OTA_VERSION_PATH)
+    status, body = _https_get("/ota/" + OTA_VERSION_PATH)
     if status != 200 or not body:
         print("[OTA] Falha ao verificar version.json (status=%s)" % status)
         display_message("OTA", "Falha ao verificar", "tentando depois")
@@ -614,12 +618,11 @@ def _valida_payload(path, versao):
 
 
 def apply_update(remote):
-    """Baixa o firmware do ref indicado, valida, troca main.py e reinicia.
+    """Baixa o firmware, valida, troca main.py e reinicia.
     Nunca propaga exceção — qualquer falha apenas aborta a atualização."""
     try:
-        ref = remote.get('ref', 'main')
         versao = remote.get('versao', '')
-        path = "/" + OTA_REPO + "/" + ref + "/" + OTA_FIRMWARE_PATH
+        path = "/ota/" + OTA_FIRMWARE_PATH
         print("[OTA] Baixando", "https://" + OTA_HOST + path)
         display_message("OTA", "Baixando", versao)
         status, _ = _https_request(OTA_HOST, path, dest_file='main.new', timeout=30)
@@ -843,7 +846,7 @@ def do_coldstart():
                                         'versao': FIRMWARE_VERSAO,
                                         'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
                                         'mcu': _read_mcu(), 'ssid': WIFI_SSID}),
-                            qos=0)
+                            qos=1)
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
             display_message("COLDSTART", "Publicado", "aguardando...")
 

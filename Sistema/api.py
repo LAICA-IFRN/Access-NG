@@ -1,6 +1,6 @@
 from Tartaro import *
 from flask import (Flask, render_template, jsonify, request,
-                   session, redirect, url_for, flash, abort)
+                   session, redirect, url_for, flash, abort, send_file)
 from flask_bootstrap import Bootstrap
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -20,6 +20,20 @@ Bootstrap(app)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 OFFLINE_THRESHOLD = 30  # seconds without contact → device is offline
+
+# Raiz do repositório (um nível acima de Sistema/), usada para servir os
+# arquivos de OTA dos dispositivos direto do servidor — evita depender do
+# raw.githubusercontent.com, que a rede da IFRN não entrega de forma
+# confiável para arquivos maiores.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_OTA_ALLOWED_FILES = {
+    'Hardware/Fechadura/version.json',
+    'Hardware/Fechadura/version_esp32.json',
+    'Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py',
+    'Hardware/Fechadura/CerberosESP32.py',
+    'Hardware/Autenticador/version.json',
+    'Hardware/Autenticador/CaronteESP32C3.py',
+}
 
 
 def _serialize_payload():
@@ -397,6 +411,19 @@ def is_alive_legacy():
     mac = request.json['mac']
     _touch_device(mac)
     return jsonify({'received': mac})
+
+
+# ── OTA (firmware servido pelo próprio servidor) ─────────────────────────────
+
+@app.route('/ota/<path:filepath>')
+def ota_file(filepath):
+    """Serve os .py e version.json dos dispositivos para OTA. Whitelist
+    explícita — nunca lê arquivo fora dessa lista, sem exceção de path."""
+    if filepath not in _OTA_ALLOWED_FILES:
+        abort(404)
+    full_path = os.path.join(_REPO_ROOT, filepath)
+    mimetype = 'application/json' if filepath.endswith('.json') else 'text/plain'
+    return send_file(full_path, mimetype=mimetype)
 
 
 # ── New device endpoints ─────────────────────────────────────────────────────
