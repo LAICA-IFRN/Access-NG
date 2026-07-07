@@ -184,7 +184,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.4"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.5"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -235,11 +235,21 @@ def _read_boot_count():
 
 
 def _soft_reset():
-    """Marca o proximo boot como soft-reset (mantem o contador) e reinicia."""
+    """Marca o proximo boot como soft-reset (mantem o contador) e reinicia.
+
+    Diferente de um power-cycle real, machine.reset() nao desliga o radio
+    WiFi (cyw43) antes de reiniciar o RP2040 — o chip pode ficar num estado
+    residual que atrapalha a reconexao/coldstart do boot seguinte. Desativar
+    a interface explicitamente antes do reset evita isso."""
     try:
         with open(_SOFT_RESET_FLAG, 'w') as f:
             f.write('1')
     except OSError:
+        pass
+    try:
+        network.WLAN(network.STA_IF).active(False)
+        time.sleep_ms(200)
+    except Exception:
         pass
     machine.reset()
 
