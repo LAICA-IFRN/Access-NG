@@ -74,7 +74,9 @@ Não possui Cerberos embutido — apenas leitura e publicação.
 --- OTA (atualização remota) --------------------------------------------------
 
   O firmware se atualiza buscando version.json em
-  https://{OTA_HOST}/ota/{OTA_VERSION_PATH}, servido pelo proprio Access-NG
+  http://{OTA_HOST}:{OTA_PORT}/ota/{OTA_VERSION_PATH} (HTTP puro, sem TLS —
+  o handshake RSA estoura a memória disponível no ESP32-C3; os arquivos de
+  OTA são públicos, sem segredo em trânsito), servido pelo proprio Access-NG
   (nao pelo raw.githubusercontent.com - a rede da IFRN nao entrega de forma
   confiavel arquivos maiores vindos do CDN do GitHub). Se a versão remota
   difere de FIRMWARE_VERSAO, baixa o .py em OTA_FIRMWARE_PATH, valida,
@@ -98,12 +100,6 @@ import os
 import ubinascii
 import micropython
 import gc
-
-try:
-    import ssl
-    _SSL_AVAILABLE = True
-except ImportError:
-    _SSL_AVAILABLE = False
 
 micropython.alloc_emergency_exception_buf(100)
 
@@ -186,12 +182,17 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.1"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.2"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Autenticador/CaronteESP32C3.py"
 OTA_HOST          = "laica.ifrn.edu.br"
+# HTTP puro (sem TLS): o handshake TLS/RSA estoura a memoria disponivel no
+# ESP32-C3 (MBEDTLS_ERR_RSA_PUBLIC_FAILED+MBEDTLS_ERR_MPI_ALLOC_FAILED). Os
+# arquivos de OTA sao publicos (sem segredos), entao HTTP puro e aceitavel
+# aqui — mesma logica de expor o broker MQTT em texto puro na porta 1883.
+OTA_PORT          = 80
 
 # --- DIAGNOSTICO -----------------------------------------------------------------
 
@@ -432,37 +433,30 @@ def _ota_confirmar_versao_boa():
             pass
 
 
-def _https_get(path, host=None, timeout=10):
-    """GET HTTPS simples. Retorna (status_code, body_str) ou (None, None)."""
-    return _https_request(host or OTA_HOST, path, timeout=timeout)
+def _http_get(path, host=None, timeout=10):
+    """GET HTTP simples (sem TLS). Retorna (status_code, body_str) ou (None, None)."""
+    return _http_request(host or OTA_HOST, path, timeout=timeout)
 
 
-def _https_request(host, path, dest_file=None, timeout=10):
-    """GET HTTPS em host+path. Se dest_file for informado, grava o corpo da
-    resposta direto nesse arquivo (streaming) e retorna (status, None);
-    senão acumula o corpo em memória e retorna (status, body_str).
-    Retorna (None, None) em qualquer falha de rede."""
-    if not _SSL_AVAILABLE:
-        print("[OTA] ssl indisponível neste build")
-        return None, None
+def _http_request(host, path, dest_file=None, timeout=10):
+    """GET HTTP em host+path (sem TLS — o handshake RSA estoura a memória
+    disponível no ESP32-C3; os arquivos de OTA são públicos, sem segredo em
+    trânsito). Se dest_file for informado, grava o corpo da resposta direto
+    nesse arquivo (streaming) e retorna (status, None); senão acumula o
+    corpo em memória e retorna (status, body_str). Retorna (None, None) em
+    qualquer falha de rede."""
     sock = None
     t0 = time.time()
     gc.collect()
     try:
-        ai   = socket.getaddrinfo(host, 443, 0, socket.SOCK_STREAM)
+        ai   = socket.getaddrinfo(host, OTA_PORT, 0, socket.SOCK_STREAM)
         addr = ai[0][-1]
         print("[OTA] %s -> %s" % (host, addr))
         sock = socket.socket()
         sock.settimeout(timeout)
         sock.connect(addr)
         if dest_file:
-            print("[OTA] TCP conectado, iniciando TLS...")
-        try:
-            sock = ssl.wrap_socket(sock, server_hostname=host)
-        except TypeError:
-            sock = ssl.wrap_socket(sock)
-        if dest_file:
-            print("[OTA] TLS OK, enviando requisição...")
+            print("[OTA] TCP conectado, enviando requisição...")
 
         req = (
             "GET " + path + " HTTP/1.1\r\n"
@@ -539,7 +533,7 @@ def _https_request(host, path, dest_file=None, timeout=10):
             print("[OTA] Download concluído: %d bytes" % received)
         return status, (None if out else buf.decode("utf-8", "ignore"))
     except Exception as e:
-        print("[OTA] Erro HTTPS (%.1fs):" % (time.time() - t0), e)
+        print("[OTA] Erro HTTP (%.1fs):" % (time.time() - t0), e)
         return None, None
     finally:
         if sock:
@@ -566,7 +560,7 @@ def check_for_update():
     falha). Nunca reinstala uma versão igual ou mais antiga."""
     if not OTA_ENABLED:
         return None
-    status, body = _https_get("/access-ng/ota/" + OTA_VERSION_PATH)
+    status, body = _http_get("/access-ng/ota/" + OTA_VERSION_PATH)
     if status != 200 or not body:
         return None
     try:
@@ -625,9 +619,9 @@ def apply_update(remote):
     try:
         versao = remote.get("versao", "")
         path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
-        print("[OTA] Baixando", "https://" + OTA_HOST + path)
+        print("[OTA] Baixando", "http://" + OTA_HOST + path)
         beep(60)
-        status, _ = _https_request(OTA_HOST, path, dest_file="main.new", timeout=30)
+        status, _ = _http_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):
             print("[OTA] Download inválido (status=%s) - abortando" % status)
             try:

@@ -63,9 +63,11 @@ nem gera IRQ, sem precisar mexer em INPUT_PINS.
   Mesmo esquema do Cerberos_BitDogLab_MQTT.py, mas com arquivo de versao
   proprio (version_esp32.json, ao lado de version.json do BitDogLab) para que
   os dois firmwares deste diretorio tenham ciclos de release independentes.
-  Busca version_esp32.json em https://{OTA_HOST}/ota/{OTA_VERSION_PATH},
-  servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com - a rede
-  da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
+  Busca version_esp32.json em http://{OTA_HOST}:{OTA_PORT}/ota/{OTA_VERSION_PATH}
+  (HTTP puro, sem TLS — o handshake RSA estoura a memoria disponivel no
+  ESP32; os arquivos de OTA sao publicos, sem segredo em transito), servido
+  pelo proprio Access-NG (nao pelo raw.githubusercontent.com - a rede da
+  IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
   GitHub). Se a "versao" remota difere de FIRMWARE_VERSAO, baixa o .py em
   OTA_FIRMWARE_PATH, valida, grava em main.new, troca com main.py (backup em
   main.bak) e reinicia.
@@ -87,12 +89,6 @@ import json
 import os
 import ubinascii
 import gc
-
-try:
-    import ssl
-    _SSL_AVAILABLE = True
-except ImportError:
-    _SSL_AVAILABLE = False
 
 
 # --- CONFIGURACAO ------------------------------------------------------------
@@ -168,7 +164,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.1"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.2"   # bump manual a cada release publicada
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
@@ -176,6 +172,12 @@ FIRMWARE_VERSAO   = "1.3.1"   # bump manual a cada release publicada
 OTA_VERSION_PATH  = "Hardware/Fechadura/version_esp32.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/CerberosESP32.py"
 OTA_HOST          = "laica.ifrn.edu.br"
+# HTTP puro (sem TLS): o handshake TLS/RSA estoura a memoria disponivel no
+# ESP32 (MBEDTLS_ERR_RSA_PUBLIC_FAILED+MBEDTLS_ERR_MPI_ALLOC_FAILED), mesmo
+# so pra checar o version.json. Os arquivos de OTA sao publicos (sem
+# segredos), entao HTTP puro e aceitavel aqui — mesma logica de expor o
+# broker MQTT em texto puro na porta 1883.
+OTA_PORT          = 80
 
 # --- DIAGNOSTICO ---------------------------------------------------------
 
@@ -388,37 +390,30 @@ def _ota_confirmar_versao_boa():
             pass
 
 
-def _https_get(path, host=None, timeout=10):
-    """GET HTTPS simples. Retorna (status_code, body_str) ou (None, None)."""
-    return _https_request(host or OTA_HOST, path, timeout=timeout)
+def _http_get(path, host=None, timeout=10):
+    """GET HTTP simples (sem TLS). Retorna (status_code, body_str) ou (None, None)."""
+    return _http_request(host or OTA_HOST, path, timeout=timeout)
 
 
-def _https_request(host, path, dest_file=None, timeout=10):
-    """GET HTTPS em host+path. Se dest_file for informado, grava o corpo da
-    resposta direto nesse arquivo (streaming) e retorna (status, None);
-    senao acumula o corpo em memoria e retorna (status, body_str).
-    Retorna (None, None) em qualquer falha de rede."""
-    if not _SSL_AVAILABLE:
-        print("[OTA] ssl indisponivel neste build")
-        return None, None
+def _http_request(host, path, dest_file=None, timeout=10):
+    """GET HTTP em host+path (sem TLS — o handshake RSA estoura a memoria
+    disponivel no ESP32; os arquivos de OTA sao publicos, sem segredo em
+    transito). Se dest_file for informado, grava o corpo da resposta direto
+    nesse arquivo (streaming) e retorna (status, None); senao acumula o
+    corpo em memoria e retorna (status, body_str). Retorna (None, None) em
+    qualquer falha de rede."""
     sock = None
     t0 = time.time()
     gc.collect()
     try:
-        ai   = socket.getaddrinfo(host, 443, 0, socket.SOCK_STREAM)
+        ai   = socket.getaddrinfo(host, OTA_PORT, 0, socket.SOCK_STREAM)
         addr = ai[0][-1]
         print("[OTA] %s -> %s" % (host, addr))
         sock = socket.socket()
         sock.settimeout(timeout)
         sock.connect(addr)
         if dest_file:
-            print("[OTA] TCP conectado, iniciando TLS...")
-        try:
-            sock = ssl.wrap_socket(sock, server_hostname=host)
-        except TypeError:
-            sock = ssl.wrap_socket(sock)
-        if dest_file:
-            print("[OTA] TLS OK, enviando requisicao...")
+            print("[OTA] TCP conectado, enviando requisicao...")
 
         req = (
             "GET " + path + " HTTP/1.1\r\n"
@@ -495,7 +490,7 @@ def _https_request(host, path, dest_file=None, timeout=10):
             print("[OTA] Download concluido: %d bytes" % received)
         return status, (None if out else buf.decode("utf-8", "ignore"))
     except Exception as e:
-        print("[OTA] Erro HTTPS (%.1fs):" % (time.time() - t0), e)
+        print("[OTA] Erro HTTP (%.1fs):" % (time.time() - t0), e)
         return None, None
     finally:
         if sock:
@@ -522,7 +517,7 @@ def check_for_update():
     falha). Nunca reinstala uma versao igual ou mais antiga."""
     if not OTA_ENABLED:
         return None
-    status, body = _https_get("/access-ng/ota/" + OTA_VERSION_PATH)
+    status, body = _http_get("/access-ng/ota/" + OTA_VERSION_PATH)
     if status != 200 or not body:
         print("[OTA] Falha ao verificar version.json (status=%s)" % status)
         return None
@@ -583,8 +578,8 @@ def apply_update(remote):
     try:
         versao = remote.get("versao", "")
         path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
-        print("[OTA] Baixando", "https://" + OTA_HOST + path)
-        status, _ = _https_request(OTA_HOST, path, dest_file="main.new", timeout=30)
+        print("[OTA] Baixando", "http://" + OTA_HOST + path)
+        status, _ = _http_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):
             print("[OTA] Download invalido (status=%s) - abortando" % status)
             try:
