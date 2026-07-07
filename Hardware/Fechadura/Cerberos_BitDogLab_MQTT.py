@@ -176,7 +176,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.2.5"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.6"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Fechadura/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py"
@@ -812,7 +812,7 @@ def mqtt_connect():
     except ImportError:
         from umqtt.simple import MQTTClient
 
-    kwargs = {'port': MQTT_PORT, 'keepalive': 30}
+    kwargs = {'port': MQTT_PORT, 'keepalive': 90}
     if MQTT_USER:
         kwargs['user']     = MQTT_USER
         kwargs['password'] = MQTT_PASS

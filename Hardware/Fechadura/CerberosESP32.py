@@ -160,7 +160,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.3"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.4"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
@@ -630,7 +630,7 @@ def mqtt_connect():
     except ImportError:
         from umqtt.simple import MQTTClient
 
-    kwargs = {"port": MQTT_PORT, "keepalive": 30}
+    kwargs = {"port": MQTT_PORT, "keepalive": 90}
     if MQTT_USER:
         kwargs["user"] = MQTT_USER
         kwargs["password"] = MQTT_PASS

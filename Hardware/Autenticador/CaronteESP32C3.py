@@ -177,7 +177,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.3"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.4"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Autenticador/CaronteESP32C3.py"
@@ -663,7 +663,7 @@ def mqtt_connect():
     except ImportError:
         from umqtt.simple import MQTTClient
 
-    kwargs = {"port": MQTT_PORT, "keepalive": 30}
+    kwargs = {"port": MQTT_PORT, "keepalive": 90}
     if MQTT_USER:
         kwargs["user"] = MQTT_USER
         kwargs["password"] = MQTT_PASS
