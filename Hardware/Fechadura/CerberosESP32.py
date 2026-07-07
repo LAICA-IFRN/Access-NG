@@ -659,7 +659,7 @@ def do_coldstart():
                     "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
                     "mcu": _read_mcu(), "ssid": WIFI_SSID,
                 }),
-                qos=1,
+                qos=0,
             )
             status_pulse()
             print("[MQTT] Coldstart publicado, aguardando confirmacao...")

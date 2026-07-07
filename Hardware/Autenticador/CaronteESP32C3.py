@@ -178,7 +178,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.10"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.11"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
@@ -691,7 +691,7 @@ def do_coldstart():
                     "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
                     "mcu": _read_mcu(), "ssid": WIFI_SSID,
                 }),
-                qos=1,
+                qos=0,
             )
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
 
