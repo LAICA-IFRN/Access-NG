@@ -1063,6 +1063,39 @@ def _sla_series(mac, desde, ate, unidade):
     return serie
 
 
+# Esquema dos parâmetros de config remota — por enquanto só o firmware
+# Cerberos_BitDogLab_MQTT.py suporta get_config/set_config. (chave, rótulo,
+# tipo, sensível). Campos sensíveis nunca chegam com valor do dispositivo e,
+# no formulário, só são enviados se o usuário digitar algo novo.
+_BITDOGLAB_CONFIG_FIELDS = [
+    ('WIFI_SSID', 'SSID WiFi', 'str', False),
+    ('WIFI_PASS', 'Senha WiFi', 'str', True),
+    ('MQTT_BROKER', 'Broker MQTT', 'str', False),
+    ('MQTT_PORT', 'Porta MQTT', 'int', False),
+    ('MQTT_USER', 'Usuário MQTT', 'str', False),
+    ('MQTT_PASS', 'Senha MQTT', 'str', True),
+    ('MQTT_TLS', 'MQTT TLS', 'bool', False),
+    ('DEVICE_KEY', 'Chave do dispositivo', 'str', True),
+    ('HEARTBEAT_INTERVAL', 'Intervalo de heartbeat (s)', 'int', False),
+    ('BUTTON_PIN', 'Pino do botão', 'int', False),
+    ('BUTTON_DEBOUNCE_MS', 'Debounce do botão (ms)', 'int', False),
+    ('BUTTON_TAG', 'TAG do botão local', 'str', False),
+    ('LED_RED_PIN', 'Pino LED vermelho', 'int', False),
+    ('LED_GREEN_PIN', 'Pino LED verde', 'int', False),
+    ('LED_BLUE_PIN', 'Pino LED azul', 'int', False),
+    ('RELAY_PIN', 'Pino do relé', 'int', False),
+    ('RELAY_ACTIVE_MS', 'Tempo ativo do relé (ms)', 'int', False),
+    ('OLED_ENABLED', 'OLED habilitado', 'bool', False),
+    ('OLED_SCL_PIN', 'Pino SCL OLED', 'int', False),
+    ('OLED_SDA_PIN', 'Pino SDA OLED', 'int', False),
+    ('OLED_WIDTH', 'Largura OLED', 'int', False),
+    ('OLED_HEIGHT', 'Altura OLED', 'int', False),
+    ('OLED_ADDR', 'Endereço I2C OLED', 'int', False),
+    ('OTA_ENABLED', 'OTA habilitado', 'bool', False),
+    ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
+]
+
+
 _DIAG_METRICS = {
     'rssi': 'Sinal WiFi (dBm)',
     'mem_free': 'Memória Livre (B)',
@@ -1482,6 +1515,90 @@ def admin_cerberos_reiniciar(id):
           f'{c.nome} sem broker MQTT conectado — não foi possível reiniciar.',
           'success' if ok else 'warning')
     return redirect(request.referrer or url_for('admin_cerberoses'))
+
+
+@app.route('/admin/cerberoses/<int:id>/config')
+@painel_required
+def admin_cerberos_config(id):
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    papel_ids = _ambientes_com_papel(usuario, ('gerente', 'leitor'))
+    if papel_ids is not None and c.ambiente_id not in papel_ids:
+        abort(403)
+    reportado = json.loads(c.config_atual) if c.config_atual else {}
+    campos = []
+    for key, label, tipo, sensivel in _BITDOGLAB_CONFIG_FIELDS:
+        info = reportado.get(key, {})
+        campos.append({
+            'key': key, 'label': label, 'tipo': tipo, 'sensivel': sensivel,
+            'valor': info.get('valor'), 'persistido': info.get('persistido'),
+            'conhecido': key in reportado,
+        })
+    return render_template(
+        'admin/cerberos_config.html', c=c, campos=campos,
+        atualizado_em=c.config_atualizado_em,
+        pode_editar=pode_gerenciar_dispositivos(usuario, c.ambiente_id),
+    )
+
+
+@app.route('/admin/cerberoses/<int:id>/config/atualizar', methods=['POST'])
+@painel_required
+def admin_cerberos_config_atualizar(id):
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().request_config(c, 'cerberos')
+    flash('Solicitação enviada — a configuração deve chegar em alguns segundos, recarregue a página.' if ok else
+          f'{c.nome} sem broker MQTT conectado — não foi possível solicitar.',
+          'success' if ok else 'warning')
+    return redirect(url_for('admin_cerberos_config', id=c.id))
+
+
+@app.route('/admin/cerberoses/<int:id>/config', methods=['POST'])
+@painel_required
+def admin_cerberos_config_salvar(id):
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+
+    params = {}
+    for key, _label, tipo, _sensivel in _BITDOGLAB_CONFIG_FIELDS:
+        if tipo == 'bool':
+            params[key] = key in request.form
+            continue
+        valor = request.form.get(key, '').strip()
+        if not valor:
+            continue  # em branco: não mexe (evita apagar senha/chave sem querer)
+        if tipo == 'int':
+            try:
+                valor = int(valor)
+            except ValueError:
+                continue
+        params[key] = valor
+
+    ok = _mqtt().set_config(c, 'cerberos', params)
+    _create_audit_log(
+        event_type='comando_set_config',
+        result='sucesso' if ok else 'falha',
+        message=(f'Nova configuração enviada para {c.nome}: {list(params.keys())}' if ok else
+                 f'Falha ao enviar configuração para {c.nome} — sem broker MQTT conectado'),
+        mac=c.mac,
+        ambiente=c.ambiente,
+        usuario=usuario,
+        payload={k: v for k, v in params.items() if k not in {'WIFI_PASS', 'DEVICE_KEY', 'MQTT_PASS'}},
+    )
+    flash('Configuração enviada — o dispositivo vai gravar e reiniciar.' if ok else
+          f'{c.nome} sem broker MQTT conectado — não foi possível enviar.',
+          'success' if ok else 'warning')
+    return redirect(url_for('admin_cerberos_config', id=c.id))
 
 
 @app.route('/admin/cerberoses/<int:id>/excluir', methods=['POST'])

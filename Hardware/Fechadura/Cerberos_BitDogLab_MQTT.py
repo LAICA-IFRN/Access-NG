@@ -132,6 +132,13 @@ _DEFAULTS = {
     "OTA_CHECK_INTERVAL"  : 3600,
 }
 
+# Nunca reportados por valor via MQTT (só é possível sobrescrever, não ler).
+_CONFIG_SENSITIVE = ('WIFI_PASS', 'DEVICE_KEY', 'MQTT_PASS')
+# Únicos que podem ser sobrescritos em memória (sem gravar em config.json) via
+# um bloco "config" na resposta do coldstart — os demais dependem de pinos/
+# hardware já inicializados antes do coldstart, exigindo reboot para valer.
+_CONFIG_RUNTIME_KEYS = ('HEARTBEAT_INTERVAL', 'OTA_CHECK_INTERVAL', 'OTA_ENABLED', 'BUTTON_TAG')
+
 try:
     with open('config.json') as f:
         _cfg_file = json.load(f)
@@ -177,7 +184,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.2.12"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.0"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -687,13 +694,70 @@ def _t():
     }
     if AMBIENTE_ID is not None:
         amb = str(AMBIENTE_ID)
-        topics['tag']     = f'{p}/{amb}/caronte/{mac}/tag'
-        topics['result']  = f'{p}/{amb}/caronte/{mac}/result'
-        topics['command'] = f'{p}/{amb}/cerberos/{mac}/command'
+        topics['tag']            = f'{p}/{amb}/caronte/{mac}/tag'
+        topics['result']         = f'{p}/{amb}/caronte/{mac}/result'
+        topics['command']        = f'{p}/{amb}/cerberos/{mac}/command'
+        topics['config_result']  = f'{p}/{amb}/cerberos/{mac}/config/result'
     return topics
 
 
 _coldstart_result = None
+
+
+def _publish_config():
+    """Reporta o config efetivo atual: para cada chave de _DEFAULTS, o valor
+    em uso agora (globals(), reflete tanto config.json quanto uma eventual
+    sobrescrita de sessão via coldstart) e se ela está persistida no
+    config.json (True) ou vem só do default/sessão (False). Campos sensíveis
+    nunca têm o valor reportado, só a flag de persistência."""
+    params = {}
+    for key in _DEFAULTS:
+        persistido = key in _cfg_file
+        if key in _CONFIG_SENSITIVE:
+            params[key] = {'persistido': persistido}
+        else:
+            params[key] = {'valor': globals().get(key, _DEFAULTS[key]), 'persistido': persistido}
+    topic = _t().get('config_result')
+    if topic:
+        _client.publish(topic, json.dumps({'mac': DEVICE_MAC, 'params': params}))
+        print("[Config] Configuração atual reportada")
+
+
+def _apply_set_config(params):
+    """Grava os parâmetros válidos em config.json e reinicia para aplicar
+    de forma limpa (varios parametros so tem efeito na inicializacao do
+    hardware, ex. pinos)."""
+    validos = {k: v for k, v in (params or {}).items() if k in _DEFAULTS}
+    if not validos:
+        print("[Config] set_config sem parametros validos, ignorando")
+        return
+    _cfg_file.update(validos)
+    try:
+        with open('config.json', 'w') as f:
+            json.dump(_cfg_file, f)
+    except Exception as e:
+        print("[Config] Erro ao gravar config.json:", e)
+        display_message("CONFIG", "Erro ao gravar", str(e)[:16])
+        return
+    print("[Config] Novos parametros gravados, reiniciando:", list(validos.keys()))
+    display_message("CONFIG", "Config gravada", "reiniciando...")
+    time.sleep(1)
+    _soft_reset()
+
+
+def _apply_session_config(config_dict):
+    """Aplica em memória (sem tocar config.json) as chaves permitidas vindas
+    no coldstart_result — vale só até o próximo reboot."""
+    if not isinstance(config_dict, dict):
+        return
+    for key, value in config_dict.items():
+        if key not in _CONFIG_RUNTIME_KEYS or key not in _DEFAULTS:
+            continue
+        try:
+            globals()[key] = type(_DEFAULTS[key])(value)
+            print("[Config] %s sobrescrito para %r (somente sessão)" % (key, globals()[key]))
+        except Exception:
+            pass
 
 
 def _on_message(topic, payload):
@@ -721,6 +785,11 @@ def _on_message(topic, payload):
             display_message("COMANDO", "Reiniciando", "aguarde...")
             time.sleep_ms(300)
             _soft_reset()
+        elif data.get('command') == 'get_config':
+            print("[MQTT] Solicitação de configuração recebida")
+            _publish_config()
+        elif data.get('command') == 'set_config':
+            _apply_set_config(data.get('params'))
 
     elif topic_str == topics.get('result'):
         if data.get('allow'):
@@ -868,6 +937,7 @@ def do_coldstart():
 
         if _coldstart_result and _coldstart_result.get('status') == 'ok':
             AMBIENTE_ID = _coldstart_result.get('ambiente_id')
+            _apply_session_config(_coldstart_result.get('config'))
             topics = _t()
             _client.subscribe(topics['command'])
             _client.subscribe(topics['result'])

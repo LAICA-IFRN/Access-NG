@@ -115,6 +115,40 @@ class MqttService:
         print(f'[MQTT] reboot → {tipo} {device.mac}')
         return True
 
+    def request_config(self, device, tipo):
+        """Publica {"command":"get_config"}, pedindo que o dispositivo reporte
+        sua configuração efetiva atual (chega depois, assíncrono, no tópico
+        .../config/result). `tipo` é 'cerberos' ou 'caronte'."""
+        if not _PAHO_AVAILABLE or not device.broker_id:
+            return False
+        with self._lock:
+            client = self._clients.get(device.broker_id)
+        if not client:
+            print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
+            return False
+        mac_safe = device.mac.replace(':', '-')
+        topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
+        client.publish(topic, json.dumps({'command': 'get_config'}), qos=1)
+        print(f'[MQTT] get_config → {tipo} {device.mac}')
+        return True
+
+    def set_config(self, device, tipo, params):
+        """Publica {"command":"set_config","params":{...}} — o dispositivo
+        grava em config.json e reinicia para aplicar. `tipo` é 'cerberos' ou
+        'caronte'."""
+        if not _PAHO_AVAILABLE or not device.broker_id:
+            return False
+        with self._lock:
+            client = self._clients.get(device.broker_id)
+        if not client:
+            print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
+            return False
+        mac_safe = device.mac.replace(':', '-')
+        topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
+        client.publish(topic, json.dumps({'command': 'set_config', 'params': params}), qos=1)
+        print(f'[MQTT] set_config → {tipo} {device.mac}: {list(params.keys())}')
+        return True
+
     def is_connected(self, broker_id: int) -> bool:
         with self._lock:
             client = self._clients.get(broker_id)
@@ -173,6 +207,7 @@ class MqttService:
             client.subscribe(f'{PREFIX}/+/caronte/+/tag')
             client.subscribe(f'{PREFIX}/+/cerberos/+/status')
             client.subscribe(f'{PREFIX}/+/cerberos/+/entrada')
+            client.subscribe(f'{PREFIX}/+/cerberos/+/config/result')
         else:
             codes = {1: 'versão inaceitável', 2: 'id rejeitado', 3: 'servidor indisponível',
                      4: 'credenciais inválidas', 5: 'não autorizado'}
@@ -206,6 +241,9 @@ class MqttService:
             # access-ng/{amb_id}/cerberos/{mac}/entrada
             elif len(parts) == 5 and parts[2] == 'cerberos' and parts[4] == 'entrada':
                 self._handle_entrada(parts[3].replace('-', ':'), payload)
+            # access-ng/{amb_id}/cerberos/{mac}/config/result
+            elif len(parts) == 6 and parts[2] == 'cerberos' and parts[4] == 'config' and parts[5] == 'result':
+                self._handle_config_result(parts[3].replace('-', ':'), payload)
         except Exception as e:
             print(f'[MQTT] Erro no handler "{topic}": {e}')
 
@@ -416,6 +454,26 @@ class MqttService:
             print(f'[MQTT] Entrada física {mac} (pin={pin})')
         except Exception as e:
             print(f'[MQTT] Erro entrada {mac}: {e}')
+            db.rollback()
+        finally:
+            db.remove()
+
+    def _handle_config_result(self, mac, payload):
+        """Recebe a configuração efetiva reportada pelo dispositivo (resposta
+        a get_config) e guarda em cache no registro do Cerberos, para a tela
+        de configuração remota exibir sem precisar de round-trip síncrono."""
+        from Model import Cerberos, db
+        try:
+            device = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
+            if device is None:
+                print(f'[MQTT] config/result de MAC não cadastrado: {mac}')
+                return
+            device.config_atual = json.dumps(payload.get('params', {}))
+            device.config_atualizado_em = datetime.datetime.utcnow()
+            db.commit()
+            print(f'[MQTT] Configuração recebida de {mac}')
+        except Exception as e:
+            print(f'[MQTT] Erro ao processar config/result {mac}: {e}')
             db.rollback()
         finally:
             db.remove()

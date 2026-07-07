@@ -121,6 +121,8 @@ class Cerberos(Base):
     rssi: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     mem_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cpu_temp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class Caronte(Base):
@@ -229,3 +231,6 @@ for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'rssi', 'INTEGER')
     _add_column_if_missing(_table, 'mem_free', 'INTEGER')
     _add_column_if_missing(_table, 'cpu_temp', 'FLOAT')
+
+_add_column_if_missing('cerberoses', 'config_atual', 'VARCHAR(2000)')
+_add_column_if_missing('cerberoses', 'config_atualizado_em', 'DATETIME')
