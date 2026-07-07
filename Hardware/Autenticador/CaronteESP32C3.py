@@ -177,7 +177,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.2.2"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.2.3"   # bump manual a cada release publicada
 OTA_REPO          = "LAICA-IFRN/Access-NG"
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Autenticador/CaronteESP32C3.py"
@@ -436,9 +436,11 @@ def _https_request(host, path, dest_file=None, timeout=10):
         print("[OTA] ssl indisponível neste build")
         return None, None
     sock = None
+    t0 = time.time()
     try:
         ai   = socket.getaddrinfo(host, 443, 0, socket.SOCK_STREAM)
         addr = ai[0][-1]
+        print("[OTA] %s -> %s" % (host, addr))
         sock = socket.socket()
         sock.settimeout(timeout)
         sock.connect(addr)
@@ -517,7 +519,7 @@ def _https_request(host, path, dest_file=None, timeout=10):
             return None, None
         return status, (None if out else buf.decode("utf-8", "ignore"))
     except Exception as e:
-        print("[OTA] Erro HTTPS:", e)
+        print("[OTA] Erro HTTPS (%.1fs):" % (time.time() - t0), e)
         return None, None
     finally:
         if sock:
@@ -688,7 +690,7 @@ def do_coldstart():
                     "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
                     "mcu": _read_mcu(), "ssid": WIFI_SSID,
                 }),
-                qos=1,
+                qos=0,
             )
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
 
