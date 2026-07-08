@@ -80,6 +80,13 @@
   .hist-modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
   .hist-modal-header span { color:#c9a227; font-weight:bold; }
   .hist-modal-close { background:none; border:none; color:#888; font-size:1.4rem; cursor:pointer; line-height:1; }
+  .rssi-legend { display:none; margin-bottom:1rem; font-size:.78rem; }
+  .rssi-legend table { width:100%; border-collapse:collapse; }
+  .rssi-legend caption { text-align:left; color:#888; margin-bottom:.4rem; }
+  .rssi-legend th, .rssi-legend td { padding:.25rem .5rem; border-bottom:1px solid #2d2d4e; text-align:left; }
+  .rssi-legend th { color:#888; font-weight:normal; }
+  .rssi-legend td:first-child { font-family:monospace; white-space:nowrap; }
+  .rssi-dot { display:inline-block; width:.6rem; height:.6rem; border-radius:50%; margin-right:.4rem; }
 </style>
 <div class="row">
   <div class="col-12 mb-4">
@@ -93,9 +100,15 @@
           <div class="diag-item"><span class="diag-label">MCU</span><span class="diag-value">{{ c.mcu or '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">IP</span><span class="diag-value">{{ c.ip or '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">SSID WiFi</span><span class="diag-value">{{ c.ssid or '—' }}</span></div>
-          <div class="diag-item diag-clickable" onclick="abrirHistorico('Sinal WiFi', '{{ url_for('admin_caronte_historico', id=c.id, metric='rssi') }}')"><span class="diag-label">Sinal WiFi</span><span class="diag-value">{{ (c.rssi ~ ' dBm') if c.rssi is not none else '—' }}</span></div>
-          <div class="diag-item diag-clickable" onclick="abrirHistorico('Memória Livre', '{{ url_for('admin_caronte_historico', id=c.id, metric='mem_free') }}')"><span class="diag-label">Memória Livre</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free).replace(',', '.') ~ ' B') if c.mem_free is not none else '—' }}</span></div>
-          <div class="diag-item diag-clickable" onclick="abrirHistorico('Temperatura CPU', '{{ url_for('admin_caronte_historico', id=c.id, metric='cpu_temp') }}')"><span class="diag-label">Temperatura CPU</span><span class="diag-value">{{ (c.cpu_temp ~ ' °C') if c.cpu_temp is not none else '—' }}</span></div>
+          <div class="diag-item diag-clickable" onclick="abrirHistorico('Sinal WiFi', '{{ url_for('admin_caronte_historico', id=c.id, metric='rssi') }}', 'rssi')"><span class="diag-label">Sinal WiFi</span><span class="diag-value">{{ (c.rssi ~ ' dBm') if c.rssi is not none else '—' }}</span></div>
+          <div class="diag-item diag-clickable" onclick="abrirHistorico('Memória Livre', '{{ url_for('admin_caronte_historico', id=c.id, metric='mem_free') }}', 'mem_free')"><span class="diag-label">Memória Livre</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free).replace(',', '.') ~ ' B') if c.mem_free is not none else '—' }}</span></div>
+          <div class="diag-item diag-clickable" onclick="abrirHistorico('Temperatura CPU', '{{ url_for('admin_caronte_historico', id=c.id, metric='cpu_temp') }}', 'cpu_temp')"><span class="diag-label">Temperatura CPU</span><span class="diag-value">{{ (c.cpu_temp ~ ' °C') if c.cpu_temp is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Memória Mínima</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free_min).replace(',', '.') ~ ' B') if c.mem_free_min is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Canal WiFi</span><span class="diag-value">{{ c.wifi_channel if c.wifi_channel is not none else '—' }}</span></div>
+          <div class="diag-item" title="Código bruto de network.WLAN.status() do MicroPython — varia por placa/versão"><span class="diag-label">Status WiFi (código)</span><span class="diag-value">{{ c.wifi_status if c.wifi_status is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Reconexões WiFi</span><span class="diag-value">{{ c.wifi_reconnects if c.wifi_reconnects is not none else '—' }}</span></div>
+          <div class="diag-item"><span class="diag-label">Última Reconexão</span><span class="diag-value">{{ (c.wifi_last_reconnect_s ~ 's atrás') if c.wifi_last_reconnect_s is not none else '—' }}</span></div>
+          <div class="diag-item" title="Código bruto de network.WLAN.status() no momento em que a queda foi percebida"><span class="diag-label">Motivo Última Queda</span><span class="diag-value">{{ c.wifi_last_disconnect_status if c.wifi_last_disconnect_status is not none else '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">Uptime</span><span class="diag-value">{{ c.uptime or '—' }}</span></div>
         </div>
       </div>
@@ -108,6 +121,20 @@
     <div class="hist-modal-header">
       <span id="histModalTitle">Histórico</span>
       <button type="button" class="hist-modal-close" onclick="fecharHistorico()">&times;</button>
+    </div>
+    <div id="rssiLegend" class="rssi-legend">
+      <table>
+        <caption>Referência de qualidade do sinal WiFi:</caption>
+        <thead><tr><th>RSSI (dBm)</th><th>Qualidade</th><th>Situação</th></tr></thead>
+        <tbody>
+          <tr><td><span class="rssi-dot" style="background:#28a745;"></span>-30 a -50</td><td>Excelente</td><td>Muito próximo do AP</td></tr>
+          <tr><td><span class="rssi-dot" style="background:#28a745;"></span>-50 a -60</td><td>Muito bom</td><td>Ideal para IoT</td></tr>
+          <tr><td><span class="rssi-dot" style="background:#fd7e14;"></span>-60 a -67</td><td>Bom</td><td>Funciona perfeitamente</td></tr>
+          <tr><td><span class="rssi-dot" style="background:#fd7e14;"></span>-67 a -70</td><td>Aceitável</td><td>Pode haver alguma perda</td></tr>
+          <tr><td><span class="rssi-dot" style="background:#dc3545;"></span>-70 a -80</td><td>Fraco</td><td>Quedas ocasionais</td></tr>
+          <tr><td><span class="rssi-dot" style="background:#dc3545;"></span>&lt; -80</td><td>Muito ruim</td><td>Conexão instável</td></tr>
+        </tbody>
+      </table>
     </div>
     <canvas id="histChart" height="140"></canvas>
   </div>
@@ -158,26 +185,50 @@
     }
   });
 
+  // Faixas de qualidade do sinal WiFi (RSSI em dBm): verde -50 a -30, laranja
+  // -70 a -50, vermelho abaixo de -70. Um RSSI bom (verde/laranja) descarta o
+  // rádio como causa de instabilidade — o problema provavelmente está em
+  // outro lugar (roteador, firmware, alimentação).
+  function rssiColor(v) {
+    if (v === null || v === undefined) return '#888';
+    if (v >= -50) return '#28a745';
+    if (v >= -70) return '#fd7e14';
+    return '#dc3545';
+  }
+
   var histChart = null;
-  function abrirHistorico(titulo, url) {
+  function abrirHistorico(titulo, url, metric) {
     document.getElementById('histModalTitle').textContent = titulo;
     document.getElementById('histModal').classList.add('show');
+    document.getElementById('rssiLegend').style.display = (metric === 'rssi') ? 'block' : 'none';
     fetch(url).then(function (r) { return r.json(); }).then(function (d) {
       var ctx = document.getElementById('histChart');
       if (histChart) { histChart.destroy(); }
+      var dataset = {
+        label: d.label,
+        data: d.values,
+        tension: 0.3,
+        pointRadius: 2,
+      };
+      if (metric === 'rssi') {
+        dataset.borderColor = '#888';
+        dataset.segment = {
+          borderColor: function (segCtx) {
+            return rssiColor(Math.min(segCtx.p0.parsed.y, segCtx.p1.parsed.y));
+          }
+        };
+        dataset.pointBackgroundColor = d.values.map(rssiColor);
+        dataset.fill = false;
+      } else {
+        dataset.borderColor = '#c9a227';
+        dataset.backgroundColor = 'rgba(201,162,39,0.15)';
+        dataset.fill = true;
+      }
       histChart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: d.labels,
-          datasets: [{
-            label: d.label,
-            data: d.values,
-            borderColor: '#c9a227',
-            backgroundColor: 'rgba(201,162,39,0.15)',
-            tension: 0.3,
-            fill: true,
-            pointRadius: 2,
-          }]
+          datasets: [dataset]
         },
         options: {
           scales: {

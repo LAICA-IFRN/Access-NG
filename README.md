@@ -84,7 +84,7 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 8. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
 9. O mesmo tópico de comando também aceita `{"command":"reboot"}` (reinício remoto), `{"command":"get_config"}` (o dispositivo reporta sua configuração efetiva) e `{"command":"set_config","params":{...}}` (o dispositivo grava novos valores em `config.json` e reinicia) — ver [Reinício e reconfiguração remota](#reinício-e-reconfiguração-remota).
 10. A resposta ao `get_config`/`set_config` chega em `access-ng/{amb_id}/{cerberos|caronte}/{mac}/config/result`; o Sistema grava o payload em `Cerberos.config_atual`/`Caronte.config_atual` com o timestamp em `config_atualizado_em`.
-11. O heartbeat MQTT pode incluir campos de diagnóstico (`ip`, `uptime`, `rssi`, `mem_free`, `cpu_temp`) e o coldstart pode incluir `boot_count`, `hardware` e `mcu` — usados nas páginas de detalhe do Cerberos/Caronte no painel (ver [Diagnóstico e histórico](#diagnóstico-e-histórico)).
+11. O heartbeat MQTT pode incluir campos de diagnóstico (`ip`, `uptime`, `rssi`, `mem_free`, `cpu_temp`) e o coldstart pode incluir `boot_count`, `hardware`, `mcu` e `rssi` (o sinal WiFi no momento do boot ajuda a diagnosticar falhas logo na conexão) — usados nas páginas de detalhe do Cerberos/Caronte no painel (ver [Diagnóstico e histórico](#diagnóstico-e-histórico)).
 
 O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
 
@@ -189,7 +189,13 @@ Colunas adicionadas automaticamente em `cerberoses` e `carontes`:
 - `ssid VARCHAR(50)`
 - `rssi INTEGER`
 - `mem_free INTEGER`
+- `mem_free_min INTEGER`
 - `cpu_temp FLOAT`
+- `wifi_status INTEGER`
+- `wifi_channel INTEGER`
+- `wifi_reconnects INTEGER`
+- `wifi_last_reconnect_s INTEGER`
+- `wifi_last_disconnect_status INTEGER`
 - `config_atual VARCHAR(2000)`
 - `config_atualizado_em DATETIME`
 
@@ -299,6 +305,13 @@ Tabela: `cerberoses`
   no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
 - `rssi`, `mem_free`, `cpu_temp` — diagnóstico reportado periodicamente no heartbeat,
   com histórico consultável em `/admin/cerberoses/<id>/historico/<metric>`
+- `mem_free_min` — menor valor de `mem_free` já visto desde o boot (equivalente ao
+  `ESP.getMinFreeHeap()` do Arduino, calculado em software pelo firmware)
+- `wifi_status`, `wifi_channel` — código bruto de `network.WLAN.status()` e canal
+  WiFi atual, só o valor mais recente (sem histórico gráfico)
+- `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status` —
+  contador de reconexões WiFi desde o boot, segundos desde a última e o código de
+  status capturado no momento da queda (motivo aproximado)
 - `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
   reportada pelo firmware via `get_config`/`set_config`
 
@@ -321,6 +334,13 @@ Tabela: `carontes`
   no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
 - `rssi`, `mem_free`, `cpu_temp` — diagnóstico reportado periodicamente no heartbeat,
   com histórico consultável em `/admin/carontes/<id>/historico/<metric>`
+- `mem_free_min` — menor valor de `mem_free` já visto desde o boot (equivalente ao
+  `ESP.getMinFreeHeap()` do Arduino, calculado em software pelo firmware)
+- `wifi_status`, `wifi_channel` — código bruto de `network.WLAN.status()` e canal
+  WiFi atual, só o valor mais recente (sem histórico gráfico)
+- `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status` —
+  contador de reconexões WiFi desde o boot, segundos desde a última e o código de
+  status capturado no momento da queda (motivo aproximado)
 - `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
   reportada pelo firmware via `get_config`/`set_config`
 
@@ -1017,7 +1037,9 @@ A versão reportada por último aparece nas páginas
 ### Diagnóstico e histórico
 
 Além da `versao`, o coldstart MQTT pode reportar `boot_count`, `hardware`
-(ex.: identifica se é a variante BitDogLab) e `mcu`, e o heartbeat MQTT pode
+(ex.: identifica se é a variante BitDogLab), `mcu` e `rssi` — o sinal WiFi
+já no boot ajuda a diagnosticar dispositivos que falham por sinal fraco
+antes mesmo do primeiro heartbeat. O heartbeat MQTT, por sua vez, pode
 reportar `ip`, `uptime`, `rssi` (sinal WiFi em dBm), `mem_free` (memória
 livre em bytes) e `cpu_temp` (°C) — só uma fração dos heartbeats carrega
 esses campos de diagnóstico, para não sobrecarregar o payload. Tudo é
@@ -1029,6 +1051,52 @@ valores mais recentes; clicar em "Sinal WiFi", "Memória Livre" ou
 "Temperatura CPU" abre um gráfico com a série das últimas 24h, obtida via
 `GET /admin/cerberoses/<id>/historico/<metric>` (`metric` é `rssi`,
 `mem_free` ou `cpu_temp`).
+
+No gráfico de RSSI, a linha é colorida por faixa de qualidade do sinal
+(verde/laranja/vermelho) e uma legenda de referência é exibida ao lado:
+
+| RSSI (dBm) | Qualidade | Situação |
+| --- | --- | --- |
+| -30 a -50 | Excelente | Muito próximo do AP |
+| -50 a -60 | Muito bom | Ideal para IoT |
+| -60 a -67 | Bom | Funciona perfeitamente |
+| -67 a -70 | Aceitável | Pode haver alguma perda |
+| -70 a -80 | Fraco | Quedas ocasionais |
+| < -80 | Muito ruim | Conexão instável |
+
+Faixas de cor usadas no gráfico: **verde** de -50 a -30 dBm, **laranja** de
+-70 a -50 dBm e **vermelho** abaixo de -70 dBm. Um RSSI nessa faixa verde/laranja
+não descarta problema de conectividade — se o dispositivo ainda cair com sinal
+bom, a causa provável está em outro lugar (roteador, firmware, alimentação),
+não na intensidade do rádio.
+
+#### Diagnóstico WiFi estendido
+
+Inspirado no conjunto clássico de diagnóstico WiFi do Arduino/ESP-IDF
+(`WiFi.RSSI()`, `WiFi.status()`, `WiFi.channel()`, `ESP.getFreeHeap()`,
+`ESP.getMinFreeHeap()`, contagem/motivo de reconexões), o heartbeat MQTT
+também reporta, adaptado às APIs disponíveis no MicroPython
+(`network.WLAN`):
+
+| Campo | Equivalente Arduino/ESP-IDF | Origem no firmware |
+| --- | --- | --- |
+| `mem_free_min` | `ESP.getMinFreeHeap()` | menor `gc.mem_free()` já visto desde o boot (calculado em software; MicroPython não expõe um "heap mínimo" nativo) |
+| `wifi_status` | `WiFi.status()` | `network.WLAN(network.STA_IF).status()` — código bruto, **não traduzido**: os valores de `STAT_*` variam por port/versão do MicroPython (ESP32 vs. RP2/cyw43 do BitDogLab), então mapear para texto de forma confiável exigiria testar em cada placa |
+| `wifi_channel` | `WiFi.channel()` | `network.WLAN(network.STA_IF).config('channel')` |
+| `wifi_reconnects` | contagem de reconexões | contador incrementado toda vez que `connect_wifi()` detecta que a conexão caiu (não conta a conexão inicial do boot); zera a cada reinício |
+| `wifi_last_reconnect_s` | tempo entre reconexões | segundos desde a última (re)conexão, calculado a partir de `time.ticks_ms()` |
+| `wifi_last_disconnect_status` | motivo da desconexão | o mesmo código de `wifi_status` capturado no instante em que a queda foi percebida, antes de tentar reconectar |
+
+Esses seis campos são só "valor mais recente" no painel (sem gráfico de
+histórico, ao contrário de `rssi`/`mem_free`/`cpu_temp`) — aparecem no card
+de Diagnóstico de `/admin/cerberoses/<id>` e `/admin/carontes/<id>`.
+
+**Deixado de fora:** o BSSID do ponto de acesso conectado (`WiFi.BSSIDstr()`
+no Arduino). O `network.WLAN` do MicroPython não expõe de forma confiável o
+BSSID da conexão STA ativa em todos os ports usados aqui (ESP32, ESP32-C3 e
+RP2/cyw43 do BitDogLab); a alternativa seria um `wlan.scan()` periódico
+casando por SSID, o que é intrusivo (interfere na conexão ativa) para um
+dado de diagnóstico secundário.
 
 ### Reinício e reconfiguração remota
 
@@ -1315,3 +1383,9 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   MQTT, com gráficos históricos de 24h em
   `/admin/cerberoses/<id>/historico/<metric>` e equivalente em Carontes —
   veja [Diagnóstico e histórico](#diagnóstico-e-histórico).
+- Diagnóstico WiFi estendido (`mem_free_min`, `wifi_status`, `wifi_channel`,
+  `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status`),
+  adaptado do conjunto clássico `WiFi.RSSI()/status()/channel()` +
+  `ESP.getFreeHeap()/getMinFreeHeap()` do Arduino para as APIs do
+  MicroPython (`network.WLAN`) — veja [Diagnóstico WiFi
+  estendido](#diagnóstico-wifi-estendido).

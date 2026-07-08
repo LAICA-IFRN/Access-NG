@@ -267,6 +267,30 @@ def _read_cpu_temp():
     except Exception:
         return None
 
+
+def _read_wifi_status():
+    """Codigo bruto de network.WLAN.status() - o valor numerico varia por
+    port/versao do MicroPython, por isso e reportado sem tentar traduzir."""
+    try:
+        return network.WLAN(network.STA_IF).status()
+    except Exception:
+        return None
+
+
+def _read_wifi_channel():
+    try:
+        return network.WLAN(network.STA_IF).config('channel')
+    except Exception:
+        return None
+
+
+# Diagnostico de reconexao WiFi: contagem e ha quanto tempo desde a ultima,
+# alem do codigo de status no momento em que a queda foi percebida (motivo
+# aproximado da desconexao). Zerado a cada boot.
+_wifi_reconnects = 0
+_wifi_last_reconnect_ms = None
+_wifi_last_disconnect_status = None
+
 # ─── HARDWARE ─────────────────────────────────────────────────────────────────
 
 button    = None
@@ -400,12 +424,21 @@ def display_message(title, *lines):
 # ─── WiFi ──────────────────────────────────────────────────────────────────────
 
 def connect_wifi():
+    global _wifi_reconnects, _wifi_last_reconnect_ms, _wifi_last_disconnect_status
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     if wlan.isconnected():
         print(f"[WiFi] IP: {wlan.ifconfig()[0]}")
         display_message("WIFI", "Conectado", wlan.ifconfig()[0])
         return True
+
+    if _wifi_last_reconnect_ms is not None:
+        # ja tinha conectado antes nesse boot - isso e uma reconexao, nao a
+        # conexao inicial. Guarda o status no momento da queda como motivo.
+        _wifi_last_disconnect_status = _read_wifi_status()
+        _wifi_reconnects += 1
+    _wifi_last_reconnect_ms = time.ticks_ms()
+
     print(f"[WiFi] Conectando em {WIFI_SSID}...")
     display_message("WIFI", "Conectando", WIFI_SSID)
     wlan.connect(WIFI_SSID, WIFI_PASS)
@@ -966,7 +999,8 @@ def do_coldstart():
                             json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY,
                                         'versao': FIRMWARE_VERSAO,
                                         'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
-                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID}),
+                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID,
+                                        'rssi': _read_rssi()}),
                             qos=1)
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
             display_message("COLDSTART", "Publicado", "aguardando...")
@@ -1013,10 +1047,11 @@ def _format_uptime(uptime_ms):
 
 
 _heartbeat_count = 0
+_mem_free_min = None
 
 
 def publish_heartbeat():
-    global _heartbeat_count
+    global _heartbeat_count, _mem_free_min
     uptime_ms = time.ticks_ms()
     payload = {
         'mac': DEVICE_MAC,
@@ -1029,8 +1064,19 @@ def publish_heartbeat():
     _heartbeat_count += 1
     if _heartbeat_count % HEARTBEAT_DIAG_EVERY == 1:
         payload['rssi'] = _read_rssi()
-        payload['mem_free'] = gc.mem_free()
+        mem_free = gc.mem_free()
+        payload['mem_free'] = mem_free
+        if _mem_free_min is None or mem_free < _mem_free_min:
+            _mem_free_min = mem_free
+        payload['mem_free_min'] = _mem_free_min
         payload['cpu_temp'] = _read_cpu_temp()
+        payload['wifi_status'] = _read_wifi_status()
+        payload['wifi_channel'] = _read_wifi_channel()
+        payload['wifi_reconnects'] = _wifi_reconnects
+        if _wifi_last_reconnect_ms is not None:
+            payload['wifi_last_reconnect_s'] = time.ticks_diff(uptime_ms, _wifi_last_reconnect_ms) // 1000
+        if _wifi_last_disconnect_status is not None:
+            payload['wifi_last_disconnect_status'] = _wifi_last_disconnect_status
     _client.publish(_t()['heartbeat'], json.dumps(payload))
 
 

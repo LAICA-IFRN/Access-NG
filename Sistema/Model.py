@@ -120,7 +120,13 @@ class Cerberos(Base):
     ssid: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     rssi: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     mem_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mem_free_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cpu_temp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    wifi_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_channel: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_reconnects: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_last_reconnect_s: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_last_disconnect_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -147,7 +153,13 @@ class Caronte(Base):
     ssid: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     rssi: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     mem_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mem_free_min: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cpu_temp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    wifi_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_channel: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_reconnects: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_last_reconnect_s: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    wifi_last_disconnect_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -237,3 +249,11 @@ for _table in ('cerberoses', 'carontes'):
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'config_atual', 'VARCHAR(2000)')
     _add_column_if_missing(_table, 'config_atualizado_em', 'DATETIME')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'mem_free_min', 'INTEGER')
+    _add_column_if_missing(_table, 'wifi_status', 'INTEGER')
+    _add_column_if_missing(_table, 'wifi_channel', 'INTEGER')
+    _add_column_if_missing(_table, 'wifi_reconnects', 'INTEGER')
+    _add_column_if_missing(_table, 'wifi_last_reconnect_s', 'INTEGER')
+    _add_column_if_missing(_table, 'wifi_last_disconnect_status', 'INTEGER')

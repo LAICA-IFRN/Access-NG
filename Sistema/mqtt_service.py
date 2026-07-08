@@ -317,6 +317,8 @@ class MqttService:
                 device.mcu = payload['mcu']
             if payload.get('ssid'):
                 device.ssid = payload['ssid']
+            if payload.get('rssi') is not None:
+                device.rssi = payload['rssi']
             label_name = getattr(device, 'nome', mac)
             db.add(AccessLog(
                 timestamp=now, path='mqtt:coldstart', method='MQTT', mac=mac,
@@ -358,8 +360,20 @@ class MqttService:
                         device.rssi = payload['rssi']
                     if payload.get('mem_free') is not None:
                         device.mem_free = payload['mem_free']
+                    if payload.get('mem_free_min') is not None:
+                        device.mem_free_min = payload['mem_free_min']
                     if payload.get('cpu_temp') is not None:
                         device.cpu_temp = payload['cpu_temp']
+                    if payload.get('wifi_status') is not None:
+                        device.wifi_status = payload['wifi_status']
+                    if payload.get('wifi_channel') is not None:
+                        device.wifi_channel = payload['wifi_channel']
+                    if payload.get('wifi_reconnects') is not None:
+                        device.wifi_reconnects = payload['wifi_reconnects']
+                    if payload.get('wifi_last_reconnect_s') is not None:
+                        device.wifi_last_reconnect_s = payload['wifi_last_reconnect_s']
+                    if payload.get('wifi_last_disconnect_status') is not None:
+                        device.wifi_last_disconnect_status = payload['wifi_last_disconnect_status']
                     updated = True
                     found_device = device
             if updated:
