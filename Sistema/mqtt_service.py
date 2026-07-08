@@ -335,6 +335,10 @@ class MqttService:
         except Exception as e:
             print(f'[MQTT] Erro coldstart {mac}: {e}')
             db.rollback()
+            try:
+                client.publish(result_topic, json.dumps({'status': 'error'}), qos=1)
+            except Exception:
+                pass
         finally:
             db.remove()
 

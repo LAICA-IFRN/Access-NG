@@ -184,7 +184,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.11"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.13"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -361,7 +361,13 @@ def init_display():
     try:
         from machine import Pin, SoftI2C
         from ssd1306 import SSD1306_I2C
-        i2c = SoftI2C(scl=Pin(OLED_SCL_PIN), sda=Pin(OLED_SDA_PIN))
+        # timeout (us) limita quanto o bit-bang espera por clock-stretch/ACK
+        # antes de desistir com OSError - sem isso, um soluco no barramento
+        # I2C (ruido de RF da propria antena WiFi, sensor travado, etc.) trava
+        # o driver para sempre dentro de display_message(), o que congela o
+        # firmware inteiro sem excecao nenhuma pra pegar (o try/except de
+        # display_message() so ajuda se a chamada realmente retornar).
+        i2c = SoftI2C(scl=Pin(OLED_SCL_PIN), sda=Pin(OLED_SDA_PIN), timeout=50000)
         oled = SSD1306_I2C(OLED_WIDTH, OLED_HEIGHT, i2c, addr=OLED_ADDR)
         oled_ok = True
         display_message("ACCESS-NG", "Cerberos", "Iniciando...")
@@ -898,14 +904,23 @@ def _icmp_checksum(data):
     return ~total & 0xffff
 
 
-def ping_broker(count=4, timeout_ms=1000):
-    """Envia pings ICMP ao broker para checar conectividade de rede."""
+def ping_gateway(count=4, timeout_ms=1000):
+    """Envia pings ICMP ao gateway padrao da rede WiFi.
+
+    Alguns servidores bloqueiam ICMP mesmo com MQTT/TCP funcionando. Pingar o
+    gateway testa o enlace local sem confundir isso com bloqueio de ping no
+    broker.
+    """
     import ustruct
 
     try:
-        host_ip = socket.getaddrinfo(MQTT_BROKER, 1)[0][-1][0]
+        wlan = network.WLAN(network.STA_IF)
+        host_ip = wlan.ifconfig()[2]
+        if not host_ip or host_ip == "0.0.0.0":
+            print("[Ping] Gateway padrao indisponivel - pulando ping")
+            return
     except Exception as e:
-        print(f"[Ping] Falha ao resolver {MQTT_BROKER}: {e}")
+        print(f"[Ping] Falha ao obter gateway padrao: {e}")
         return
 
     try:
@@ -941,7 +956,7 @@ def ping_broker(count=4, timeout_ms=1000):
         time.sleep_ms(200)
 
     s.close()
-    print(f"[Ping] {host_ip}: {ok}/{count} respostas")
+    print(f"[Ping] gateway {host_ip}: {ok}/{count} respostas")
 
 
 def _diag_broker():
@@ -1005,13 +1020,14 @@ def do_coldstart():
     while True:
         _coldstart_result = None
         try:
+            print("[MQTT] Publicando coldstart...")
+            display_message("COLDSTART", "Publicando", "aguarde...")
             _client.publish(_t()['coldstart'],
                             json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY,
                                         'versao': FIRMWARE_VERSAO,
                                         'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
                                         'mcu': _read_mcu(), 'ssid': WIFI_SSID,
-                                        'rssi': _read_rssi()}),
-                            qos=1)
+                                        'rssi': _read_rssi()}))
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
             display_message("COLDSTART", "Publicado", "aguardando...")
 
@@ -1125,7 +1141,7 @@ def main():
     while not connect_wifi():
         led_denied(); time.sleep(10)
 
-    ping_broker()
+    ping_gateway()
 
     # MQTT
     while True:
