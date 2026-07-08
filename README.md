@@ -862,13 +862,24 @@ Depois do coldstart aceito, o heartbeat MQTT é publicado em
 O Sistema grava esse payload nos logs do evento `mqtt_heartbeat`, útil para
 debug de reinicializações e quedas de energia.
 
-O firmware MQTT requer a biblioteca `umqtt` (`umqtt.robust` ou `umqtt.simple`)
-instalada na placa via `mip`:
+O firmware MQTT requer a biblioteca `umqtt.simple` instalada na placa via `mip`:
 
 ```python
 import mip
-mip.install("umqtt.robust")
+mip.install("umqtt.simple")
 ```
+
+**Não instale `umqtt.robust`** (ou, se já estiver instalada, pode deixar —
+o firmware prefere `umqtt.simple` quando ambas estão presentes). A
+`umqtt.robust` sobrescreve `publish()`/`check_msg()` para capturar `OSError`
+sozinha e ficar tentando reconectar em loop silencioso (sem log, já que
+`DEBUG=False` por padrão), o que trava o loop principal por tempo
+indeterminado em qualquer soluço de rede sem deixar rastro na serial — e o
+`reconnect()` dela usa `connect(False)`, que não reinscreve em nenhum
+tópico, deixando o dispositivo surdo a comandos até um reboot completo.
+Com `umqtt.simple`, o `OSError` propaga normalmente para o `except OSError`
+do `main()`, que já faz a recuperação correta (reconecta, repete o
+coldstart e reinscreve nos tópicos).
 
 ### ESP32 (MicroPython) — Cerberos enxuto
 

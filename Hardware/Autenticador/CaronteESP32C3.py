@@ -803,10 +803,20 @@ def _on_message(topic, payload):
 
 def mqtt_connect():
     global _client
+    # umqtt.simple e preferida de proposito: publish()/check_msg() propagam
+    # OSError de verdade, o que aciona o except OSError do main() - que ja
+    # faz a recuperacao completa e correta (reconecta + do_coldstart() +
+    # reinscreve nos topicos). A umqtt.robust captura OSError sozinha e fica
+    # tentando reconectar em loop silencioso (sem log, DEBUG=False por
+    # padrao) dentro da propria chamada de publish()/check_msg(), travando
+    # o loop principal por tempo indeterminado sem que nada apareca na
+    # serial - e o reconnect() dela usa connect(False), que nao reinscreve
+    # em nenhum topico, deixando o dispositivo surdo a comandos ate um
+    # reboot completo. So cai para robust se simple nao estiver instalada.
     try:
-        from umqtt.robust import MQTTClient
-    except ImportError:
         from umqtt.simple import MQTTClient
+    except ImportError:
+        from umqtt.robust import MQTTClient
 
     kwargs = {"port": MQTT_PORT, "keepalive": 90}
     if MQTT_USER:

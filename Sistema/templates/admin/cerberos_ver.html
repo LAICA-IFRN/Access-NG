@@ -225,6 +225,8 @@
         dataset.backgroundColor = 'rgba(201,162,39,0.15)';
         dataset.fill = true;
       }
+      var yScale = { ticks: { color: '#888' }, grid: { color: '#2d2d4e' } };
+      if (metric === 'mem_free') { yScale.min = 0; }
       histChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -233,7 +235,7 @@
         },
         options: {
           scales: {
-            y: { ticks: { color: '#888' }, grid: { color: '#2d2d4e' } },
+            y: yScale,
             x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { display: false } }
           },
           plugins: { legend: { display: false } }
