@@ -82,6 +82,9 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 6. Um Cerberos MQTT assina `access-ng/{amb_id}/cerberos/{mac}/command`; ao receber `{"command":"unlock"}` aciona o relé.
 7. Quando o Cerberos tem entradas físicas configuradas (botão/contato local), ele publica `access-ng/{amb_id}/cerberos/{mac}/entrada` com `{"mac":..., "pin":...}` ao detectar o acionamento; o Sistema grava o evento como `entrada_fisica` no log, mesmo sem MAC cadastrado.
 8. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
+9. O mesmo tópico de comando também aceita `{"command":"reboot"}` (reinício remoto), `{"command":"get_config"}` (o dispositivo reporta sua configuração efetiva) e `{"command":"set_config","params":{...}}` (o dispositivo grava novos valores em `config.json` e reinicia) — ver [Reinício e reconfiguração remota](#reinício-e-reconfiguração-remota).
+10. A resposta ao `get_config`/`set_config` chega em `access-ng/{amb_id}/{cerberos|caronte}/{mac}/config/result`; o Sistema grava o payload em `Cerberos.config_atual`/`Caronte.config_atual` com o timestamp em `config_atualizado_em`.
+11. O heartbeat MQTT pode incluir campos de diagnóstico (`ip`, `uptime`, `rssi`, `mem_free`, `cpu_temp`) e o coldstart pode incluir `boot_count`, `hardware` e `mcu` — usados nas páginas de detalhe do Cerberos/Caronte no painel (ver [Diagnóstico e histórico](#diagnóstico-e-histórico)).
 
 O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
 
@@ -96,14 +99,16 @@ Prefixo fixo: `access-ng`. Tabela completa dos tópicos publicados/assinados pel
 | `access-ng/heartbeat/{mac}` | dispositivo → Sistema | `{"mac":..., "uptime_ms":..., "uptime_s":..., "versao"?}` | Ping periódico. |
 | `access-ng/{amb_id}/caronte/{mac}/tag` | dispositivo → Sistema | `{"tag":..., "chave":...}` | TAG lida por um Caronte MQTT. |
 | `access-ng/{amb_id}/caronte/{mac}/result` | Sistema → dispositivo | `{"allow": true\|false, "motivo"?}` | Resultado da autenticação da TAG. |
-| `access-ng/{amb_id}/cerberos/{mac}/command` | Sistema → dispositivo | `{"command":"unlock"}` ou `{"command":"check_update"}` | Comando de abertura ou de checagem de OTA para o Cerberos. |
-| `access-ng/{amb_id}/caronte/{mac}/command` | Sistema → dispositivo | `{"command":"check_update"}` | Checagem de OTA para o Caronte (não recebe `unlock`, só o Cerberos aciona relé). |
+| `access-ng/{amb_id}/cerberos/{mac}/command` | Sistema → dispositivo | `{"command":"unlock"}`, `{"command":"check_update"}`, `{"command":"reboot"}`, `{"command":"get_config"}` ou `{"command":"set_config","params":{...}}` | Comando de abertura, checagem de OTA, reinício remoto ou leitura/escrita de configuração do Cerberos. |
+| `access-ng/{amb_id}/caronte/{mac}/command` | Sistema → dispositivo | `{"command":"check_update"}`, `{"command":"reboot"}`, `{"command":"get_config"}` ou `{"command":"set_config","params":{...}}` | Mesmos comandos do Cerberos, exceto `unlock` (só o Cerberos aciona relé). |
 | `access-ng/{amb_id}/cerberos/{mac}/status` | dispositivo → Sistema | `{"status": "..."}` | Atualização de status enviada pelo próprio Cerberos (padrão `online` se omitido). |
 | `access-ng/{amb_id}/cerberos/{mac}/entrada` | dispositivo → Sistema | `{"mac":..., "pin":...}` | Entrada física (botão/contato local) detectada pelo Cerberos. |
+| `access-ng/{amb_id}/cerberos/{mac}/config/result` | dispositivo → Sistema | `{...}` (config efetiva reportada pelo firmware) | Resposta ao `get_config`/`set_config` do Cerberos; grava em `Cerberos.config_atual`. |
+| `access-ng/{amb_id}/caronte/{mac}/config/result` | dispositivo → Sistema | `{...}` (config efetiva reportada pelo firmware) | Resposta ao `get_config`/`set_config` do Caronte; grava em `Caronte.config_atual`. |
 
-O Sistema assina `coldstart/+`, `heartbeat/+`, `+/caronte/+/tag`, `+/cerberos/+/status`
-e `+/cerberos/+/entrada`; os demais tópicos da tabela são publicados pelo próprio
-Sistema para os dispositivos assinarem.
+O Sistema assina `coldstart/+`, `heartbeat/+`, `+/caronte/+/tag`, `+/cerberos/+/status`,
+`+/cerberos/+/entrada`, `+/cerberos/+/config/result` e `+/caronte/+/config/result`; os
+demais tópicos da tabela são publicados pelo próprio Sistema para os dispositivos assinarem.
 
 ## Requisitos
 
@@ -175,6 +180,18 @@ Colunas adicionadas automaticamente em `cerberoses` e `carontes`:
 - `coldstart_at DATETIME`
 - `protocolo VARCHAR(10) DEFAULT 'rest'`
 - `broker_id INTEGER`
+- `versao_firmware VARCHAR(30)`
+- `ip VARCHAR(50)`
+- `uptime VARCHAR(20)`
+- `boot_count INTEGER`
+- `hardware VARCHAR(50)`
+- `mcu VARCHAR(50)`
+- `ssid VARCHAR(50)`
+- `rssi INTEGER`
+- `mem_free INTEGER`
+- `cpu_temp FLOAT`
+- `config_atual VARCHAR(2000)`
+- `config_atualizado_em DATETIME`
 
 Colunas adicionadas automaticamente em `ambientes`:
 
@@ -278,6 +295,12 @@ Tabela: `cerberoses`
 - `coldstart_at`
 - `protocolo` (`rest` ou `mqtt`, padrão `rest`)
 - `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
+- `versao_firmware`, `ip`, `uptime`, `boot_count`, `hardware`, `mcu`, `ssid` — reportados
+  no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
+- `rssi`, `mem_free`, `cpu_temp` — diagnóstico reportado periodicamente no heartbeat,
+  com histórico consultável em `/admin/cerberoses/<id>/historico/<metric>`
+- `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
+  reportada pelo firmware via `get_config`/`set_config`
 
 Representa a fechadura/dispositivo acionável.
 
@@ -294,6 +317,12 @@ Tabela: `carontes`
 - `coldstart_at`
 - `protocolo` (`rest` ou `mqtt`, padrão `rest`)
 - `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
+- `versao_firmware`, `ip`, `uptime`, `boot_count`, `hardware`, `mcu`, `ssid` — reportados
+  no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
+- `rssi`, `mem_free`, `cpu_temp` — diagnóstico reportado periodicamente no heartbeat,
+  com histórico consultável em `/admin/carontes/<id>/historico/<metric>`
+- `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
+  reportada pelo firmware via `get_config`/`set_config`
 
 Representa o leitor/autenticador fixo.
 
@@ -335,6 +364,7 @@ http://127.0.0.1:9001
 | `GET` | `/` | Renderiza a tela inicial simples do Sistema. |
 | `GET` | `/api/status` | JSON com todos os Tartaros e o status (`online`/`offline`/`unknown`) de seus dispositivos. Sem autenticação — pensado para integrações externas. |
 | `GET` | `/api/dashboard` | JSON com contagens de dispositivos, estatísticas de acesso do dia, eventos recentes e detalhamento por Tartaro. Mesma finalidade do `/api/status`, com mais detalhe. |
+| `GET` | `/ota/<filepath>` | Serve os `.py` e `version*.json` de firmware para OTA. Sem autenticação (é consultado pelos próprios dispositivos); restrito a uma whitelist fixa de arquivos — ver [OTA](#ota-atualização-remota-de-firmware). |
 
 ### Endpoints IoT legados
 
@@ -547,6 +577,11 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET/POST` | `/admin/cerberoses/<id>/editar` | Edita Cerberos. |
 | `POST` | `/admin/cerberoses/<id>/abrir` | Envia comando manual de abertura para o Cerberos. |
 | `POST` | `/admin/cerberoses/<id>/verificar-atualizacao` | Notifica esse Cerberos via MQTT para verificar atualização de firmware agora. |
+| `POST` | `/admin/cerberoses/<id>/reiniciar` | Envia comando de reinício remoto (`reboot`) via MQTT. |
+| `GET` | `/admin/cerberoses/<id>/config` | Mostra a última configuração efetiva reportada pelo Cerberos (campos sensíveis mascarados). |
+| `POST` | `/admin/cerberoses/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Cerberos que reporte sua configuração atual. |
+| `POST` | `/admin/cerberoses/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
+| `GET` | `/admin/cerberoses/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico. |
 | `POST` | `/admin/cerberoses/<id>/excluir` | Remove Cerberos. |
 | `GET` | `/admin/carontes` | Lista Carontes fixos. |
 | `POST` | `/admin/carontes/verificar-atualizacao` | Notifica via MQTT todos os Carontes listados (escopados ao papel do usuário) para verificarem atualização agora. |
@@ -554,6 +589,11 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/carontes/<id>` | Visão do Caronte: gauge de SLA (% online) das últimas 24h, versão de firmware reportada, e gráfico de uptime com período personalizável em horas ou dias (`?unidade=hora\|dia&quantidade=N`). |
 | `GET/POST` | `/admin/carontes/<id>/editar` | Edita Caronte fixo. |
 | `POST` | `/admin/carontes/<id>/verificar-atualizacao` | Notifica esse Caronte via MQTT para verificar atualização de firmware agora. |
+| `POST` | `/admin/carontes/<id>/reiniciar` | Envia comando de reinício remoto (`reboot`) via MQTT. |
+| `GET` | `/admin/carontes/<id>/config` | Mostra a última configuração efetiva reportada pelo Caronte (campos sensíveis mascarados). |
+| `POST` | `/admin/carontes/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Caronte que reporte sua configuração atual. |
+| `POST` | `/admin/carontes/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
+| `GET` | `/admin/carontes/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico. |
 | `POST` | `/admin/carontes/<id>/excluir` | Remove Caronte fixo. |
 | `GET` | `/admin/brokers` | Lista Brokers MQTT. |
 | `GET/POST` | `/admin/brokers/novo` | Cria Broker MQTT e conecta o `mqtt_service`. |
@@ -924,13 +964,20 @@ upload pelo painel nem tabela no banco guardando o código.
    `Hardware/Fechadura/version_esp32.json` (`CerberosESP32.py`) e
    `Hardware/Autenticador/version.json` (`CaronteESP32C3.py`) — um arquivo por
    firmware, para que cada um tenha ciclo de release independente mesmo
-   compartilhando o diretório `Fechadura/`. Formato:
-   `{"versao": "1.0.0", "ref": "main"}`.
-3. O dispositivo busca esse `version.json` via HTTPS em
-   `raw.githubusercontent.com/LAICA-IFRN/Access-NG/{ref}/...` (repositório
-   público, sem autenticação). Se a `versao` remota for diferente da local,
-   baixa o `.py` do `ref` indicado, valida o conteúdo, grava como `main.new`,
-   troca com `main.py` (guardando o anterior em `main.bak`) e reinicia.
+   compartilhando o diretório `Fechadura/`. Formato: `{"versao": "1.3.11", "ref": "main"}`
+   (o campo `ref` não é mais usado pelo firmware — ver observação abaixo).
+3. Os arquivos de firmware e de versão são servidos pelo **próprio Sistema**,
+   em `GET /ota/<filepath>` ([api.py](Sistema/api.py)), restrito a uma
+   whitelist fixa (`_OTA_ALLOWED_FILES`) que nunca lê arquivo fora dessa
+   lista. O dispositivo busca `version.json`/`version_esp32.json` em
+   `http://{OTA_HOST}:{OTA_PORT}/access-ng/ota/{OTA_VERSION_PATH}` (HTTP puro
+   nos ESP32 MicroPython; HTTPS no BitDogLab). Se a `versao` remota for
+   diferente da local, baixa o `.py` do mesmo host, valida o conteúdo, grava
+   como `main.new`, troca com `main.py` (guardando o anterior em `main.bak`)
+   e reinicia. `OTA_HOST`/`OTA_PORT` apontam para o domínio onde o Sistema
+   está publicado (ex.: `laica.ifrn.edu.br`, porta 80), **não** mais para
+   `raw.githubusercontent.com` — a rede da instituição não entrega esse
+   domínio de forma confiável para arquivos maiores.
 4. A checagem ocorre em três momentos: (a) logo após o coldstart, (b)
    periodicamente a cada `OTA_CHECK_INTERVAL` segundos (padrão 3600), e (c)
    imediatamente ao receber `{"command":"check_update"}` no tópico MQTT de
@@ -940,19 +987,18 @@ upload pelo painel nem tabela no banco guardando o código.
 
 ### Publicando uma nova versão
 
+Como o firmware é servido pelo próprio Sistema (a partir do checkout local do
+repositório, atualizado a cada `git pull` do [pipeline de deploy](#cicd)), não
+é mais necessário criar tags/refs específicos por firmware:
+
 1. Edite o firmware e suba a constante `FIRMWARE_VERSAO`.
-2. Crie uma tag e publique (ex.: `git tag fw-cerberos-1.1.0 && git push --tags`)
-   — usar uma tag em vez de `main` evita que qualquer commit do `Sistema`
-   (que já tem deploy automático a cada push, veja [CI/CD](#cicd)) vire
-   candidato a atualização de fechadura.
-3. Atualize o `version.json` correspondente em `main` apontando
-   `{"versao": "1.1.0", "ref": "fw-cerberos-1.1.0"}` e faça push.
+2. Atualize o `versao` no `version.json` correspondente para o mesmo valor.
+3. Faça push para `main` — o `deploy.yml` roda o CI e, se aprovado, faz
+   `git pull` no servidor, deixando o novo `.py`/`version.json` disponíveis em
+   `/ota/...` imediatamente.
 4. (Opcional) clique em "Verificar atualização" no painel para notificar os
    dispositivos na hora; senão, eles encontram a atualização no próximo
    polling periódico.
-
-`raw.githubusercontent.com` cacheia por alguns minutos — pode levar um
-pouco para propagar depois do push.
 
 ### Rede de segurança contra "brick"
 
@@ -967,6 +1013,45 @@ Coldstart e heartbeat (REST e MQTT) podem incluir um campo opcional
 `versao`, gravado em `Cerberos.versao_firmware`/`Caronte.versao_firmware`.
 A versão reportada por último aparece nas páginas
 `/admin/cerberoses/<id>` e `/admin/carontes/<id>`.
+
+### Diagnóstico e histórico
+
+Além da `versao`, o coldstart MQTT pode reportar `boot_count`, `hardware`
+(ex.: identifica se é a variante BitDogLab) e `mcu`, e o heartbeat MQTT pode
+reportar `ip`, `uptime`, `rssi` (sinal WiFi em dBm), `mem_free` (memória
+livre em bytes) e `cpu_temp` (°C) — só uma fração dos heartbeats carrega
+esses campos de diagnóstico, para não sobrecarregar o payload. Tudo é
+gravado em `Cerberos`/`Caronte` e também persiste no `AccessLog` de cada
+heartbeat, servindo de base para os gráficos.
+
+A página `/admin/cerberoses/<id>` (e a equivalente de Caronte) mostra esses
+valores mais recentes; clicar em "Sinal WiFi", "Memória Livre" ou
+"Temperatura CPU" abre um gráfico com a série das últimas 24h, obtida via
+`GET /admin/cerberoses/<id>/historico/<metric>` (`metric` é `rssi`,
+`mem_free` ou `cpu_temp`).
+
+### Reinício e reconfiguração remota
+
+Os três firmwares MQTT também aceitam, no mesmo tópico de comando usado
+para abertura/OTA:
+
+- `{"command":"reboot"}` — reinicia o dispositivo imediatamente. Acionado
+  pelo botão "Reiniciar" em `/admin/cerberoses/<id>` /
+  `/admin/carontes/<id>` (rota `POST .../reiniciar`).
+- `{"command":"get_config"}` — pede ao dispositivo que publique sua
+  configuração efetiva (a que está realmente em uso, lida do
+  `config.json` gravado na placa) no tópico `.../config/result`. Acionado
+  pela página `/admin/cerberoses/<id>/config` (e equivalente de Caronte).
+- `{"command":"set_config","params":{...}}` — grava novos valores no
+  `config.json` do dispositivo, que reinicia para aplicar. Campos em
+  branco no formulário não são enviados, evitando apagar sem querer senha
+  de WiFi/MQTT ou a `chave` do dispositivo; campos sensíveis
+  (`WIFI_PASS`, `DEVICE_KEY`, `MQTT_PASS`) nunca aparecem no log de
+  auditoria.
+
+O conjunto de campos editáveis muda conforme o firmware (BitDogLab,
+`CerberosESP32.py` ou `CaronteESP32C3.py`), detectado pelo `hardware`
+reportado no coldstart.
 
 ### Fora de escopo desta versão
 
@@ -1207,11 +1292,26 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   `OFFLINE_THRESHOLD` do monitor de offline. A página do Tartaro lista
   todos os seus equipamentos com o SLA (24h) de cada um e um link "Ver".
 - OTA para os firmwares MQTT (`Cerberos_BitDogLab_MQTT.py`, `CerberosESP32.py`,
-  `CaronteESP32C3.py`): cada um busca seu próprio arquivo de versão no GitHub
+  `CaronteESP32C3.py`): cada um busca seu próprio arquivo de versão
   (`version.json`, `version_esp32.json` e `version.json` do Autenticador,
   respectivamente), baixa e troca `main.py` quando há versão nova, com
   rollback automático via `main.bak` se a versão nova falhar repetidamente no
-  boot. O painel pode notificar a verificação na hora via MQTT
+  boot. Os arquivos agora são servidos pelo próprio Sistema em `GET
+  /ota/<filepath>` (whitelist fixa), e não mais por
+  `raw.githubusercontent.com` — mudança feita porque a rede da IFRN não
+  entregava esse domínio de forma confiável para arquivos maiores. O painel
+  pode notificar a verificação na hora via MQTT
   (`/admin/cerberoses/<id>/verificar-atualizacao`,
   `/admin/carontes/<id>/verificar-atualizacao`, e as variantes em massa) —
   veja [OTA (atualização remota de firmware)](#ota-atualização-remota-de-firmware).
+- Reinício remoto (`POST /admin/cerberoses/<id>/reiniciar` e equivalente em
+  Carontes) e reconfiguração remota (`/admin/cerberoses/<id>/config` e
+  `/config/atualizar`, e equivalentes em Carontes) via MQTT
+  (`reboot`/`get_config`/`set_config`), com a configuração efetiva reportada
+  guardada em `Cerberos.config_atual`/`Caronte.config_atual` — veja
+  [Reinício e reconfiguração remota](#reinício-e-reconfiguração-remota).
+- Diagnóstico de dispositivo (`ip`, `uptime`, `boot_count`, `hardware`, `mcu`,
+  `ssid`, `rssi`, `mem_free`, `cpu_temp`) reportado via coldstart/heartbeat
+  MQTT, com gráficos históricos de 24h em
+  `/admin/cerberoses/<id>/historico/<metric>` e equivalente em Carontes —
+  veja [Diagnóstico e histórico](#diagnóstico-e-histórico).
