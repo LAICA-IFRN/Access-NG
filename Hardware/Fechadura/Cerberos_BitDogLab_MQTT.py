@@ -180,7 +180,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.23"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.24"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -289,14 +289,18 @@ def _read_wifi_channel():
 def _read_ap_bssid():
     """MAC do rádio do Access Point atualmente associado — identifica qual AP
     físico o dispositivo está usando, diferente do IP do gateway (que costuma
-    ser o mesmo em toda uma rede com múltiplos APs sob o mesmo SSID). Nem
-    toda combinação de porta/build do MicroPython expõe isso; retorna None
-    quando indisponível."""
-    try:
-        bssid = network.WLAN(network.STA_IF).config('bssid')
-        return ':'.join('%02X' % b for b in bssid)
-    except Exception:
-        return None
+    ser o mesmo em toda uma rede com múltiplos APs sob o mesmo SSID). Tenta
+    config('bssid') e cai para status('bssid') — o parâmetro aceito varia por
+    porta/build do MicroPython; retorna None se nenhum funcionar."""
+    wlan = network.WLAN(network.STA_IF)
+    for getter in (wlan.config, wlan.status):
+        try:
+            bssid = getter('bssid')
+            if bssid:
+                return ':'.join('%02X' % b for b in bssid)
+        except Exception:
+            pass
+    return None
 
 
 # Diagnostico de reconexao WiFi: contagem e ha quanto tempo desde a ultima,
