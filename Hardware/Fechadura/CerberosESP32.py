@@ -164,7 +164,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.4"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.5"   # bump manual a cada release publicada
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
@@ -267,6 +267,19 @@ def _read_wifi_status():
 def _read_wifi_channel():
     try:
         return network.WLAN(network.STA_IF).config("channel")
+    except Exception:
+        return None
+
+
+def _read_ap_bssid():
+    """MAC do radio do Access Point atualmente associado - identifica qual AP
+    fisico o dispositivo esta usando, diferente do IP do gateway (que costuma
+    ser o mesmo em toda uma rede com multiplos APs sob o mesmo SSID). Nem
+    toda combinacao de porta/build do MicroPython expoe isso; retorna None
+    quando indisponivel."""
+    try:
+        bssid = network.WLAN(network.STA_IF).config("bssid")
+        return ":".join("%02X" % b for b in bssid)
     except Exception:
         return None
 
@@ -907,6 +920,7 @@ def publish_heartbeat():
         payload["cpu_temp"] = _read_cpu_temp()
         payload["wifi_status"] = _read_wifi_status()
         payload["wifi_channel"] = _read_wifi_channel()
+        payload["bssid"] = _read_ap_bssid()
         payload["wifi_reconnects"] = _wifi_reconnects
         if _wifi_last_reconnect_s is not None:
             payload["wifi_last_reconnect_s"] = time.time() - _wifi_last_reconnect_s

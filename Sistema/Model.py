@@ -127,6 +127,7 @@ class Cerberos(Base):
     wifi_reconnects: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     wifi_last_reconnect_s: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     wifi_last_disconnect_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ap_bssid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -160,6 +161,7 @@ class Caronte(Base):
     wifi_reconnects: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     wifi_last_reconnect_s: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     wifi_last_disconnect_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ap_bssid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -257,3 +259,4 @@ for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'wifi_reconnects', 'INTEGER')
     _add_column_if_missing(_table, 'wifi_last_reconnect_s', 'INTEGER')
     _add_column_if_missing(_table, 'wifi_last_disconnect_status', 'INTEGER')
+    _add_column_if_missing(_table, 'ap_bssid', 'VARCHAR(20)')

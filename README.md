@@ -77,7 +77,7 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 1. No painel admin, o Cerberos/Caronte é configurado com `protocolo=mqtt` e associado a um Broker MQTT cadastrado em `/admin/brokers`.
 2. O `mqtt_service` conecta a todos os brokers ativos ao iniciar o Sistema (`_mqtt().start()`).
 3. Ao ligar, o dispositivo publica `access-ng/coldstart/{mac}` (com `mac` e `chave`) e aguarda a resposta em `access-ng/coldstart/{mac}/result`. O Sistema valida a `chave`, atualiza `status`/`last_seen` e responde com `status:"ok"` + `ambiente_id`, `denied` (chave inválida) ou `unknown` (MAC não cadastrado). O dispositivo só prossegue ao receber `ok`; caso contrário repete a cada 15s.
-4. Com o `ambiente_id` recebido, o dispositivo publica `access-ng/heartbeat/{mac}` periodicamente, enviando `mac`, `uptime_ms` e `uptime_s`, e monta os tópicos `access-ng/{ambiente_id}/...`.
+4. Com o `ambiente_id` recebido, o dispositivo publica `access-ng/heartbeat/{mac}` periodicamente, enviando `mac`, `uptime_s` e `uptime` (formatado `dTHH:MM:SS`, calculado a partir de `time.time()` para não estourar como `time.ticks_ms()` faria após alguns dias), e monta os tópicos `access-ng/{ambiente_id}/...`.
 5. Um Caronte MQTT publica a TAG lida em `access-ng/{amb_id}/caronte/{mac}/tag`; o Sistema autentica com `Tartaro.autenticarTAGDetalhado()`, responde em `access-ng/{amb_id}/caronte/{mac}/result` e, se autorizado, publica o comando de abertura para os Cerberoses do ambiente.
 6. Um Cerberos MQTT assina `access-ng/{amb_id}/cerberos/{mac}/command`; ao receber `{"command":"unlock"}` aciona o relé.
 7. Quando o Cerberos tem entradas físicas configuradas (botão/contato local), ele publica `access-ng/{amb_id}/cerberos/{mac}/entrada` com `{"mac":..., "pin":...}` ao detectar o acionamento; o Sistema grava o evento como `entrada_fisica` no log, mesmo sem MAC cadastrado.
@@ -96,7 +96,7 @@ Prefixo fixo: `access-ng`. Tabela completa dos tópicos publicados/assinados pel
 | --- | --- | --- | --- |
 | `access-ng/coldstart/{mac}` | dispositivo → Sistema | `{"mac":..., "chave":..., "versao"?}` | Boot do dispositivo. |
 | `access-ng/coldstart/{mac}/result` | Sistema → dispositivo | `{"status":"ok"\|"denied"\|"unknown", "ambiente_id"?}` | Resposta ao coldstart. |
-| `access-ng/heartbeat/{mac}` | dispositivo → Sistema | `{"mac":..., "uptime_ms":..., "uptime_s":..., "versao"?}` | Ping periódico. |
+| `access-ng/heartbeat/{mac}` | dispositivo → Sistema | `{"mac":..., "uptime_s":..., "uptime":..., "versao"?}` | Ping periódico. |
 | `access-ng/{amb_id}/caronte/{mac}/tag` | dispositivo → Sistema | `{"tag":..., "chave":...}` | TAG lida por um Caronte MQTT. |
 | `access-ng/{amb_id}/caronte/{mac}/result` | Sistema → dispositivo | `{"allow": true\|false, "motivo"?}` | Resultado da autenticação da TAG. |
 | `access-ng/{amb_id}/cerberos/{mac}/command` | Sistema → dispositivo | `{"command":"unlock"}`, `{"command":"check_update"}`, `{"command":"reboot"}`, `{"command":"get_config"}` ou `{"command":"set_config","params":{...}}` | Comando de abertura, checagem de OTA, reinício remoto ou leitura/escrita de configuração do Cerberos. |
@@ -196,6 +196,7 @@ Colunas adicionadas automaticamente em `cerberoses` e `carontes`:
 - `wifi_reconnects INTEGER`
 - `wifi_last_reconnect_s INTEGER`
 - `wifi_last_disconnect_status INTEGER`
+- `ap_bssid VARCHAR(20)`
 - `config_atual VARCHAR(2000)`
 - `config_atualizado_em DATETIME`
 
@@ -312,6 +313,10 @@ Tabela: `cerberoses`
 - `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status` —
   contador de reconexões WiFi desde o boot, segundos desde a última e o código de
   status capturado no momento da queda (motivo aproximado)
+- `ap_bssid` — MAC do rádio do Access Point atualmente associado (não o IP do
+  gateway, que costuma ser o mesmo em toda uma rede com múltiplos APs sob o
+  mesmo SSID); histórico consultável junto com `rssi` para marcar troca de AP
+  no gráfico de Sinal WiFi
 - `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
   reportada pelo firmware via `get_config`/`set_config`
 
@@ -341,6 +346,10 @@ Tabela: `carontes`
 - `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status` —
   contador de reconexões WiFi desde o boot, segundos desde a última e o código de
   status capturado no momento da queda (motivo aproximado)
+- `ap_bssid` — MAC do rádio do Access Point atualmente associado (não o IP do
+  gateway, que costuma ser o mesmo em toda uma rede com múltiplos APs sob o
+  mesmo SSID); histórico consultável junto com `rssi` para marcar troca de AP
+  no gráfico de Sinal WiFi
 - `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
   reportada pelo firmware via `get_config`/`set_config`
 
@@ -601,7 +610,7 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/cerberoses/<id>/config` | Mostra a última configuração efetiva reportada pelo Cerberos (campos sensíveis mascarados). |
 | `POST` | `/admin/cerberoses/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Cerberos que reporte sua configuração atual. |
 | `POST` | `/admin/cerberoses/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
-| `GET` | `/admin/cerberoses/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico. |
+| `GET` | `/admin/cerberoses/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico; para `rssi` a resposta também inclui `bssids` (o AP associado em cada ponto), usado para marcar troca de Access Point no gráfico. |
 | `POST` | `/admin/cerberoses/<id>/excluir` | Remove Cerberos. |
 | `GET` | `/admin/carontes` | Lista Carontes fixos. |
 | `POST` | `/admin/carontes/verificar-atualizacao` | Notifica via MQTT todos os Carontes listados (escopados ao papel do usuário) para verificarem atualização agora. |
@@ -613,7 +622,7 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/carontes/<id>/config` | Mostra a última configuração efetiva reportada pelo Caronte (campos sensíveis mascarados). |
 | `POST` | `/admin/carontes/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Caronte que reporte sua configuração atual. |
 | `POST` | `/admin/carontes/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
-| `GET` | `/admin/carontes/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico. |
+| `GET` | `/admin/carontes/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico; para `rssi` a resposta também inclui `bssids` (o AP associado em cada ponto), usado para marcar troca de Access Point no gráfico. |
 | `POST` | `/admin/carontes/<id>/excluir` | Remove Caronte fixo. |
 | `GET` | `/admin/brokers` | Lista Brokers MQTT. |
 | `GET/POST` | `/admin/brokers/novo` | Cria Broker MQTT e conecta o `mqtt_service`. |
@@ -854,32 +863,40 @@ Depois do coldstart aceito, o heartbeat MQTT é publicado em
 ```json
 {
     "mac": "AA:BB:CC:DD:EE:FF",
-    "uptime_ms": 123456,
-    "uptime_s": 123
+    "uptime_s": 123,
+    "uptime": "0T00:02:03"
 }
 ```
 
 O Sistema grava esse payload nos logs do evento `mqtt_heartbeat`, útil para
 debug de reinicializações e quedas de energia.
 
-O firmware MQTT requer a biblioteca `umqtt.simple` instalada na placa via `mip`:
+O firmware MQTT requer a biblioteca `umqtt` instalada na placa via `mip`. Qual
+variante priorizar muda por dispositivo — cada firmware tenta importar a sua
+preferida primeiro e cai para a outra só se a preferida não estiver instalada:
 
 ```python
 import mip
-mip.install("umqtt.simple")
+mip.install("umqtt.robust")   # Cerberos_BitDogLab_MQTT.py
+mip.install("umqtt.simple")   # CerberosESP32.py e CaronteESP32C3.py
 ```
 
-**Não instale `umqtt.robust`** (ou, se já estiver instalada, pode deixar —
-o firmware prefere `umqtt.simple` quando ambas estão presentes). A
-`umqtt.robust` sobrescreve `publish()`/`check_msg()` para capturar `OSError`
-sozinha e ficar tentando reconectar em loop silencioso (sem log, já que
-`DEBUG=False` por padrão), o que trava o loop principal por tempo
-indeterminado em qualquer soluço de rede sem deixar rastro na serial — e o
-`reconnect()` dela usa `connect(False)`, que não reinscreve em nenhum
-tópico, deixando o dispositivo surdo a comandos até um reboot completo.
-Com `umqtt.simple`, o `OSError` propaga normalmente para o `except OSError`
-do `main()`, que já faz a recuperação correta (reconecta, repete o
-coldstart e reinscreve nos tópicos).
+Não há problema em ter as duas instaladas ao mesmo tempo — o `try`/`except`
+na importação escolhe a certa automaticamente.
+
+- **`Cerberos_BitDogLab_MQTT.py`** prefere `umqtt.robust`: essa foi a
+  combinação (junto com `qos=1` no publish do coldstart) validada em campo
+  como estável para essa placa depois de testes extensivos.
+- **`CerberosESP32.py`/`CaronteESP32C3.py`** preferem `umqtt.simple`: a
+  `umqtt.robust` sobrescreve `publish()`/`check_msg()` para capturar
+  `OSError` sozinha e ficar tentando reconectar em loop silencioso (sem log,
+  já que `DEBUG=False` por padrão), o que pode travar o loop principal por
+  tempo indeterminado em qualquer soluço de rede sem deixar rastro na serial
+  — e o `reconnect()` dela usa `connect(False)`, que não reinscreve em
+  nenhum tópico, deixando o dispositivo surdo a comandos até um reboot
+  completo. Com `umqtt.simple`, o `OSError` propaga normalmente para o
+  `except OSError` do `main()`, que já faz a recuperação correta (reconecta,
+  repete o coldstart e reinscreve nos tópicos).
 
 ### ESP32 (MicroPython) — Cerberos enxuto
 
@@ -1001,9 +1018,16 @@ upload pelo painel nem tabela no banco guardando o código.
    em `GET /ota/<filepath>` ([api.py](Sistema/api.py)), restrito a uma
    whitelist fixa (`_OTA_ALLOWED_FILES`) que nunca lê arquivo fora dessa
    lista. O dispositivo busca `version.json`/`version_esp32.json` em
-   `http://{OTA_HOST}:{OTA_PORT}/access-ng/ota/{OTA_VERSION_PATH}` (HTTP puro
-   nos ESP32 MicroPython; HTTPS no BitDogLab). Se a `versao` remota for
-   diferente da local, baixa o `.py` do mesmo host, valida o conteúdo, grava
+   `http://{OTA_HOST}:{OTA_PORT}/access-ng/ota/{OTA_VERSION_PATH}` — HTTP
+   puro nos três firmwares (não HTTPS): no ESP32/ESP32-C3 o handshake
+   TLS/RSA estourava a memória disponível (`MBEDTLS_ERR_RSA_PUBLIC_FAILED`),
+   e os arquivos de OTA são públicos, sem segredo em trânsito, então HTTP
+   puro é aceitável — mesma lógica de expor o broker MQTT em texto puro na
+   porta 1883. A comparação de versão é numérica (tupla `(major, minor,
+   patch)`), não por string ou igualdade — evita tanto reinstalar uma versão
+   igual/mais antiga quanto o bug clássico de comparação textual (ex.:
+   `"1.3.10" < "1.3.7"` letra a letra). Se a `versao` remota for maior que a
+   local, o dispositivo baixa o `.py` do mesmo host, valida o conteúdo, grava
    como `main.new`, troca com `main.py` (guardando o anterior em `main.bak`)
    e reinicia. `OTA_HOST`/`OTA_PORT` apontam para o domínio onde o Sistema
    está publicado (ex.: `laica.ifrn.edu.br`, porta 80), **não** mais para
@@ -1095,19 +1119,25 @@ também reporta, adaptado às APIs disponíveis no MicroPython
 | `wifi_status` | `WiFi.status()` | `network.WLAN(network.STA_IF).status()` — código bruto, **não traduzido**: os valores de `STAT_*` variam por port/versão do MicroPython (ESP32 vs. RP2/cyw43 do BitDogLab), então mapear para texto de forma confiável exigiria testar em cada placa |
 | `wifi_channel` | `WiFi.channel()` | `network.WLAN(network.STA_IF).config('channel')` |
 | `wifi_reconnects` | contagem de reconexões | contador incrementado toda vez que `connect_wifi()` detecta que a conexão caiu (não conta a conexão inicial do boot); zera a cada reinício |
-| `wifi_last_reconnect_s` | tempo entre reconexões | segundos desde a última (re)conexão, calculado a partir de `time.ticks_ms()` |
+| `wifi_last_reconnect_s` | tempo entre reconexões | segundos desde a última (re)conexão, calculado a partir de `time.time()` (não `time.ticks_ms()`, que estoura/zera sozinho depois de alguns dias de uptime contínuo) |
 | `wifi_last_disconnect_status` | motivo da desconexão | o mesmo código de `wifi_status` capturado no instante em que a queda foi percebida, antes de tentar reconectar |
+| `bssid` | `WiFi.BSSIDstr()` | `network.WLAN(network.STA_IF).config('bssid')`, formatado como MAC (`AA:BB:CC:DD:EE:FF`); `None` se o port/build não expuser isso |
 
-Esses seis campos são só "valor mais recente" no painel (sem gráfico de
-histórico, ao contrário de `rssi`/`mem_free`/`cpu_temp`) — aparecem no card
-de Diagnóstico de `/admin/cerberoses/<id>` e `/admin/carontes/<id>`.
+Os seis primeiros campos são só "valor mais recente" no painel (sem gráfico
+de histórico, ao contrário de `rssi`/`mem_free`/`cpu_temp`) — aparecem no
+card de Diagnóstico de `/admin/cerberoses/<id>` e `/admin/carontes/<id>`
+(persistidos em `Cerberos`/`Caronte`, campo `ap_bssid` para o BSSID).
 
-**Deixado de fora:** o BSSID do ponto de acesso conectado (`WiFi.BSSIDstr()`
-no Arduino). O `network.WLAN` do MicroPython não expõe de forma confiável o
-BSSID da conexão STA ativa em todos os ports usados aqui (ESP32, ESP32-C3 e
-RP2/cyw43 do BitDogLab); a alternativa seria um `wlan.scan()` periódico
-casando por SSID, o que é intrusivo (interfere na conexão ativa) para um
-dado de diagnóstico secundário.
+O `bssid` identifica qual Access Point físico o dispositivo está associado —
+diferente do IP do gateway (que costuma ser o mesmo em toda uma rede com
+múltiplos APs sob o mesmo SSID, então não serve para detectar roaming). Ele
+é lido junto com o `rssi` no mesmo heartbeat de diagnóstico, então o
+histórico de ambos vem sempre da mesma linha de `AccessLog` — sem risco de
+desalinhar duas séries buscadas separadamente. No gráfico "Sinal WiFi" do
+painel, os pontos onde o BSSID mudou em relação ao ponto anterior aparecem
+com marcador maior/triangular e borda dourada, com o BSSID (e se houve
+troca) no tooltip — útil para saber se o dispositivo está trocando muito de
+AP ou se o AP que ele usava caiu.
 
 ### Reinício e reconfiguração remota
 
@@ -1395,8 +1425,14 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   `/admin/cerberoses/<id>/historico/<metric>` e equivalente em Carontes —
   veja [Diagnóstico e histórico](#diagnóstico-e-histórico).
 - Diagnóstico WiFi estendido (`mem_free_min`, `wifi_status`, `wifi_channel`,
-  `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status`),
-  adaptado do conjunto clássico `WiFi.RSSI()/status()/channel()` +
+  `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status`,
+  `bssid`), adaptado do conjunto clássico `WiFi.RSSI()/status()/channel()` +
   `ESP.getFreeHeap()/getMinFreeHeap()` do Arduino para as APIs do
   MicroPython (`network.WLAN`) — veja [Diagnóstico WiFi
   estendido](#diagnóstico-wifi-estendido).
+- Rastreio de Access Point (`ap_bssid` em `Cerberos`/`Caronte`): identifica
+  qual AP físico o dispositivo está associado (diferente do IP do gateway,
+  que não muda entre APs numa rede com múltiplos pontos sob o mesmo SSID).
+  O gráfico "Sinal WiFi" do painel sobrepõe marcadores nos pontos onde o AP
+  mudou, para diagnosticar roaming excessivo ou queda do AP em uso — veja
+  [Diagnóstico WiFi estendido](#diagnóstico-wifi-estendido).

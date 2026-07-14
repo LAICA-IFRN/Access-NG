@@ -1185,6 +1185,35 @@ def _diag_series(mac, metric, desde, ate):
     return labels, values
 
 
+def _rssi_bssid_series(mac, desde, ate):
+    """Série de RSSI com o BSSID do AP associado em cada ponto, extraídos do
+    mesmo heartbeat (mesma linha de AccessLog) — usado para marcar troca de
+    Access Point sobre o gráfico de sinal, sem depender de alinhar por índice
+    duas séries buscadas separadamente."""
+    logs = db.query(AccessLog).filter(
+        AccessLog.mac.ilike(mac),
+        AccessLog.event_type == 'mqtt_heartbeat',
+        AccessLog.timestamp >= desde,
+        AccessLog.timestamp <= ate,
+    ).order_by(AccessLog.timestamp.asc()).all()
+
+    labels, values, bssids = [], [], []
+    for log in logs:
+        if not log.payload:
+            continue
+        try:
+            data = json.loads(log.payload)
+        except Exception:
+            continue
+        valor = data.get('rssi')
+        if valor is None:
+            continue
+        labels.append(log.timestamp.strftime('%d/%m %Hh%M'))
+        values.append(valor)
+        bssids.append(data.get('bssid'))
+    return labels, values, bssids
+
+
 def _build_dashboard_analytics(ambiente_ids):
     """Estatísticas da home do painel. ambiente_ids=None => todos os Tartaros."""
     now = datetime.datetime.utcnow()
@@ -1442,6 +1471,9 @@ def admin_cerberos_historico(id, metric):
         abort(403)
     ate = datetime.datetime.utcnow()
     desde = ate - datetime.timedelta(hours=24)
+    if metric == 'rssi':
+        labels, values, bssids = _rssi_bssid_series(c.mac, desde, ate)
+        return jsonify({'label': _DIAG_METRICS[metric], 'labels': labels, 'values': values, 'bssids': bssids})
     labels, values = _diag_series(c.mac, metric, desde, ate)
     return jsonify({'label': _DIAG_METRICS[metric], 'labels': labels, 'values': values})
 
@@ -1746,6 +1778,9 @@ def admin_caronte_historico(id, metric):
         abort(403)
     ate = datetime.datetime.utcnow()
     desde = ate - datetime.timedelta(hours=24)
+    if metric == 'rssi':
+        labels, values, bssids = _rssi_bssid_series(c.mac, desde, ate)
+        return jsonify({'label': _DIAG_METRICS[metric], 'labels': labels, 'values': values, 'bssids': bssids})
     labels, values = _diag_series(c.mac, metric, desde, ate)
     return jsonify({'label': _DIAG_METRICS[metric], 'labels': labels, 'values': values})
 

@@ -378,6 +378,8 @@ class MqttService:
                         device.wifi_last_reconnect_s = payload['wifi_last_reconnect_s']
                     if payload.get('wifi_last_disconnect_status') is not None:
                         device.wifi_last_disconnect_status = payload['wifi_last_disconnect_status']
+                    if payload.get('bssid') is not None:
+                        device.ap_bssid = payload['bssid']
                     updated = True
                     found_device = device
             if updated:

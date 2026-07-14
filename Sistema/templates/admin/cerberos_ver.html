@@ -106,6 +106,7 @@
           <div class="diag-item diag-clickable" onclick="abrirHistorico('Temperatura CPU', '{{ url_for('admin_cerberos_historico', id=c.id, metric='cpu_temp') }}', 'cpu_temp')"><span class="diag-label">Temperatura CPU</span><span class="diag-value">{{ (c.cpu_temp ~ ' °C') if c.cpu_temp is not none else '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">Memória Mínima</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free_min).replace(',', '.') ~ ' B') if c.mem_free_min is not none else '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">Canal WiFi</span><span class="diag-value">{{ c.wifi_channel if c.wifi_channel is not none else '—' }}</span></div>
+          <div class="diag-item" title="MAC do rádio do Access Point associado — mostrado como marcador no gráfico de Sinal WiFi"><span class="diag-label">Access Point (BSSID)</span><span class="diag-value" style="font-family:monospace;">{{ c.ap_bssid or '—' }}</span></div>
           <div class="diag-item" title="Código bruto de network.WLAN.status() do MicroPython — varia por placa/versão"><span class="diag-label">Status WiFi (código)</span><span class="diag-value">{{ c.wifi_status if c.wifi_status is not none else '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">Reconexões WiFi</span><span class="diag-value">{{ c.wifi_reconnects if c.wifi_reconnects is not none else '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">Última Reconexão</span><span class="diag-value">{{ (c.wifi_last_reconnect_s ~ 's atrás') if c.wifi_last_reconnect_s is not none else '—' }}</span></div>
@@ -211,6 +212,7 @@
         tension: 0.3,
         pointRadius: 2,
       };
+      var tooltipCallbacks = undefined;
       if (metric === 'rssi') {
         dataset.borderColor = '#888';
         dataset.segment = {
@@ -220,6 +222,30 @@
         };
         dataset.pointBackgroundColor = d.values.map(rssiColor);
         dataset.fill = false;
+
+        // Sobrepõe a troca de Access Point (BSSID) no gráfico de sinal: os
+        // pontos onde o AP mudou ganham marcador maior/triangular, e o
+        // tooltip mostra qual AP estava associado naquele momento.
+        var bssids = d.bssids || [];
+        if (bssids.length === d.values.length) {
+          dataset.pointRadius = d.values.map(function (_, i) {
+            return (i > 0 && bssids[i] && bssids[i] !== bssids[i - 1]) ? 6 : 2;
+          });
+          dataset.pointStyle = d.values.map(function (_, i) {
+            return (i > 0 && bssids[i] && bssids[i] !== bssids[i - 1]) ? 'triangle' : 'circle';
+          });
+          dataset.pointBorderColor = d.values.map(function (_, i) {
+            return (i > 0 && bssids[i] && bssids[i] !== bssids[i - 1]) ? '#c9a227' : rssiColor(d.values[i]);
+          });
+          tooltipCallbacks = {
+            afterLabel: function (tCtx) {
+              var i = tCtx.dataIndex;
+              var bssid = bssids[i] || 'desconhecido';
+              var trocou = i > 0 && bssids[i] && bssids[i] !== bssids[i - 1];
+              return 'AP: ' + bssid + (trocou ? ' (trocou de AP aqui)' : '');
+            }
+          };
+        }
       } else {
         dataset.borderColor = '#c9a227';
         dataset.backgroundColor = 'rgba(201,162,39,0.15)';
@@ -227,6 +253,8 @@
       }
       var yScale = { ticks: { color: '#888' }, grid: { color: '#2d2d4e' } };
       if (metric === 'mem_free') { yScale.min = 0; }
+      var plugins = { legend: { display: false } };
+      if (tooltipCallbacks) { plugins.tooltip = { callbacks: tooltipCallbacks }; }
       histChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -238,7 +266,7 @@
             y: yScale,
             x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { display: false } }
           },
-          plugins: { legend: { display: false } }
+          plugins: plugins
         }
       });
     });
