@@ -164,7 +164,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.2"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.4"   # bump manual a cada release publicada
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
@@ -275,7 +275,7 @@ def _read_wifi_channel():
 # alem do codigo de status no momento em que a queda foi percebida (motivo
 # aproximado da desconexao). Zerado a cada boot.
 _wifi_reconnects = 0
-_wifi_last_reconnect_ms = None
+_wifi_last_reconnect_s = None
 _wifi_last_disconnect_status = None
 
 
@@ -341,19 +341,19 @@ def unlock_door(source="remote"):
 # --- WIFI --------------------------------------------------------------------
 
 def connect_wifi():
-    global _wifi_reconnects, _wifi_last_reconnect_ms, _wifi_last_disconnect_status
+    global _wifi_reconnects, _wifi_last_reconnect_s, _wifi_last_disconnect_status
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     if wlan.isconnected():
         print("[WiFi] IP: %s" % wlan.ifconfig()[0])
         return True
 
-    if _wifi_last_reconnect_ms is not None:
+    if _wifi_last_reconnect_s is not None:
         # ja tinha conectado antes nesse boot - isso e uma reconexao, nao a
         # conexao inicial. Guarda o status no momento da queda como motivo.
         _wifi_last_disconnect_status = _read_wifi_status()
         _wifi_reconnects += 1
-    _wifi_last_reconnect_ms = time.ticks_ms()
+    _wifi_last_reconnect_s = time.time()
 
     print("[WiFi] Conectando em %s..." % WIFI_SSID)
     wlan.connect(WIFI_SSID, WIFI_PASS)
@@ -870,13 +870,17 @@ def publish_entrada(pin_no):
     print("[Lock] Entrada fisica publicada (pin=%d)" % pin_no)
 
 
-def _format_uptime(uptime_ms):
-    total_s = uptime_ms // 1000
-    days, rem = divmod(total_s, 86400)
+def _format_uptime(uptime_s):
+    days, rem = divmod(uptime_s, 86400)
     hours, rem = divmod(rem, 3600)
     minutes, seconds = divmod(rem, 60)
     return "%dT%02d:%02d:%02d" % (days, hours, minutes, seconds)
 
+
+# time.time() em vez de time.ticks_ms(): ticks_ms() estoura (volta a zero)
+# depois de alguns dias de uptime continuo, o que faria o campo "uptime" do
+# heartbeat saltar/zerar sozinho, parecendo um reboot que nao aconteceu.
+_boot_time = time.time()
 
 _heartbeat_count = 0
 _mem_free_min = None
@@ -884,12 +888,11 @@ _mem_free_min = None
 
 def publish_heartbeat():
     global _heartbeat_count, _mem_free_min
-    uptime_ms = time.ticks_ms()
+    uptime_s = time.time() - _boot_time
     payload = {
         "mac": DEVICE_MAC,
-        "uptime_ms": uptime_ms,
-        "uptime_s": uptime_ms // 1000,
-        "uptime": _format_uptime(uptime_ms),
+        "uptime_s": uptime_s,
+        "uptime": _format_uptime(uptime_s),
         "ip": network.WLAN(network.STA_IF).ifconfig()[0],
         "versao": FIRMWARE_VERSAO,
     }
@@ -905,8 +908,8 @@ def publish_heartbeat():
         payload["wifi_status"] = _read_wifi_status()
         payload["wifi_channel"] = _read_wifi_channel()
         payload["wifi_reconnects"] = _wifi_reconnects
-        if _wifi_last_reconnect_ms is not None:
-            payload["wifi_last_reconnect_s"] = time.ticks_diff(uptime_ms, _wifi_last_reconnect_ms) // 1000
+        if _wifi_last_reconnect_s is not None:
+            payload["wifi_last_reconnect_s"] = time.time() - _wifi_last_reconnect_s
         if _wifi_last_disconnect_status is not None:
             payload["wifi_last_disconnect_status"] = _wifi_last_disconnect_status
     _client.publish(_topics()["heartbeat"], json.dumps(payload))

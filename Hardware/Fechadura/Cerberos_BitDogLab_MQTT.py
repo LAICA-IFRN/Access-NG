@@ -67,11 +67,13 @@ Para o modo REST (HTTP/HTTPS) use Cerberos_BitDogLab.py.
 ─── OTA (atualização remota) ──────────────────────────────────────────────────
 
   O firmware se atualiza buscando version.json em
-  https://{OTA_HOST}/ota/{OTA_VERSION_PATH}, servido pelo proprio Access-NG
-  (nao pelo raw.githubusercontent.com — a rede da IFRN nao entrega de forma
-  confiavel arquivos maiores vindos do CDN do GitHub). Se a versão remota
-  difere de FIRMWARE_VERSAO, baixa o .py em OTA_FIRMWARE_PATH, valida,
-  grava em main.new, troca com main.py (backup em main.bak) e reinicia.
+  http://{OTA_HOST}:{OTA_PORT}/ota/{OTA_VERSION_PATH} (HTTP puro, sem TLS —
+  os arquivos de OTA são públicos, sem segredo em trânsito), servido pelo
+  proprio Access-NG (nao pelo raw.githubusercontent.com — a rede da IFRN
+  nao entrega de forma confiavel arquivos maiores vindos do CDN do GitHub).
+  Se a versão remota difere de FIRMWARE_VERSAO, baixa o .py em
+  OTA_FIRMWARE_PATH, valida, grava em main.new, troca com main.py (backup
+  em main.bak) e reinicia.
 
   A checagem ocorre: (1) após o coldstart, (2) periodicamente a cada
   OTA_CHECK_INTERVAL segundos, (3) imediatamente ao receber
@@ -95,12 +97,6 @@ import json
 import os
 import ubinascii
 import gc
-
-try:
-    import ssl
-    _SSL_AVAILABLE = True
-except ImportError:
-    _SSL_AVAILABLE = False
 
 # ─── CONFIGURAÇÃO ─────────────────────────────────────────────────────────────
 
@@ -184,7 +180,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.13"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.22"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -192,6 +188,12 @@ FIRMWARE_VERSAO   = "1.3.13"   # bump manual a cada release publicada
 OTA_VERSION_PATH  = "Hardware/Fechadura/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py"
 OTA_HOST          = "laica.ifrn.edu.br"
+# HTTP puro (sem TLS): mesma infraestrutura usada pelo CerberosESP32.py e
+# CaronteESP32C3.py (o handshake TLS/RSA estourava a memoria desses ESP32).
+# Os arquivos de OTA sao publicos (sem segredos), entao HTTP puro e
+# aceitavel aqui — mesma logica de expor o broker MQTT em texto puro na
+# porta 1883.
+OTA_PORT          = 80
 
 # ─── DIAGNÓSTICO ────────────────────────────────────────────────────────────────
 
@@ -288,7 +290,7 @@ def _read_wifi_channel():
 # alem do codigo de status no momento em que a queda foi percebida (motivo
 # aproximado da desconexao). Zerado a cada boot.
 _wifi_reconnects = 0
-_wifi_last_reconnect_ms = None
+_wifi_last_reconnect_s = None
 _wifi_last_disconnect_status = None
 
 # ─── HARDWARE ─────────────────────────────────────────────────────────────────
@@ -430,7 +432,7 @@ def display_message(title, *lines):
 # ─── WiFi ──────────────────────────────────────────────────────────────────────
 
 def connect_wifi():
-    global _wifi_reconnects, _wifi_last_reconnect_ms, _wifi_last_disconnect_status
+    global _wifi_reconnects, _wifi_last_reconnect_s, _wifi_last_disconnect_status
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     if wlan.isconnected():
@@ -438,12 +440,12 @@ def connect_wifi():
         display_message("WIFI", "Conectado", wlan.ifconfig()[0])
         return True
 
-    if _wifi_last_reconnect_ms is not None:
+    if _wifi_last_reconnect_s is not None:
         # ja tinha conectado antes nesse boot - isso e uma reconexao, nao a
         # conexao inicial. Guarda o status no momento da queda como motivo.
         _wifi_last_disconnect_status = _read_wifi_status()
         _wifi_reconnects += 1
-    _wifi_last_reconnect_ms = time.ticks_ms()
+    _wifi_last_reconnect_s = time.time()
 
     print(f"[WiFi] Conectando em {WIFI_SSID}...")
     display_message("WIFI", "Conectando", WIFI_SSID)
@@ -521,37 +523,28 @@ def _ota_confirmar_versao_boa():
         time.sleep(2)
 
 
-def _https_get(path, host=None, timeout=10):
-    """GET HTTPS simples. Retorna (status_code, body_str) ou (None, None)."""
-    return _https_request(host or OTA_HOST, path, timeout=timeout)
+def _http_get(path, host=None, timeout=10):
+    """GET HTTP simples (sem TLS). Retorna (status_code, body_str) ou (None, None)."""
+    return _http_request(host or OTA_HOST, path, timeout=timeout)
 
 
-def _https_request(host, path, dest_file=None, timeout=10):
-    """GET HTTPS em host+path. Se dest_file for informado, grava o corpo da
-    resposta direto nesse arquivo (streaming) e retorna (status, None);
-    senão acumula o corpo em memória e retorna (status, body_str).
-    Retorna (None, None) em qualquer falha de rede."""
-    if not _SSL_AVAILABLE:
-        print("[OTA] ssl indisponível neste build")
-        return None, None
+def _http_request(host, path, dest_file=None, timeout=10):
+    """GET HTTP em host+path (sem TLS — ver OTA_PORT). Se dest_file for
+    informado, grava o corpo da resposta direto nesse arquivo (streaming) e
+    retorna (status, None); senão acumula o corpo em memória e retorna
+    (status, body_str). Retorna (None, None) em qualquer falha de rede."""
     sock = None
     t0 = time.time()
     gc.collect()
     try:
-        ai   = socket.getaddrinfo(host, 443, 0, socket.SOCK_STREAM)
+        ai   = socket.getaddrinfo(host, OTA_PORT, 0, socket.SOCK_STREAM)
         addr = ai[0][-1]
         print("[OTA] %s -> %s" % (host, addr))
         sock = socket.socket()
         sock.settimeout(timeout)
         sock.connect(addr)
         if dest_file:
-            print("[OTA] TCP conectado, iniciando TLS...")
-        try:
-            sock = ssl.wrap_socket(sock, server_hostname=host)
-        except TypeError:
-            sock = ssl.wrap_socket(sock)
-        if dest_file:
-            print("[OTA] TLS OK, enviando requisição...")
+            print("[OTA] TCP conectado, enviando requisição...")
 
         req = (
             "GET " + path + " HTTP/1.1\r\n"
@@ -628,7 +621,7 @@ def _https_request(host, path, dest_file=None, timeout=10):
             print("[OTA] Download concluído: %d bytes" % received)
         return status, (None if out else buf.decode('utf-8', 'ignore'))
     except Exception as e:
-        print("[OTA] Erro HTTPS (%.1fs):" % (time.time() - t0), e)
+        print("[OTA] Erro HTTP (%.1fs):" % (time.time() - t0), e)
         return None, None
     finally:
         if sock:
@@ -657,7 +650,7 @@ def check_for_update():
     ao firmware já instalado."""
     if not OTA_ENABLED:
         return None
-    status, body = _https_get("/access-ng/ota/" + OTA_VERSION_PATH)
+    status, body = _http_get("/access-ng/ota/" + OTA_VERSION_PATH)
     if status != 200 or not body:
         print("[OTA] Falha ao verificar version.json (status=%s)" % status)
         display_message("OTA", "Falha ao verificar", "tentando depois")
@@ -721,9 +714,9 @@ def apply_update(remote):
     try:
         versao = remote.get('versao', '')
         path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
-        print("[OTA] Baixando", "https://" + OTA_HOST + path)
+        print("[OTA] Baixando", "http://" + OTA_HOST + path)
         display_message("OTA", "Baixando", versao)
-        status, _ = _https_request(OTA_HOST, path, dest_file='main.new', timeout=30)
+        status, _ = _http_request(OTA_HOST, path, dest_file='main.new', timeout=30)
         if status != 200 or not _valida_payload('main.new', versao):
             print("[OTA] Download inválido (status=%s) — abortando" % status)
             try:
@@ -979,20 +972,10 @@ def _diag_broker():
 
 def mqtt_connect():
     global _client
-    # umqtt.simple e preferida de proposito: publish()/check_msg() propagam
-    # OSError de verdade, o que aciona o except OSError do main() - que ja
-    # faz a recuperacao completa e correta (reconecta + do_coldstart() +
-    # reinscreve nos topicos). A umqtt.robust captura OSError sozinha e fica
-    # tentando reconectar em loop silencioso (sem log, DEBUG=False por
-    # padrao) dentro da propria chamada de publish()/check_msg(), travando
-    # o loop principal por tempo indeterminado sem que nada apareca na
-    # serial - e o reconnect() dela usa connect(False), que nao reinscreve
-    # em nenhum topico, deixando o dispositivo surdo a comandos ate um
-    # reboot completo. So cai para robust se simple nao estiver instalada.
     try:
-        from umqtt.simple import MQTTClient
-    except ImportError:
         from umqtt.robust import MQTTClient
+    except ImportError:
+        from umqtt.simple import MQTTClient
 
     kwargs = {'port': MQTT_PORT, 'keepalive': 90}
     if MQTT_USER:
@@ -1020,14 +1003,12 @@ def do_coldstart():
     while True:
         _coldstart_result = None
         try:
-            print("[MQTT] Publicando coldstart...")
-            display_message("COLDSTART", "Publicando", "aguarde...")
             _client.publish(_t()['coldstart'],
                             json.dumps({'mac': DEVICE_MAC, 'chave': DEVICE_KEY,
                                         'versao': FIRMWARE_VERSAO,
                                         'boot_count': BOOT_COUNT, 'hardware': HARDWARE_INFO,
-                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID,
-                                        'rssi': _read_rssi()}))
+                                        'mcu': _read_mcu(), 'ssid': WIFI_SSID}),
+                            qos=1)
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
             display_message("COLDSTART", "Publicado", "aguardando...")
 
@@ -1064,26 +1045,35 @@ def do_coldstart():
         time.sleep(15)
 
 
-def _format_uptime(uptime_ms):
-    total_s = uptime_ms // 1000
-    days, rem = divmod(total_s, 86400)
+def _format_uptime(uptime_s):
+    days, rem = divmod(uptime_s, 86400)
     hours, rem = divmod(rem, 3600)
     minutes, seconds = divmod(rem, 60)
     return "%dT%02d:%02d:%02d" % (days, hours, minutes, seconds)
 
 
+# time.time() em vez de time.ticks_ms(): ticks_ms() no RP2040 estoura
+# (volta a zero) a cada ~12,4 dias (periodo de 2**30 ms) — um dispositivo de
+# controle de acesso deve ficar ligado por muito mais tempo que isso sem
+# reiniciar, e usar ticks_ms() direto faria o campo "uptime" do heartbeat
+# saltar/zerar sozinho nesse ponto, parecendo um reboot que nao aconteceu.
+# time.time() nao tem esse problema (contador de segundos, sem wraparound
+# nessa escala).
+_boot_time = time.time()
+
 _heartbeat_count = 0
+
+
 _mem_free_min = None
 
 
 def publish_heartbeat():
     global _heartbeat_count, _mem_free_min
-    uptime_ms = time.ticks_ms()
+    uptime_s = time.time() - _boot_time
     payload = {
         'mac': DEVICE_MAC,
-        'uptime_ms': uptime_ms,
-        'uptime_s': uptime_ms // 1000,
-        'uptime': _format_uptime(uptime_ms),
+        'uptime_s': uptime_s,
+        'uptime': _format_uptime(uptime_s),
         'ip': network.WLAN(network.STA_IF).ifconfig()[0],
         'versao': FIRMWARE_VERSAO,
     }
@@ -1099,8 +1089,8 @@ def publish_heartbeat():
         payload['wifi_status'] = _read_wifi_status()
         payload['wifi_channel'] = _read_wifi_channel()
         payload['wifi_reconnects'] = _wifi_reconnects
-        if _wifi_last_reconnect_ms is not None:
-            payload['wifi_last_reconnect_s'] = time.ticks_diff(uptime_ms, _wifi_last_reconnect_ms) // 1000
+        if _wifi_last_reconnect_s is not None:
+            payload['wifi_last_reconnect_s'] = time.time() - _wifi_last_reconnect_s
         if _wifi_last_disconnect_status is not None:
             payload['wifi_last_disconnect_status'] = _wifi_last_disconnect_status
     _client.publish(_t()['heartbeat'], json.dumps(payload))
