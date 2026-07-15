@@ -164,7 +164,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.6"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.7"   # bump manual a cada release publicada
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
@@ -275,8 +275,12 @@ def _read_ap_bssid():
     """MAC do radio do Access Point atualmente associado - identifica qual AP
     fisico o dispositivo esta usando, diferente do IP do gateway (que costuma
     ser o mesmo em toda uma rede com multiplos APs sob o mesmo SSID). Tenta
-    config('bssid') e cai para status('bssid') - o parametro aceito varia por
-    porta/build do MicroPython; retorna None se nenhum funcionar."""
+    config('bssid') e status('bssid') primeiro - o parametro aceito varia por
+    porta/build do MicroPython. Confirmado em campo que nenhum dos dois e
+    suportado nesse build de ESP32 ("unknown config param"/"unknown status
+    param"); como ultimo recurso, escaneia e casa pelo SSID atual - isso
+    tira o radio do canal associado por um instante e pode interromper
+    brevemente a conexao, entao so roda se os metodos diretos falharem."""
     wlan = network.WLAN(network.STA_IF)
     for getter in (wlan.config, wlan.status):
         try:
@@ -285,6 +289,13 @@ def _read_ap_bssid():
                 return ":".join("%02X" % b for b in bssid)
         except Exception:
             pass
+    try:
+        if wlan.isconnected():
+            for rede in wlan.scan():
+                if rede[0].decode("utf-8") == WIFI_SSID:
+                    return ubinascii.hexlify(rede[1], ":").decode("utf-8")
+    except Exception:
+        pass
     return None
 
 

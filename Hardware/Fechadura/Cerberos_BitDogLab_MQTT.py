@@ -180,7 +180,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.24"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.25"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -290,8 +290,12 @@ def _read_ap_bssid():
     """MAC do rádio do Access Point atualmente associado — identifica qual AP
     físico o dispositivo está usando, diferente do IP do gateway (que costuma
     ser o mesmo em toda uma rede com múltiplos APs sob o mesmo SSID). Tenta
-    config('bssid') e cai para status('bssid') — o parâmetro aceito varia por
-    porta/build do MicroPython; retorna None se nenhum funcionar."""
+    config('bssid') e status('bssid') primeiro — o parâmetro aceito varia por
+    porta/build do MicroPython (confirmado em campo que nenhum dos dois é
+    suportado nos ESP32 usados aqui). Como último recurso, escaneia e casa
+    pelo SSID atual — isso tira o rádio do canal associado por um instante e
+    pode interromper brevemente a conexão, então só roda se os métodos
+    diretos falharem."""
     wlan = network.WLAN(network.STA_IF)
     for getter in (wlan.config, wlan.status):
         try:
@@ -300,6 +304,13 @@ def _read_ap_bssid():
                 return ':'.join('%02X' % b for b in bssid)
         except Exception:
             pass
+    try:
+        if wlan.isconnected():
+            for rede in wlan.scan():
+                if rede[0].decode('utf-8') == WIFI_SSID:
+                    return ubinascii.hexlify(rede[1], ':').decode('utf-8')
+    except Exception:
+        pass
     return None
 
 

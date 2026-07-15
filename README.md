@@ -1121,12 +1121,27 @@ também reporta, adaptado às APIs disponíveis no MicroPython
 | `wifi_reconnects` | contagem de reconexões | contador incrementado toda vez que `connect_wifi()` detecta que a conexão caiu (não conta a conexão inicial do boot); zera a cada reinício |
 | `wifi_last_reconnect_s` | tempo entre reconexões | segundos desde a última (re)conexão, calculado a partir de `time.time()` (não `time.ticks_ms()`, que estoura/zera sozinho depois de alguns dias de uptime contínuo) |
 | `wifi_last_disconnect_status` | motivo da desconexão | o mesmo código de `wifi_status` capturado no instante em que a queda foi percebida, antes de tentar reconectar |
-| `bssid` | `WiFi.BSSIDstr()` | `network.WLAN(network.STA_IF).config('bssid')`, formatado como MAC (`AA:BB:CC:DD:EE:FF`); `None` se o port/build não expuser isso |
+| `bssid` | `WiFi.BSSIDstr()` | ver abaixo — `None` se nenhuma das formas funcionar nesse hardware |
 
 Os seis primeiros campos são só "valor mais recente" no painel (sem gráfico
 de histórico, ao contrário de `rssi`/`mem_free`/`cpu_temp`) — aparecem no
 card de Diagnóstico de `/admin/cerberoses/<id>` e `/admin/carontes/<id>`
 (persistidos em `Cerberos`/`Caronte`, campo `ap_bssid` para o BSSID).
+
+`_read_ap_bssid()` tenta três formas, em ordem, e usa a primeira que
+funcionar nesse hardware/build:
+
+1. `network.WLAN(network.STA_IF).config('bssid')`
+2. `network.WLAN(network.STA_IF).status('bssid')`
+3. `wlan.scan()` casando o SSID atual (`WIFI_SSID`) na lista de redes
+   encontradas, formatando o BSSID retornado com `ubinascii.hexlify()`
+
+Nos ESP32 usados aqui, confirmado em campo que nem `config('bssid')` nem
+`status('bssid')` são suportados (`"unknown config param"`/`"unknown status
+param"`) — só a opção 3 funciona. Ela só é tentada como último recurso
+porque escanear tira o rádio do canal associado por um instante e pode
+interromper brevemente a conexão ativa; as opções 1 e 2 não têm esse risco
+e evitam o scan sempre que suportadas pela placa.
 
 O `bssid` identifica qual Access Point físico o dispositivo está associado —
 diferente do IP do gateway (que costuma ser o mesmo em toda uma rede com
