@@ -132,6 +132,47 @@ class MqttService:
         print(f'[MQTT] get_config → {tipo} {device.mac}')
         return True
 
+    def set_tags(self, caronte, tags):
+        """Publica {"command":"set_tags","tags":[...]} — o Caronte substitui
+        sua whitelist local inteira (tags.json) pela lista enviada, sem
+        precisar de reboot. Usada para o fallback offline via UART."""
+        if not _PAHO_AVAILABLE or not caronte.broker_id:
+            return False
+        with self._lock:
+            client = self._clients.get(caronte.broker_id)
+        if not client:
+            print(f'[MQTT] Broker {caronte.broker_id} não conectado para {caronte.mac}')
+            return False
+        mac_safe = caronte.mac.replace(':', '-')
+        topic = f'{PREFIX}/{caronte.ambiente_id}/caronte/{mac_safe}/command'
+        client.publish(topic, json.dumps({'command': 'set_tags', 'tags': tags}), qos=1)
+        print(f'[MQTT] set_tags → {caronte.mac}: {len(tags)} tag(s)')
+        return True
+
+    def _tags_do_ambiente(self, ambiente):
+        """TAGs de todos os frequentadores do ambiente (mesmo critério de
+        acesso usado por Tartaro.autenticarTAGDetalhado): quem pode acessar
+        localmente é quem pode acessar via MQTT."""
+        return sorted({
+            u.tag.numero for u in ambiente.frequentadores
+            if u.tag is not None and u.tag.numero
+        })
+
+    def sync_tags_caronte(self, caronte):
+        """Recalcula e publica a whitelist do ambiente de um Caronte
+        específico. Chamada após o coldstart e sempre que a lista de
+        frequentadores/tags de um ambiente muda."""
+        if not caronte.ambiente:
+            return False
+        return self.set_tags(caronte, self._tags_do_ambiente(caronte.ambiente))
+
+    def sync_tags_ambiente(self, ambiente):
+        """Publica a whitelist atual para todos os Carontes de um ambiente.
+        Retorna quantos receberam o comando (dispositivos sem broker
+        conectado são ignorados)."""
+        tags = self._tags_do_ambiente(ambiente)
+        return sum(self.set_tags(c, tags) for c in ambiente.carontes)
+
     def set_config(self, device, tipo, params):
         """Publica {"command":"set_config","params":{...}} — o dispositivo
         grava em config.json e reinicia para aplicar. `tipo` é 'cerberos' ou
@@ -332,6 +373,11 @@ class MqttService:
                 'status': 'ok', 'ambiente_id': device.ambiente_id
             }), qos=1)
             print(f'[MQTT] Coldstart {dtype} {label_name} ({mac})')
+            if dtype == 'caronte':
+                # Garante que a whitelist local do Caronte (usada no fallback
+                # offline via UART) esteja em dia assim que ele conecta/
+                # reconecta, sem depender de uma sincronização manual.
+                self.sync_tags_caronte(device)
         except Exception as e:
             print(f'[MQTT] Erro coldstart {mac}: {e}')
             db.rollback()

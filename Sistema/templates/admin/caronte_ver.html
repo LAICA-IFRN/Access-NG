@@ -20,6 +20,10 @@
           onsubmit="return confirm('Reiniciar este dispositivo agora? Ele ficará offline por alguns segundos.')">
       <button class="btn btn-sm btn-outline-danger">Reiniciar</button>
     </form>
+    <form method="POST" action="{{ url_for('admin_caronte_tags_sincronizar', id=c.id) }}" style="display:inline;"
+          title="Reenvia a whitelist local de TAGs (tags.json), usada no fallback offline via UART">
+      <button class="btn btn-sm btn-outline-secondary">Sincronizar TAGs</button>
+    </form>
     <a href="{{ url_for('admin_caronte_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
     {% endif %}
   </div>

@@ -1,9 +1,14 @@
 """
-Caronte ESP32-C3 - MicroPython MQTT + Wiegand RFID
+Cerberos ESP32-C3 (FECHO) - MicroPython MQTT + UART
 
-Firmware para um Caronte com leitor Wiegand no ESP32 SSC C3.
-Lê TAGs RFID, publica no broker MQTT e aguarda resultado de autorização.
-Não possui Cerberos embutido — apenas leitura e publicação.
+Firmware para o Cerberos ESP32-C3 dedicado a abrir a fechadura, apelidado de
+"FECHO" pela equipe de hardware. Roda na mesma placa ESP32-C3 do Caronte
+(Hardware/Autenticador/CaronteESP32C3.py), só que cumprindo o papel de
+fechadura: LEDs de feedback, relé da tranca e, futuramente, display OLED.
+
+Continua respondendo a comandos remotos via MQTT (portal web), e opcionalmente
+recebe pedidos de liberação vindos do Caronte via UART - ver seção UART
+abaixo.
 
 --- config.json --------------------------------------------------------------
 
@@ -20,126 +25,107 @@ Não possui Cerberos embutido — apenas leitura e publicação.
     "DEVICE_KEY"         : "chave-cadastrada-no-banco",
     "HEARTBEAT_INTERVAL" : 25,
 
-    "WG_D0_PIN"          : 5,
-    "WG_D1_PIN"          : 7,
-    "BUZZER_PIN"         : 6,
     "LED_VM_PIN"         : 1,
     "LED_VD1_PIN"        : 4,
     "LED_VD2_PIN"        : 3,
     "LED_VD3_PIN"        : 2,
-    "WG_TIMEOUT_MS"      : 25,
-    "AUTH_TIMEOUT_S"     : 5,
+    "RELAY_PIN"          : 6,
+    "RELAY_ACTIVE_MS"    : 2000,
+    "RELAY_COOLDOWN_MS"  : 3000,
 
     "UART_ENABLED"       : false,
     "UART_ID"            : 1,
     "UART_TX_PIN"        : 21,
     "UART_RX_PIN"        : 20,
     "UART_BAUDRATE"      : 9600,
-    "UART_KEEPALIVE_S"   : 5,
 
     "OTA_ENABLED"        : true,
     "OTA_CHECK_INTERVAL" : 3600
 }
 
---- Pinagem ESP32 SSC C3 -----------------------------------------------------
+--- Pinagem ESP32-C3 (FECHO) --------------------------------------------------
 
-  GPIO 01 -> LED VM  (vermelho) — não soldado nesta placa
-  GPIO 02 -> LED VD3 (verde 3)  — não soldado nesta placa
-  GPIO 03 -> LED VD2 (verde 2)  — não soldado nesta placa
-  GPIO 04 -> LED VD1 (verde 1)  — não soldado nesta placa
-  GPIO 05 -> Wiegand D0 (ativo baixo)
-  GPIO 06 -> Buzzer (ativo alto)
-  GPIO 07 -> Wiegand D1 (ativo baixo)
+  Conforme pinagem definida pela equipe de hardware para o módulo FECHO:
 
-  GPIO 08 -> SDA display OLED  — não soldado nesta placa
-  GPIO 09 -> SCL display OLED  — não soldado nesta placa
-  GPIO 10 -> Enable RS485      — não soldado nesta placa
-  GPIO 20 -> RX UART (link com o FECHO/Cerberos) — não soldado nesta placa
-  GPIO 21 -> TX UART (link com o FECHO/Cerberos) — não soldado nesta placa
+  GPIO 01 -> LED VM  (vermelho)  - feedback de acesso negado
+  GPIO 02 -> LED VD3 (verde 3)   - pulso de atividade (heartbeat/tráfego)
+  GPIO 03 -> LED VD2 (verde 2)   - link WiFi+MQTT ok (aceso fixo)
+  GPIO 04 -> LED VD1 (verde 1)   - feedback de acesso permitido
+  GPIO 05 -> Botão PROG (ativo baixo) - reservado para modo AP/provisionamento;
+             não há lógica de AP implementada nesta versão do firmware.
+  GPIO 06 -> Relé da tranca (ativo alto)
+  GPIO 07 -> SCL display OLED - reservado; sem driver de display nesta versão.
+  GPIO 08 -> SDA display OLED - reservado; sem driver de display nesta versão.
+  GPIO 20 -> RX UART (link com o Caronte) - mesma pinagem RS485/UART do
+             Caronte ESP32-C3; conectar TX<->RX cruzado entre os dois módulos.
+  GPIO 21 -> TX UART (link com o Caronte)
 
---- Protocolo Wiegand --------------------------------------------------------
+  Atenção (equipe de hardware): não acionar o relé por muito tempo, risco de
+  queima da solenóide. RELAY_ACTIVE_MS é sempre limitado a 2000ms no código
+  independente do que vier em config.json, e RELAY_COOLDOWN_MS impõe um
+  intervalo mínimo entre acionamentos (protege contra picos de comando
+  repetidos via MQTT/UART estressando a bobina em duty cycle).
 
-  D0 idle = HIGH, pulso = LOW (~50 µs) -> bit 0
-  D1 idle = HIGH, pulso = LOW (~50 µs) -> bit 1
-  Fim da leitura: silêncio > WG_TIMEOUT_MS após o último pulso.
-  Suporte: Wiegand 26 bits (mais comum) e fallback para outros formatos.
+--- UART (comunicação com o Caronte) -------------------------------------------
 
---- Tópicos MQTT -------------------------------------------------------------
+  UART_ENABLED (bool, default false) liga o link serial com o Caronte. Requer
+  reboot para valer (como os demais parâmetros de pino).
 
-  Publica:
-    access-ng/coldstart/{mac}                    -> boot do dispositivo
-    access-ng/heartbeat/{mac}                    -> presença periódica
-    access-ng/{amb_id}/caronte/{mac}/tag         -> leitura de TAG RFID
-
-  Assina:
-    access-ng/coldstart/{mac}/result             -> resposta do coldstart
-    access-ng/{amb_id}/caronte/{mac}/result      -> resultado da autenticação
-    access-ng/{amb_id}/caronte/{mac}/command     -> comando check_update (servidor -> dispositivo)
-
-  O MAC usa '-' no lugar de ':' nos tópicos.
-
---- TAGs locais e fallback via UART com o FECHO -------------------------------
-
-  O Caronte mantém uma cópia local das TAGs autorizadas para o ambiente em
-  tags.json (lista de strings, mesmo formato hexadecimal de _decode_wiegand).
-  Ela é atualizada via comando MQTT:
-
-    {"command": "set_tags", "tags": ["0A1B2C3D", "..."]}
-
-  no mesmo tópico access-ng/{amb_id}/caronte/{mac}/command usado para os
-  demais comandos (reboot, check_update, get_config, set_config). Substitui
-  a lista inteira e aplica imediatamente (sem reboot).
-
-  Essa lista só é usada em modo de contingência: o fluxo normal continua
-  sendo publicar a TAG via MQTT e aguardar o "result" do servidor
-  (AUTH_TIMEOUT_S). Só quando esse fluxo não responde a tempo (broker fora
-  do ar, servidor sem resposta) é que — com UART_ENABLED=true — o Caronte
-  consulta a whitelist local e, se a TAG estiver autorizada, manda o pedido
-  de liberação direto para o FECHO via UART (não depende do broker para
-  essa decisão). Sem UART_ENABLED, uma falha de MQTT sempre nega o acesso,
-  como hoje.
-
-  UART_ENABLED (bool, default false) liga/desliga esse link serial com o
-  FECHO/Cerberos (pinos UART_TX_PIN/UART_RX_PIN, ver pinagem acima). Requer
-  reboot para valer (like os demais parâmetros de pino).
-
-  Protocolo (mesmos quadros homologados com o módulo FECHO):
+  Protocolo homologado com a equipe de hardware:
 
     7E LEN CMD [dados] CS
 
     CS fecha a soma de (LEN+CMD+dados+CS) em 0 mod 256 (complemento de 2).
 
     1. KEEP-ALIVE (Caronte -> FECHO)  : 7E 01 01 FE
-       Enviado a cada UART_KEEPALIVE_S; sem resposta = FECHO offline.
+       FECHO responde com ACK se online; fica em silêncio caso contrário.
     2. ACK (FECHO -> Caronte)         : 7E 01 13 EC
-       Resposta do FECHO ao keep-alive (indica que está online).
     3. PERMITIDO (FECHO -> Caronte)   : 7E 01 02 FD
-       FECHO liberou a fechadura para a TAG enviada.
+       FECHO liberou a fechadura para a TAG recebida.
     4. NEGADO (FECHO -> Caronte)      : 7E 01 03 FC
-       FECHO recusou (ex.: proteção de solenóide em cooldown).
+       FECHO recusou (ex.: RELAY_COOLDOWN_MS ainda não decorrido).
     5. ENVIO DE TAG (Caronte -> FECHO): 7E 06 04 [4B TAG] [0x1A ou 0x22] [CS]
-       Só enviado para TAGs já autorizadas pela whitelist local (26 ou 34
-       bits Wiegand — outros formatos não têm representação de 4 bytes e
-       não usam esse fallback).
+       O FECHO não valida a TAG contra lista alguma - quem decide se a TAG
+       pode acessar o ambiente é o Caronte (whitelist local, ver
+       CaronteESP32C3.py); o FECHO só tenta liberar a tranca e informa se
+       conseguiu (respeitando o cooldown de proteção da solenóide).
+
+  Cada TAG recebida via UART também é publicada em
+  access-ng/{amb_id}/cerberos/{mac}/uart_tag para auditoria no servidor.
+
+--- Tópicos MQTT -------------------------------------------------------------
+
+  Publica:
+    access-ng/coldstart/{mac}                     -> boot do dispositivo
+    access-ng/heartbeat/{mac}                     -> presença periódica
+    access-ng/{amb_id}/cerberos/{mac}/uart_tag    -> TAG liberada via UART (auditoria)
+
+  Assina:
+    access-ng/coldstart/{mac}/result          -> resposta do coldstart
+    access-ng/{amb_id}/cerberos/{mac}/command -> comando de abertura/check_update
+
+  O MAC usa '-' no lugar de ':' nos tópicos.
 
 --- OTA (atualização remota) --------------------------------------------------
 
-  O firmware se atualiza buscando version.json em
-  http://{OTA_HOST}:{OTA_PORT}/ota/{OTA_VERSION_PATH} (HTTP puro, sem TLS —
-  o handshake RSA estoura a memória disponível no ESP32-C3; os arquivos de
-  OTA são públicos, sem segredo em trânsito), servido pelo proprio Access-NG
-  (nao pelo raw.githubusercontent.com - a rede da IFRN nao entrega de forma
-  confiavel arquivos maiores vindos do CDN do GitHub). Se a versão remota
-  difere de FIRMWARE_VERSAO, baixa o .py em OTA_FIRMWARE_PATH, valida,
-  grava em main.new, troca com main.py (backup em main.bak) e reinicia.
+  Mesmo esquema dos demais firmwares deste projeto, com arquivo de versão
+  próprio (version_esp32c3.json, ao lado de version.json e version_esp32.json
+  dos outros firmwares deste diretório) para que os três tenham ciclos de
+  release independentes. Busca version_esp32c3.json em
+  http://{OTA_HOST}:{OTA_PORT}/ota/{OTA_VERSION_PATH} (HTTP puro, sem TLS - o
+  handshake RSA estoura a memória disponível no ESP32-C3; os arquivos de OTA
+  são públicos, sem segredo em trânsito), servido pelo próprio Access-NG. Se a
+  "versao" remota difere de FIRMWARE_VERSAO, baixa o .py em
+  OTA_FIRMWARE_PATH, valida, grava em main.new, troca com main.py (backup em
+  main.bak) e reinicia.
 
-  A checagem ocorre: (1) após o coldstart, (2) periodicamente a cada
-  OTA_CHECK_INTERVAL segundos, (3) imediatamente ao receber
-  {"command":"check_update"} no tópico de comando.
+  Checagem em três momentos: após o coldstart, a cada OTA_CHECK_INTERVAL
+  segundos, e imediatamente ao receber {"command":"check_update"} no tópico
+  de comando (mesmo tópico usado para "unlock").
 
-  Rede de segurança: se a versão nova não completar um coldstart com sucesso
-  em até 3 boots, o dispositivo restaura automaticamente main.bak (versão
-  anterior conhecida como boa) e reinicia - evita "brick" remoto.
+  Rede de segurança: se a versão nova não completar um coldstart em até 3
+  boots, o dispositivo restaura main.bak (versão anterior conhecida como boa)
+  e reinicia.
 """
 
 import machine
@@ -149,13 +135,10 @@ import time
 import json
 import os
 import ubinascii
-import micropython
 import gc
 
-micropython.alloc_emergency_exception_buf(100)
 
-
-# --- CONFIGURAÇÃO ------------------------------------------------------------
+# --- CONFIGURAÇÃO --------------------------------------------------------------
 
 _DEFAULTS = {
     "WIFI_SSID"          : "wIFRN-IoT",
@@ -167,21 +150,18 @@ _DEFAULTS = {
     "MQTT_TLS"           : False,
     "DEVICE_KEY"         : "chave-do-dispositivo",
     "HEARTBEAT_INTERVAL" : 25,
-    "WG_D0_PIN"          : 5,
-    "WG_D1_PIN"          : 7,
-    "BUZZER_PIN"         : 6,
     "LED_VM_PIN"         : 1,
     "LED_VD1_PIN"        : 4,
     "LED_VD2_PIN"        : 3,
     "LED_VD3_PIN"        : 2,
-    "WG_TIMEOUT_MS"      : 25,
-    "AUTH_TIMEOUT_S"     : 5,
+    "RELAY_PIN"          : 6,
+    "RELAY_ACTIVE_MS"    : 2000,
+    "RELAY_COOLDOWN_MS"  : 3000,
     "UART_ENABLED"       : False,
     "UART_ID"            : 1,
     "UART_TX_PIN"        : 21,
     "UART_RX_PIN"        : 20,
     "UART_BAUDRATE"      : 9600,
-    "UART_KEEPALIVE_S"   : 5,
     "OTA_ENABLED"        : True,
     "OTA_CHECK_INTERVAL" : 3600,
 }
@@ -189,10 +169,9 @@ _DEFAULTS = {
 # Nunca reportados por valor via MQTT (só é possível sobrescrever, não ler).
 _CONFIG_SENSITIVE = ("WIFI_PASS", "DEVICE_KEY", "MQTT_PASS")
 # Únicos que podem ser sobrescritos em memória (sem gravar em config.json) via
-# um bloco "config" na resposta do coldstart — os demais dependem de pinos/
+# um bloco "config" na resposta do coldstart - os demais dependem de pinos/
 # hardware já inicializados antes do coldstart, exigindo reboot para valer.
-_CONFIG_RUNTIME_KEYS = ("HEARTBEAT_INTERVAL", "OTA_CHECK_INTERVAL", "OTA_ENABLED",
-                        "AUTH_TIMEOUT_S", "WG_TIMEOUT_MS")
+_CONFIG_RUNTIME_KEYS = ("HEARTBEAT_INTERVAL", "OTA_CHECK_INTERVAL", "OTA_ENABLED")
 
 try:
     with open("config.json") as f:
@@ -220,21 +199,18 @@ MQTT_PASS          = cfg("MQTT_PASS")
 MQTT_TLS           = cfg("MQTT_TLS")
 DEVICE_KEY         = cfg("DEVICE_KEY")
 HEARTBEAT_INTERVAL = cfg("HEARTBEAT_INTERVAL")
-WG_D0_PIN          = cfg("WG_D0_PIN")
-WG_D1_PIN          = cfg("WG_D1_PIN")
-BUZZER_PIN         = cfg("BUZZER_PIN")
 LED_VM_PIN         = cfg("LED_VM_PIN")
 LED_VD1_PIN        = cfg("LED_VD1_PIN")
 LED_VD2_PIN        = cfg("LED_VD2_PIN")
 LED_VD3_PIN        = cfg("LED_VD3_PIN")
-WG_TIMEOUT_MS      = cfg("WG_TIMEOUT_MS")
-AUTH_TIMEOUT_S     = cfg("AUTH_TIMEOUT_S")
+RELAY_PIN          = cfg("RELAY_PIN")
+RELAY_ACTIVE_MS    = min(cfg("RELAY_ACTIVE_MS"), 2000)
+RELAY_COOLDOWN_MS  = cfg("RELAY_COOLDOWN_MS")
 UART_ENABLED       = cfg("UART_ENABLED")
 UART_ID            = cfg("UART_ID")
 UART_TX_PIN        = cfg("UART_TX_PIN")
 UART_RX_PIN        = cfg("UART_RX_PIN")
 UART_BAUDRATE      = cfg("UART_BAUDRATE")
-UART_KEEPALIVE_S   = cfg("UART_KEEPALIVE_S")
 OTA_ENABLED        = cfg("OTA_ENABLED")
 OTA_CHECK_INTERVAL = cfg("OTA_CHECK_INTERVAL")
 
@@ -243,33 +219,34 @@ DEVICE_MAC  = None
 AMBIENTE_ID = None
 BOOT_COUNT  = None
 
-# --- OTA -----------------------------------------------------------------------
+# --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.8"   # bump manual a cada release publicada
-# Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
-# da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
-OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
-OTA_FIRMWARE_PATH = "Hardware/Autenticador/CaronteESP32C3.py"
+FIRMWARE_VERSAO   = "1.0.0"   # bump manual a cada release publicada
+# Arquivo próprio (nem version.json nem version_esp32.json dos outros
+# firmwares deste diretório) para que os três tenham ciclos de release
+# independentes.
+OTA_VERSION_PATH  = "Hardware/Fechadura/version_esp32c3.json"
+OTA_FIRMWARE_PATH = "Hardware/Fechadura/CerberosESP32C3.py"
 OTA_HOST          = "laica.ifrn.edu.br"
-# HTTP puro (sem TLS): o handshake TLS/RSA estoura a memoria disponivel no
-# ESP32-C3 (MBEDTLS_ERR_RSA_PUBLIC_FAILED+MBEDTLS_ERR_MPI_ALLOC_FAILED). Os
-# arquivos de OTA sao publicos (sem segredos), entao HTTP puro e aceitavel
-# aqui — mesma logica de expor o broker MQTT em texto puro na porta 1883.
+# HTTP puro (sem TLS): o handshake TLS/RSA estoura a memória disponível no
+# ESP32-C3. Os arquivos de OTA são públicos (sem segredos), então HTTP puro é
+# aceitável aqui - mesma lógica de expor o broker MQTT em texto puro na
+# porta 1883.
 OTA_PORT          = 80
 
-# --- DIAGNOSTICO -----------------------------------------------------------------
+# --- DIAGNÓSTICO -----------------------------------------------------------
 
-HARDWARE_INFO         = "Caronte ESP32-C3"
-HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp vao a cada N heartbeats
+HARDWARE_INFO         = "Cerberos ESP32-C3 (FECHO)"
+HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp vão a cada N heartbeats
 
 
 _SOFT_RESET_FLAG = "soft_reset.flag"
 
 
 def _read_boot_count():
-    """Conta reinicios "soft" (machine.reset() chamado pelo proprio firmware:
-    OTA, comando de reboot, rollback). Um boot sem a flag de soft-reset e
-    tratado como reinicio completo (energia caiu) e zera o contador."""
+    """Conta reinícios "soft" (machine.reset() chamado pelo próprio firmware:
+    OTA, comando de reboot, rollback). Um boot sem a flag de soft-reset é
+    tratado como reinício completo (energia caiu) e zera o contador."""
     try:
         with open(_SOFT_RESET_FLAG):
             is_soft = True
@@ -299,7 +276,7 @@ def _read_boot_count():
 
 
 def _soft_reset():
-    """Marca o proximo boot como soft-reset (mantem o contador) e reinicia."""
+    """Marca o próximo boot como soft-reset (mantém o contador) e reinicia."""
     try:
         with open(_SOFT_RESET_FLAG, "w") as f:
             f.write("1")
@@ -323,8 +300,8 @@ def _read_rssi():
 
 
 def _read_cpu_temp():
-    """Sensor interno de temperatura - nao suportado em todos os builds do
-    ESP32-C3; retorna None quando indisponivel."""
+    """Sensor interno de temperatura - não suportado em todos os builds do
+    ESP32-C3; retorna None quando indisponível."""
     try:
         import esp32
         return round((esp32.raw_temperature() - 32) * 5 / 9, 1)
@@ -333,8 +310,8 @@ def _read_cpu_temp():
 
 
 def _read_wifi_status():
-    """Codigo bruto de network.WLAN.status() - o valor numerico varia por
-    port/versao do MicroPython, por isso e reportado sem tentar traduzir."""
+    """Código bruto de network.WLAN.status() - o valor numérico varia por
+    port/versão do MicroPython, por isso é reportado sem tentar traduzir."""
     try:
         return network.WLAN(network.STA_IF).status()
     except Exception:
@@ -349,15 +326,9 @@ def _read_wifi_channel():
 
 
 def _read_ap_bssid():
-    """MAC do radio do Access Point atualmente associado - identifica qual AP
-    fisico o dispositivo esta usando, diferente do IP do gateway (que costuma
-    ser o mesmo em toda uma rede com multiplos APs sob o mesmo SSID). Tenta
-    config('bssid') e status('bssid') primeiro - o parametro aceito varia por
-    porta/build do MicroPython. Confirmado em campo que nenhum dos dois e
-    suportado nesse build de ESP32 ("unknown config param"/"unknown status
-    param"); como ultimo recurso, escaneia e casa pelo SSID atual - isso
-    tira o radio do canal associado por um instante e pode interromper
-    brevemente a conexao, entao so roda se os metodos diretos falharem."""
+    """MAC do rádio do Access Point atualmente associado. Tenta config('bssid')
+    e status('bssid') primeiro; como último recurso, escaneia e casa pelo
+    SSID atual (tira o rádio do canal associado por um instante)."""
     wlan = network.WLAN(network.STA_IF)
     for getter in (wlan.config, wlan.status):
         try:
@@ -376,9 +347,9 @@ def _read_ap_bssid():
     return None
 
 
-# Diagnostico de reconexao WiFi: contagem e ha quanto tempo desde a ultima,
-# alem do codigo de status no momento em que a queda foi percebida (motivo
-# aproximado da desconexao). Zerado a cada boot.
+# Diagnóstico de reconexão WiFi: contagem e há quanto tempo desde a última,
+# além do código de status no momento em que a queda foi percebida. Zerado a
+# cada boot.
 _wifi_reconnects = 0
 _wifi_last_reconnect_s = None
 _wifi_last_disconnect_status = None
@@ -386,136 +357,70 @@ _wifi_last_disconnect_status = None
 
 # --- HARDWARE ----------------------------------------------------------------
 
-buzzer  = None
 led_vm  = None
 led_vd1 = None
 led_vd2 = None
 led_vd3 = None
-wg_d0   = None
-wg_d1   = None
+relay   = None
 
-# Buffer Wiegand — bytearray pré-alocado para ser seguro em ISR (sem GC)
-_wg_buf     = bytearray(64)
-_wg_count   = 0
-_wg_last_ms = 0
-
-
-def _wg_d0_isr(_pin):
-    global _wg_count, _wg_last_ms
-    if _wg_count < 64:
-        _wg_buf[_wg_count] = 0
-        _wg_count += 1
-    _wg_last_ms = time.ticks_ms()
-
-
-def _wg_d1_isr(_pin):
-    global _wg_count, _wg_last_ms
-    if _wg_count < 64:
-        _wg_buf[_wg_count] = 1
-        _wg_count += 1
-    _wg_last_ms = time.ticks_ms()
+_last_unlock_ms = None
 
 
 def init_gpio():
-    global buzzer, led_vm, led_vd1, led_vd2, led_vd3, wg_d0, wg_d1
-    buzzer  = machine.Pin(BUZZER_PIN,  machine.Pin.OUT, value=0)
+    global led_vm, led_vd1, led_vd2, led_vd3, relay
     led_vm  = machine.Pin(LED_VM_PIN,  machine.Pin.OUT, value=0)
     led_vd1 = machine.Pin(LED_VD1_PIN, machine.Pin.OUT, value=0)
     led_vd2 = machine.Pin(LED_VD2_PIN, machine.Pin.OUT, value=0)
     led_vd3 = machine.Pin(LED_VD3_PIN, machine.Pin.OUT, value=0)
-    wg_d0 = machine.Pin(WG_D0_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-    wg_d1 = machine.Pin(WG_D1_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-    wg_d0.irq(trigger=machine.Pin.IRQ_FALLING, handler=_wg_d0_isr)
-    wg_d1.irq(trigger=machine.Pin.IRQ_FALLING, handler=_wg_d1_isr)
+    relay   = machine.Pin(RELAY_PIN,   machine.Pin.OUT, value=0)
     print("[GPIO] Inicializado")
 
 
-def beep(ms=100):
-    buzzer.value(1)
+def _set_link(ok):
+    led_vd2.value(1 if ok else 0)
+
+
+def status_pulse(ms=80):
+    led_vd3.value(1)
     time.sleep_ms(ms)
-    buzzer.value(0)
+    led_vd3.value(0)
 
 
-def feedback_allow():
-    """Dois bipes curtos + LED verde."""
+def feedback_permitido():
     led_vd1.value(1)
-    beep(100)
-    time.sleep_ms(80)
-    beep(100)
-    time.sleep_ms(800)
+    time.sleep_ms(300)
     led_vd1.value(0)
 
 
-def feedback_deny():
-    """Um bipe longo + LED vermelho."""
+def feedback_negado():
     led_vm.value(1)
-    beep(600)
-    time.sleep_ms(400)
+    time.sleep_ms(300)
     led_vm.value(0)
 
 
-def _decode_wiegand(buf, count):
-    """Converte bits Wiegand em string hexadecimal maiúscula (TAG)."""
-    if count < 4:
-        return None
-    raw = 0
-    for i in range(count):
-        raw = (raw << 1) | buf[i]
-    if count == 26:
-        # P[8 facility][16 card]P
-        facility = (raw >> 17) & 0xFF
-        card     = (raw >> 1)  & 0xFFFF
-        return "%08X" % ((facility << 16) | card)
-    if count == 34:
-        # P[16 facility][16 card]P
-        facility = (raw >> 17) & 0xFFFF
-        card     = (raw >> 1)  & 0xFFFF
-        return "%08X" % ((facility << 16) | card)
-    # Formato desconhecido: remove bits de paridade nas extremidades
-    inner = (raw >> 1) & ((1 << (count - 2)) - 1)
-    return "%X" % inner
+def unlock_door(source="remote"):
+    """Aciona o relé por RELAY_ACTIVE_MS (sempre limitado a 2000ms). Recusa o
+    acionamento se RELAY_COOLDOWN_MS ainda não decorreu desde o último
+    (proteção da solenóide contra acionamentos repetidos em sequência).
+    Retorna True se abriu, False se recusado por cooldown."""
+    global _last_unlock_ms
+    now = time.ticks_ms()
+    if _last_unlock_ms is not None and time.ticks_diff(now, _last_unlock_ms) < RELAY_COOLDOWN_MS:
+        print("[Lock] Acionamento recusado (%s) - cooldown da solenóide" % source)
+        return False
 
-
-# --- TAGs locais (whitelist para fallback offline via UART) ------------------
-
-_TAGS_FILE  = "tags.json"
-_local_tags = set()
-
-
-def _load_tags():
-    global _local_tags
-    try:
-        with open(_TAGS_FILE) as f:
-            _local_tags = set(json.load(f))
-        print("[Tags] %d tag(s) local(is) carregada(s)" % len(_local_tags))
-    except Exception:
-        _local_tags = set()
-        print("[Tags] Nenhuma whitelist local encontrada")
-
-
-def _apply_set_tags(tags):
-    """Recebido via comando MQTT set_tags: grava a lista de TAGs autorizadas
-    localmente (usada só no fallback offline via UART - não substitui o fluxo
-    normal de autenticação via MQTT). Substitui a lista anterior por inteiro
-    e aplica de imediato, sem precisar de reboot."""
-    global _local_tags
-    if not isinstance(tags, list):
-        print("[Tags] set_tags inválido (esperada uma lista), ignorando")
-        return
-    tags = [str(t).upper() for t in tags]
-    try:
-        with open(_TAGS_FILE, "w") as f:
-            json.dump(tags, f)
-    except Exception as e:
-        print("[Tags] Erro ao gravar tags.json:", e)
-        return
-    _local_tags = set(tags)
-    print("[Tags] %d tag(s) local(is) atualizada(s)" % len(_local_tags))
+    print("[Lock] Abrindo porta (%s)..." % source)
+    _last_unlock_ms = now
+    relay.value(1)
+    time.sleep_ms(RELAY_ACTIVE_MS)
+    relay.value(0)
+    print("[Lock] Porta fechada")
+    return True
 
 
 # --- UART / Protocolo FECHO ---------------------------------------------------
 #
-# Quadro: 7E LEN CMD [dados] CS — CS fecha a soma (LEN+CMD+dados+CS) em 0 mod
+# Quadro: 7E LEN CMD [dados] CS - CS fecha a soma (LEN+CMD+dados+CS) em 0 mod
 # 256 (complemento de 2). Ver docstring do módulo para a tabela de comandos.
 
 _UART_STX            = 0x7E
@@ -525,10 +430,8 @@ _UART_CMD_NEGADO     = 0x03
 _UART_CMD_TAG        = 0x04
 _UART_CMD_ACK        = 0x13
 
-uart               = None
-_uart_rx_buf       = bytearray()
-_fecho_online      = False
-_fecho_last_ack_s  = None
+uart         = None
+_uart_rx_buf = bytearray()
 
 
 def init_uart():
@@ -559,10 +462,9 @@ def _uart_send(cmd, data=b""):
 
 
 def _uart_read_frame():
-    """Consome o RX pendente e devolve o primeiro quadro completo e válido
-    do buffer, ou None se ainda não há um quadro inteiro disponível. Lixo
-    antes do STX e quadros com checksum inválido são descartados byte a
-    byte (não trava o link em caso de ruído/dessincronia)."""
+    """Consome o RX pendente e devolve o primeiro quadro completo e válido do
+    buffer, ou None se ainda não há um quadro inteiro disponível. Lixo antes
+    do STX e quadros com checksum inválido são descartados byte a byte."""
     global _uart_rx_buf
     if uart is None:
         return None
@@ -590,53 +492,29 @@ def _uart_read_frame():
     return None
 
 
-def uart_keepalive():
-    _uart_send(_UART_CMD_KEEPALIVE)
-
-
 def uart_poll():
-    """Consome quadros do FECHO fora do fluxo de autenticação (ex.: ACK do
-    keep-alive). Atualiza _fecho_online. Chamado a cada volta do loop
-    principal quando UART_ENABLED."""
-    global _fecho_online, _fecho_last_ack_s
+    """Processa quadros pendentes do Caronte: responde KEEP-ALIVE com ACK e
+    TAG com PERMITIDO/NEGADO (após tentar abrir a porta). Chamado a cada
+    volta do loop principal quando UART_ENABLED. Publica a TAG recebida em
+    /uart_tag para auditoria (melhor esforço, não bloqueia a resposta)."""
+    if not UART_ENABLED:
+        return
     frame = _uart_read_frame()
     while frame is not None:
-        cmd, _data = frame
-        if cmd == _UART_CMD_ACK:
-            _fecho_online = True
-            _fecho_last_ack_s = time.time()
+        cmd, data = frame
+        if cmd == _UART_CMD_KEEPALIVE:
+            _uart_send(_UART_CMD_ACK)
+        elif cmd == _UART_CMD_TAG and len(data) == 5:
+            tag = ubinascii.hexlify(data[:4]).decode("utf-8").upper()
+            tipo = data[4]
+            allowed = unlock_door("uart")
+            _uart_send(_UART_CMD_PERMITIDO if allowed else _UART_CMD_NEGADO)
+            if allowed:
+                feedback_permitido()
+            else:
+                feedback_negado()
+            publish_uart_tag(tag, tipo, allowed)
         frame = _uart_read_frame()
-
-
-def _fecho_is_online():
-    """True só se o último ACK de keep-alive chegou há menos de 3 intervalos
-    de UART_KEEPALIVE_S - evita tentar o fallback (e pagar o timeout de
-    fecho_send_tag) quando o FECHO está claramente desconectado."""
-    return (_fecho_online and _fecho_last_ack_s is not None and
-            time.time() - _fecho_last_ack_s < UART_KEEPALIVE_S * 3)
-
-
-def fecho_send_tag(tag, wg_count, timeout_ms=1500):
-    """Envia ao FECHO uma TAG já autorizada pela whitelist local e aguarda
-    PERMITIDO/NEGADO. Só deve ser chamada para wg_count em (26, 34) - os
-    únicos formatos com representação de 4 bytes no protocolo. Retorna True
-    (fechadura liberada) ou False (negado ou sem resposta a tempo)."""
-    tipo = wg_count if wg_count in (26, 34) else 26
-    data = ubinascii.unhexlify(tag) + bytes([tipo])
-    _uart_send(_UART_CMD_TAG, data)
-
-    t0 = time.ticks_ms()
-    while time.ticks_diff(time.ticks_ms(), t0) < timeout_ms:
-        frame = _uart_read_frame()
-        if frame is not None:
-            cmd, _data = frame
-            if cmd == _UART_CMD_PERMITIDO:
-                return True
-            if cmd == _UART_CMD_NEGADO:
-                return False
-        time.sleep_ms(10)
-    print("[UART] FECHO não respondeu à TAG")
-    return False
 
 
 # --- WIFI --------------------------------------------------------------------
@@ -650,8 +528,8 @@ def connect_wifi():
         return True
 
     if _wifi_last_reconnect_s is not None:
-        # ja tinha conectado antes nesse boot - isso e uma reconexao, nao a
-        # conexao inicial. Guarda o status no momento da queda como motivo.
+        # já tinha conectado antes nesse boot - isso é uma reconexão, não a
+        # conexão inicial. Guarda o status no momento da queda como motivo.
         _wifi_last_disconnect_status = _read_wifi_status()
         _wifi_reconnects += 1
     _wifi_last_reconnect_s = time.time()
@@ -662,13 +540,15 @@ def connect_wifi():
         if wlan.isconnected():
             print("[WiFi] IP: %s" % wlan.ifconfig()[0])
             return True
+        led_vd2.value(1 - led_vd2.value())
         time.sleep(0.5)
 
+    led_vd2.value(0)
     print("[WiFi] Falha")
     return False
 
 
-# --- OTA -----------------------------------------------------------------------
+# --- OTA -----------------------------------------------------------------
 
 def _ota_boot_guard():
     """Roda antes de tudo no boot. Se há um update pendente que falhou em
@@ -699,8 +579,10 @@ def _ota_boot_guard():
                     os.remove(fname)
                 except OSError:
                     pass
+            time.sleep(2)
             _soft_reset()
         else:
+            print("[OTA] Boot %d/3 com update pendente" % tentativas)
             with open("ota_boot_attempts.txt", "w") as f:
                 f.write(str(tentativas))
     except Exception as e:
@@ -715,6 +597,7 @@ def _ota_confirmar_versao_boa():
     for fname in ("ota_pending.txt", "ota_boot_attempts.txt"):
         try:
             os.remove(fname)
+            print("[OTA] Versão", FIRMWARE_VERSAO, "confirmada como estável")
         except OSError:
             pass
 
@@ -725,12 +608,10 @@ def _http_get(path, host=None, timeout=10):
 
 
 def _http_request(host, path, dest_file=None, timeout=10):
-    """GET HTTP em host+path (sem TLS — o handshake RSA estoura a memória
-    disponível no ESP32-C3; os arquivos de OTA são públicos, sem segredo em
-    trânsito). Se dest_file for informado, grava o corpo da resposta direto
-    nesse arquivo (streaming) e retorna (status, None); senão acumula o
-    corpo em memória e retorna (status, body_str). Retorna (None, None) em
-    qualquer falha de rede."""
+    """GET HTTP em host+path (sem TLS). Se dest_file for informado, grava o
+    corpo da resposta direto nesse arquivo (streaming) e retorna
+    (status, None); senão acumula o corpo em memória e retorna
+    (status, body_str). Retorna (None, None) em qualquer falha de rede."""
     sock = None
     t0 = time.time()
     gc.collect()
@@ -747,7 +628,7 @@ def _http_request(host, path, dest_file=None, timeout=10):
         req = (
             "GET " + path + " HTTP/1.1\r\n"
             "Host: " + host + "\r\n"
-            "User-Agent: access-ng-caronte\r\n"
+            "User-Agent: access-ng-cerberos-c3\r\n"
             "Connection: close\r\n\r\n"
         )
         sock.write(req.encode("utf-8"))
@@ -831,9 +712,8 @@ def _http_request(host, path, dest_file=None, timeout=10):
 
 
 def _parse_versao(v):
-    """Converte "1.3.10" em (1, 3, 10) para comparação numérica.
-    Comparar como string quebra em versões de dois dígitos (ex.:
-    "1.3.10" < "1.3.7" lexicograficamente)."""
+    """Converte "1.3.10" em (1, 3, 10) para comparação numérica. Comparar
+    como string quebra em versões de dois dígitos."""
     try:
         return tuple(int(p) for p in str(v).split("."))
     except (ValueError, AttributeError):
@@ -841,17 +721,19 @@ def _parse_versao(v):
 
 
 def check_for_update():
-    """Busca version.json no repo. Retorna o dict remoto se a versão remota
-    for numericamente MAIOR que a atual, ou None (sem update / qualquer
+    """Busca version_esp32c3.json no repo. Retorna o dict remoto se a versão
+    remota for numericamente MAIOR que a atual, ou None (sem update / qualquer
     falha). Nunca reinstala uma versão igual ou mais antiga."""
     if not OTA_ENABLED:
         return None
     status, body = _http_get("/access-ng/ota/" + OTA_VERSION_PATH)
     if status != 200 or not body:
+        print("[OTA] Falha ao verificar version_esp32c3.json (status=%s)" % status)
         return None
     try:
         remote = json.loads(body)
     except Exception:
+        print("[OTA] version_esp32c3.json inválido")
         return None
 
     remota_versao = remote.get("versao")
@@ -868,10 +750,8 @@ def check_for_update():
 
 
 def _valida_payload(path, versao):
-    """Checagem barata de sanidade do .py baixado antes de instalar.
-
-    Lê em blocos para não carregar o firmware inteiro na RAM.
-    """
+    """Checagem barata de sanidade do .py baixado antes de instalar. Lê em
+    blocos para não carregar o firmware inteiro na RAM."""
     try:
         if os.stat(path)[6] < 500:
             return False
@@ -900,13 +780,12 @@ def _valida_payload(path, versao):
 
 
 def apply_update(remote):
-    """Baixa o firmware, valida, troca main.py e reinicia.
-    Nunca propaga exceção - qualquer falha apenas aborta a atualização."""
+    """Baixa o firmware, valida, troca main.py e reinicia. Nunca propaga
+    exceção - qualquer falha apenas aborta a atualização."""
     try:
         versao = remote.get("versao", "")
         path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
         print("[OTA] Baixando", "http://" + OTA_HOST + path)
-        beep(60)
         status, _ = _http_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):
             print("[OTA] Download inválido (status=%s) - abortando" % status)
@@ -930,7 +809,6 @@ def apply_update(remote):
             pass
 
         print("[OTA] Atualizado para", versao, "- reiniciando")
-        beep(60); time.sleep_ms(80); beep(60)
         time.sleep(1)
         _soft_reset()
     except Exception as e:
@@ -947,9 +825,8 @@ def ota_check_and_maybe_apply():
 
 # --- MQTT --------------------------------------------------------------------
 
-_client           = None
+_client = None
 _coldstart_result = None
-_auth_result      = None
 _update_requested = False   # set pelo callback quando command=check_update chega
 
 
@@ -965,11 +842,36 @@ def _topics():
         "heartbeat"       : "%s/heartbeat/%s" % (MQTT_PREFIX, mac),
     }
     if AMBIENTE_ID is not None:
-        topics["tag"]     = "%s/%s/caronte/%s/tag"     % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
-        topics["result"]  = "%s/%s/caronte/%s/result"  % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
-        topics["command"] = "%s/%s/caronte/%s/command" % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
-        topics["config_result"] = "%s/%s/caronte/%s/config/result" % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
+        topics["command"] = "%s/%s/cerberos/%s/command" % (
+            MQTT_PREFIX,
+            str(AMBIENTE_ID),
+            mac,
+        )
+        topics["uart_tag"] = "%s/%s/cerberos/%s/uart_tag" % (
+            MQTT_PREFIX,
+            str(AMBIENTE_ID),
+            mac,
+        )
+        topics["config_result"] = "%s/%s/cerberos/%s/config/result" % (
+            MQTT_PREFIX,
+            str(AMBIENTE_ID),
+            mac,
+        )
     return topics
+
+
+def publish_uart_tag(tag, tipo, allowed):
+    """Publica (melhor esforço) a TAG liberada via UART, para auditoria no
+    servidor - a decisão de acesso em si já foi tomada pelo Caronte."""
+    topic = _topics().get("uart_tag")
+    if topic is None or _client is None:
+        return
+    try:
+        _client.publish(topic, json.dumps({
+            "mac": DEVICE_MAC, "tag": tag, "tipo": tipo, "allow": allowed,
+        }))
+    except OSError:
+        pass
 
 
 def _publish_config():
@@ -992,8 +894,8 @@ def _publish_config():
 
 
 def _apply_set_config(params):
-    """Grava os parâmetros válidos em config.json e reinicia para aplicar
-    de forma limpa (vários parâmetros só têm efeito na inicialização do
+    """Grava os parâmetros válidos em config.json e reinicia para aplicar de
+    forma limpa (vários parâmetros só têm efeito na inicialização do
     hardware, ex. pinos)."""
     validos = {k: v for k, v in (params or {}).items() if k in _DEFAULTS}
     if not validos:
@@ -1013,7 +915,7 @@ def _apply_set_config(params):
 
 def _apply_session_config(config_dict):
     """Aplica em memória (sem tocar config.json) as chaves permitidas vindas
-    no coldstart_result — vale só até o próximo reboot."""
+    no coldstart_result - vale só até o próximo reboot."""
     if not isinstance(config_dict, dict):
         return
     for key, value in config_dict.items():
@@ -1027,8 +929,10 @@ def _apply_session_config(config_dict):
 
 
 def _on_message(topic, payload):
-    global _coldstart_result, _auth_result, _update_requested
+    global _coldstart_result, _update_requested
     topic_str = topic.decode("utf-8")
+    status_pulse()
+
     try:
         data = json.loads(payload)
     except Exception:
@@ -1038,14 +942,20 @@ def _on_message(topic, payload):
     topics = _topics()
     if topic_str == topics["coldstart_result"]:
         _coldstart_result = data
-    elif topic_str == topics.get("result"):
-        _auth_result = data
     elif topic_str == topics.get("command"):
-        if data.get("command") == "check_update":
+        if data.get("command") in ("unlock", "open", "abrir"):
+            print("[MQTT] Comando de abertura recebido")
+            allowed = unlock_door("mqtt")
+            if allowed:
+                feedback_permitido()
+            else:
+                feedback_negado()
+        elif data.get("command") == "check_update":
             print("[MQTT] Solicitação de verificação de atualização recebida")
             _update_requested = True
         elif data.get("command") == "reboot":
             print("[MQTT] Comando de reinício recebido - reiniciando...")
+            status_pulse(200)
             time.sleep_ms(300)
             _soft_reset()
         elif data.get("command") == "get_config":
@@ -1053,22 +963,17 @@ def _on_message(topic, payload):
             _publish_config()
         elif data.get("command") == "set_config":
             _apply_set_config(data.get("params"))
-        elif data.get("command") == "set_tags":
-            _apply_set_tags(data.get("tags"))
 
 
 def mqtt_connect():
     global _client
-    # umqtt.simple e preferida de proposito: publish()/check_msg() propagam
-    # OSError de verdade, o que aciona o except OSError do main() - que ja
-    # faz a recuperacao completa e correta (reconecta + do_coldstart() +
-    # reinscreve nos topicos). A umqtt.robust captura OSError sozinha e fica
-    # tentando reconectar em loop silencioso (sem log, DEBUG=False por
-    # padrao) dentro da propria chamada de publish()/check_msg(), travando
-    # o loop principal por tempo indeterminado sem que nada apareca na
-    # serial - e o reconnect() dela usa connect(False), que nao reinscreve
-    # em nenhum topico, deixando o dispositivo surdo a comandos ate um
-    # reboot completo. So cai para robust se simple nao estiver instalada.
+    # umqtt.simple é preferida de propósito: publish()/check_msg() propagam
+    # OSError de verdade, o que aciona o except OSError do main() - que já
+    # faz a recuperação completa e correta (reconecta + do_coldstart() +
+    # reinscreve nos tópicos). A umqtt.robust captura OSError sozinha e fica
+    # tentando reconectar em loop silencioso dentro da própria chamada de
+    # publish()/check_msg(), travando o loop principal por tempo
+    # indeterminado. Só cai para robust se simple não estiver instalada.
     try:
         from umqtt.simple import MQTTClient
     except ImportError:
@@ -1081,7 +986,7 @@ def mqtt_connect():
     if MQTT_TLS:
         kwargs["ssl"] = True
 
-    client = MQTTClient("caronte-%s" % _mac_safe(), MQTT_BROKER, **kwargs)
+    client = MQTTClient("cerberos-c3-%s" % _mac_safe(), MQTT_BROKER, **kwargs)
     client.set_callback(_on_message)
     client.connect()
     client.subscribe(_topics()["coldstart_result"])
@@ -1093,6 +998,7 @@ def do_coldstart():
     global AMBIENTE_ID, _coldstart_result
     while True:
         _coldstart_result = None
+        _set_link(False)
         try:
             _client.publish(
                 _topics()["coldstart"],
@@ -1103,11 +1009,16 @@ def do_coldstart():
                 }),
                 qos=0,
             )
+            status_pulse()
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
 
             t0 = time.time()
+            tick = 0
             while time.time() - t0 < 5:
                 _client.check_msg()
+                if tick % 5 == 0:
+                    led_vd2.value(1 - led_vd2.value())
+                tick += 1
                 if _coldstart_result is not None:
                     break
                 time.sleep_ms(100)
@@ -1123,16 +1034,17 @@ def do_coldstart():
         if _coldstart_result and _coldstart_result.get("status") == "ok":
             AMBIENTE_ID = _coldstart_result.get("ambiente_id")
             _apply_session_config(_coldstart_result.get("config"))
-            topics = _topics()
-            _client.subscribe(topics["result"])
-            _client.subscribe(topics["command"])
+            _client.subscribe(_topics()["command"])
+            _set_link(True)
             print("[MQTT] Coldstart OK - ambiente_id=%s" % AMBIENTE_ID)
             return
 
         print("[MQTT] Coldstart negado/sem resposta (%s) - tentando em 15s..." %
               _coldstart_result)
+        led_vd2.value(0)
         for _ in range(15):
-            beep(40)
+            led_vd2.value(1 - led_vd2.value())
+            status_pulse(40)
             time.sleep(1)
 
 
@@ -1144,8 +1056,8 @@ def _format_uptime(uptime_s):
 
 
 # time.time() em vez de time.ticks_ms(): ticks_ms() estoura (volta a zero)
-# depois de alguns dias de uptime continuo, o que faria o campo "uptime" do
-# heartbeat saltar/zerar sozinho, parecendo um reboot que nao aconteceu.
+# depois de alguns dias de uptime contínuo, o que faria o campo "uptime" do
+# heartbeat saltar/zerar sozinho, parecendo um reboot que não aconteceu.
 _boot_time = time.time()
 
 _heartbeat_count = 0
@@ -1180,34 +1092,22 @@ def publish_heartbeat():
         if _wifi_last_disconnect_status is not None:
             payload["wifi_last_disconnect_status"] = _wifi_last_disconnect_status
     _client.publish(_topics()["heartbeat"], json.dumps(payload))
-
-
-def publish_tag(tag):
-    topic = _topics().get("tag")
-    if topic is None:
-        return
-    _client.publish(topic, json.dumps({
-        "tag"  : tag,
-        "chave": DEVICE_KEY,
-    }), qos=1)
-    print("[RFID] TAG publicada: %s" % tag)
+    status_pulse()
 
 
 # --- MAIN --------------------------------------------------------------------
 
 def main():
-    global DEVICE_MAC, BOOT_COUNT, _auth_result, _wg_count, _update_requested
+    global DEVICE_MAC, BOOT_COUNT, _update_requested
 
     print("\n" + "=" * 48)
-    print("  CARONTE ESP32-C3 - MQTT + WIEGAND")
+    print("  CERBEROS ESP32-C3 (FECHO) - MQTT + UART")
     print("=" * 48)
 
     BOOT_COUNT = _read_boot_count()
     _ota_boot_guard()
-
     init_gpio()
     init_uart()
-    _load_tags()
 
     wlan = network.WLAN(network.STA_IF)
     if not wlan.active():
@@ -1216,7 +1116,8 @@ def main():
     print("[Device] MAC: %s" % DEVICE_MAC)
 
     while not connect_wifi():
-        beep(120)
+        _set_link(False)
+        status_pulse(120)
         time.sleep(10)
 
     while True:
@@ -1226,7 +1127,8 @@ def main():
             break
         except Exception as e:
             print("[MQTT] Falha na conexão: %s - tentando em 10s..." % e)
-            beep(120)
+            _set_link(False)
+            status_pulse(120)
             time.sleep(10)
 
     last_heartbeat = time.time()
@@ -1236,12 +1138,11 @@ def main():
     last_ota_check = time.time()
     ota_check_and_maybe_apply()
 
-    last_uart_keepalive = time.time()
-
     while True:
         try:
             if not network.WLAN(network.STA_IF).isconnected():
                 print("[WiFi] Reconectando...")
+                _set_link(False)
                 if connect_wifi():
                     mqtt_connect()
                     do_coldstart()
@@ -1250,48 +1151,8 @@ def main():
                     time.sleep(5)
                     continue
 
-            # Leitura Wiegand completa: silêncio > WG_TIMEOUT_MS
-            if _wg_count > 0 and time.ticks_diff(time.ticks_ms(), _wg_last_ms) > WG_TIMEOUT_MS:
-                state = machine.disable_irq()
-                count = _wg_count
-                _wg_count = 0
-                machine.enable_irq(state)
-
-                tag = _decode_wiegand(_wg_buf, count)
-                print("[RFID] %d bits lidos -> TAG: %s" % (count, tag))
-
-                if tag:
-                    _auth_result = None
-                    publish_tag(tag)
-
-                    t0 = time.time()
-                    while time.time() - t0 < AUTH_TIMEOUT_S:
-                        _client.check_msg()
-                        if _auth_result is not None:
-                            break
-                        time.sleep_ms(100)
-
-                    if _auth_result and _auth_result.get("allow"):
-                        feedback_allow()
-                    elif (_auth_result is None and UART_ENABLED and _fecho_is_online() and
-                          count in (26, 34) and tag in _local_tags):
-                        # MQTT nao respondeu (broker/servidor fora do ar) -
-                        # decide pela whitelist local e pede a liberacao
-                        # direto ao FECHO via UART.
-                        print("[UART] MQTT sem resposta - usando whitelist local")
-                        if fecho_send_tag(tag, count):
-                            feedback_allow()
-                        else:
-                            feedback_deny()
-                    else:
-                        feedback_deny()
-                    _auth_result = None
-
             if UART_ENABLED:
                 uart_poll()
-                if time.time() - last_uart_keepalive >= UART_KEEPALIVE_S:
-                    uart_keepalive()
-                    last_uart_keepalive = time.time()
 
             if time.time() - last_heartbeat >= HEARTBEAT_INTERVAL:
                 publish_heartbeat()
@@ -1312,6 +1173,7 @@ def main():
 
         except OSError as e:
             print("[MQTT] Erro de rede: %s - reconectando..." % e)
+            _set_link(False)
             try:
                 if not network.WLAN(network.STA_IF).isconnected():
                     connect_wifi()

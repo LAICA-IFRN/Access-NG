@@ -1117,6 +1117,33 @@ _ESP32_CERBEROS_CONFIG_FIELDS = [
     ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
 ]
 
+# Cerberos ESP32-C3 / FECHO (CerberosESP32C3.py) — LEDs + relé + UART com o Caronte.
+_ESP32C3_FECHO_CONFIG_FIELDS = [
+    ('WIFI_SSID', 'SSID WiFi', 'str', False),
+    ('WIFI_PASS', 'Senha WiFi', 'str', True),
+    ('MQTT_BROKER', 'Broker MQTT', 'str', False),
+    ('MQTT_PORT', 'Porta MQTT', 'int', False),
+    ('MQTT_USER', 'Usuário MQTT', 'str', False),
+    ('MQTT_PASS', 'Senha MQTT', 'str', True),
+    ('MQTT_TLS', 'MQTT TLS', 'bool', False),
+    ('DEVICE_KEY', 'Chave do dispositivo', 'str', True),
+    ('HEARTBEAT_INTERVAL', 'Intervalo de heartbeat (s)', 'int', False),
+    ('LED_VM_PIN', 'Pino LED vermelho', 'int', False),
+    ('LED_VD1_PIN', 'Pino LED verde 1', 'int', False),
+    ('LED_VD2_PIN', 'Pino LED verde 2', 'int', False),
+    ('LED_VD3_PIN', 'Pino LED verde 3', 'int', False),
+    ('RELAY_PIN', 'Pino do relé', 'int', False),
+    ('RELAY_ACTIVE_MS', 'Tempo ativo do relé (ms)', 'int', False),
+    ('RELAY_COOLDOWN_MS', 'Cooldown entre acionamentos (ms)', 'int', False),
+    ('UART_ENABLED', 'UART com o Caronte habilitada', 'bool', False),
+    ('UART_ID', 'ID da UART', 'int', False),
+    ('UART_TX_PIN', 'Pino TX UART', 'int', False),
+    ('UART_RX_PIN', 'Pino RX UART', 'int', False),
+    ('UART_BAUDRATE', 'Baudrate UART', 'int', False),
+    ('OTA_ENABLED', 'OTA habilitado', 'bool', False),
+    ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
+]
+
 # Caronte ESP32-C3 (CaronteESP32C3.py) — leitor Wiegand.
 _CARONTE_CONFIG_FIELDS = [
     ('WIFI_SSID', 'SSID WiFi', 'str', False),
@@ -1137,6 +1164,12 @@ _CARONTE_CONFIG_FIELDS = [
     ('LED_VD3_PIN', 'Pino LED verde 3', 'int', False),
     ('WG_TIMEOUT_MS', 'Timeout Wiegand (ms)', 'int', False),
     ('AUTH_TIMEOUT_S', 'Timeout de autenticação (s)', 'int', False),
+    ('UART_ENABLED', 'UART com o FECHO habilitada', 'bool', False),
+    ('UART_ID', 'ID da UART', 'int', False),
+    ('UART_TX_PIN', 'Pino TX UART', 'int', False),
+    ('UART_RX_PIN', 'Pino RX UART', 'int', False),
+    ('UART_BAUDRATE', 'Baudrate UART', 'int', False),
+    ('UART_KEEPALIVE_S', 'Intervalo keep-alive UART (s)', 'int', False),
     ('OTA_ENABLED', 'OTA habilitado', 'bool', False),
     ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
 ]
@@ -1144,9 +1177,12 @@ _CARONTE_CONFIG_FIELDS = [
 
 def _cerberos_config_fields(c):
     """Escolhe o esquema de campos certo pelo HARDWARE_INFO reportado pelo
-    firmware — BitDogLab e o ESP32 "enxuto" têm config.json bem diferentes."""
+    firmware — BitDogLab, o ESP32 "enxuto" e o ESP32-C3/FECHO têm config.json
+    bem diferentes."""
     if c.hardware and 'BitDogLab' in c.hardware:
         return _BITDOGLAB_CONFIG_FIELDS
+    if c.hardware and ('FECHO' in c.hardware or 'C3' in c.hardware):
+        return _ESP32C3_FECHO_CONFIG_FIELDS
     return _ESP32_CERBEROS_CONFIG_FIELDS
 
 
@@ -1885,6 +1921,26 @@ def admin_caronte_reiniciar(id):
     return redirect(request.referrer or url_for('admin_carontes'))
 
 
+@app.route('/admin/carontes/<int:id>/tags/sincronizar', methods=['POST'])
+@painel_required
+def admin_caronte_tags_sincronizar(id):
+    """Força o reenvio da whitelist local (tags.json, usada no fallback
+    offline via UART) — normalmente isso já acontece sozinho a cada
+    coldstart e a cada mudança de TAG/frequentador de um ambiente; este
+    botão é só para quando é preciso confirmar/repetir na hora."""
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().sync_tags_caronte(c)
+    flash('Whitelist de TAGs reenviada.' if ok else
+          'Dispositivo sem broker MQTT conectado — não foi possível sincronizar.',
+          'success' if ok else 'warning')
+    return redirect(request.referrer or url_for('admin_carontes'))
+
+
 @app.route('/admin/carontes/<int:id>/config')
 @painel_required
 def admin_caronte_config(id):
@@ -2197,6 +2253,17 @@ def _upsert_tag(usuario, numero):
         db.delete(existing)
 
 
+def _sync_tags_ambientes(ambiente_ids):
+    """Repassa a whitelist local (tags.json) dos Carontes de cada ambiente
+    afetado por uma mudança de TAG/frequentador. Melhor esforço — um
+    dispositivo sem broker MQTT conectado simplesmente não recebe agora e
+    pega a lista atualizada no próximo coldstart."""
+    for amb_id in ambiente_ids:
+        amb = db.query(Ambiente).filter(Ambiente.id == amb_id).first()
+        if amb:
+            _mqtt().sync_tags_ambiente(amb)
+
+
 @app.route('/admin/usuarios')
 @painel_required
 def admin_usuarios():
@@ -2267,6 +2334,7 @@ def admin_usuario_novo():
             if papel in papeis_validos and amb_id in ambientes_gerente_ids:
                 db.add(PapelAmbiente(usuario_id=u.id, ambiente_id=amb_id, papel=papel))
         db.commit()
+        _sync_tags_ambientes(amb_ids_form)
         flash('Usuário criado.', 'success')
         return redirect(url_for('admin_usuarios'))
     return render_template('admin/usuario_form.html', usuario=None, ambientes=ambientes,
@@ -2290,6 +2358,7 @@ def admin_usuario_editar(id):
     papeis_atuais = {p.ambiente_id: p.papel for p in u.papeis}
     if request.method == 'POST':
         f = request.form
+        amb_ids_antes = {a.id for a in u.ambientes}
         u.nome = f['nome']
         u.matricula = f['matricula']
         if f.get('pin'):
@@ -2318,6 +2387,10 @@ def admin_usuario_editar(id):
             elif pa and amb_id in ambientes_gerente_ids:
                 db.delete(pa)
         db.commit()
+        # TAG e/ou frequentadores podem ter mudado — repassa a whitelist para
+        # os ambientes de antes (removidos perdem a TAG) e de depois (novos
+        # ganham) do usuário.
+        _sync_tags_ambientes(amb_ids_antes | amb_ids_form)
         flash('Usuário atualizado.', 'success')
         return redirect(url_for('admin_usuarios'))
     return render_template('admin/usuario_form.html', usuario=u, ambientes=ambientes,
@@ -2338,8 +2411,10 @@ def admin_usuario_excluir(id):
         is_gerente_em_algum_lugar = any(p.papel == 'gerente' for p in u.papeis)
         if u.admin or is_gerente_em_algum_lugar or not (u_ambiente_ids & set(ambiente_ids)):
             abort(403)
+    amb_ids_antes = {a.id for a in u.ambientes}
     db.delete(u)
     db.commit()
+    _sync_tags_ambientes(amb_ids_antes)
     flash('Usuário removido.', 'success')
     return redirect(url_for('admin_usuarios'))
 
