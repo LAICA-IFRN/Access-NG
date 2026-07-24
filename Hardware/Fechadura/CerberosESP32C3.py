@@ -4,7 +4,7 @@ Cerberos ESP32-C3 (FECHO) - MicroPython MQTT + UART
 Firmware para o Cerberos ESP32-C3 dedicado a abrir a fechadura, apelidado de
 "FECHO" pela equipe de hardware. Roda na mesma placa ESP32-C3 do Caronte
 (Hardware/Autenticador/CaronteESP32C3.py), só que cumprindo o papel de
-fechadura: LEDs de feedback, relé da tranca e, futuramente, display OLED.
+fechadura: LEDs de feedback, relé da tranca e display OLED opcional.
 
 Continua respondendo a comandos remotos via MQTT (portal web), e opcionalmente
 recebe pedidos de liberação vindos do Caronte via UART - ver seção UART
@@ -39,6 +39,13 @@ abaixo.
     "UART_RX_PIN"        : 20,
     "UART_BAUDRATE"      : 9600,
 
+    "OLED_ENABLED"       : true,
+    "OLED_SCL_PIN"       : 7,
+    "OLED_SDA_PIN"       : 8,
+    "OLED_WIDTH"         : 128,
+    "OLED_HEIGHT"        : 64,
+    "OLED_ADDR"          : 60,
+
     "OTA_ENABLED"        : true,
     "OTA_CHECK_INTERVAL" : 3600
 }
@@ -54,8 +61,8 @@ abaixo.
   GPIO 05 -> Botão PROG (ativo baixo) - reservado para modo AP/provisionamento;
              não há lógica de AP implementada nesta versão do firmware.
   GPIO 06 -> Relé da tranca (ativo alto)
-  GPIO 07 -> SCL display OLED - reservado; sem driver de display nesta versão.
-  GPIO 08 -> SDA display OLED - reservado; sem driver de display nesta versão.
+  GPIO 07 -> SCL display OLED (SH1106 I2C, 128x64)
+  GPIO 08 -> SDA display OLED (SH1106 I2C, 128x64)
   GPIO 20 -> RX UART (link com o Caronte) - mesma pinagem RS485/UART do
              Caronte ESP32-C3; conectar TX<->RX cruzado entre os dois módulos.
   GPIO 21 -> TX UART (link com o Caronte)
@@ -65,6 +72,23 @@ abaixo.
   independente do que vier em config.json, e RELAY_COOLDOWN_MS impõe um
   intervalo mínimo entre acionamentos (protege contra picos de comando
   repetidos via MQTT/UART estressando a bobina em duty cycle).
+
+--- Display OLED ---------------------------------------------------------------
+
+  OLED_ENABLED (bool, default true) tenta inicializar um display SH1106 I2C
+  128x64 em OLED_SCL_PIN/OLED_SDA_PIN logo no boot (init_display(), via
+  SoftI2C com timeout para não travar o firmware caso o barramento fique
+  preso). Se o display não responder (não está fisicamente presente,
+  endereço errado, etc.), o firmware loga "[OLED] Indisponível" e segue
+  operando normalmente sem display - display_message() vira um no-op nesse
+  caso, então nenhuma outra parte do código precisa checar se o display
+  existe. Driver em sh1106.py (mesmo diretório) - precisa estar no
+  dispositivo junto com o firmware.
+
+  Com o display presente, display_message(titulo, *linhas) é chamado nos
+  eventos principais (boot, WiFi, MQTT, coldstart, abertura/negação da
+  tranca, TAG recebida via UART, OTA) - mesmo padrão usado em
+  Cerberos_BitDogLab_MQTT.py.
 
 --- UART (comunicação com o Caronte) -------------------------------------------
 
@@ -162,6 +186,12 @@ _DEFAULTS = {
     "UART_TX_PIN"        : 21,
     "UART_RX_PIN"        : 20,
     "UART_BAUDRATE"      : 9600,
+    "OLED_ENABLED"       : True,
+    "OLED_SCL_PIN"       : 7,
+    "OLED_SDA_PIN"       : 8,
+    "OLED_WIDTH"         : 128,
+    "OLED_HEIGHT"        : 64,
+    "OLED_ADDR"          : 0x3C,
     "OTA_ENABLED"        : True,
     "OTA_CHECK_INTERVAL" : 3600,
 }
@@ -211,6 +241,12 @@ UART_ID            = cfg("UART_ID")
 UART_TX_PIN        = cfg("UART_TX_PIN")
 UART_RX_PIN        = cfg("UART_RX_PIN")
 UART_BAUDRATE      = cfg("UART_BAUDRATE")
+OLED_ENABLED       = cfg("OLED_ENABLED")
+OLED_SCL_PIN       = cfg("OLED_SCL_PIN")
+OLED_SDA_PIN       = cfg("OLED_SDA_PIN")
+OLED_WIDTH         = cfg("OLED_WIDTH")
+OLED_HEIGHT        = cfg("OLED_HEIGHT")
+OLED_ADDR          = cfg("OLED_ADDR")
 OTA_ENABLED        = cfg("OTA_ENABLED")
 OTA_CHECK_INTERVAL = cfg("OTA_CHECK_INTERVAL")
 
@@ -221,7 +257,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.0.0"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.1.1"   # bump manual a cada release publicada
 # Arquivo próprio (nem version.json nem version_esp32.json dos outros
 # firmwares deste diretório) para que os três tenham ciclos de release
 # independentes.
@@ -362,6 +398,8 @@ led_vd1 = None
 led_vd2 = None
 led_vd3 = None
 relay   = None
+oled    = None
+oled_ok = False
 
 _last_unlock_ms = None
 
@@ -407,15 +445,98 @@ def unlock_door(source="remote"):
     now = time.ticks_ms()
     if _last_unlock_ms is not None and time.ticks_diff(now, _last_unlock_ms) < RELAY_COOLDOWN_MS:
         print("[Lock] Acionamento recusado (%s) - cooldown da solenóide" % source)
+        display_message("TRANCA", "Recusado", "aguarde solenoide")
         return False
 
     print("[Lock] Abrindo porta (%s)..." % source)
+    display_message("TRANCA", "Abrindo", source)
     _last_unlock_ms = now
     relay.value(1)
     time.sleep_ms(RELAY_ACTIVE_MS)
     relay.value(0)
     print("[Lock] Porta fechada")
+    display_message("TRANCA", "Fechada", "Sistema pronto")
     return True
+
+
+# --- DISPLAY OLED --------------------------------------------------------------
+
+def init_display():
+    """Tenta inicializar o display SH1106 em OLED_SCL_PIN/OLED_SDA_PIN. Se não
+    houver display fisicamente presente (ou falhar por qualquer motivo), loga
+    e segue sem display - display_message() vira no-op em oled_ok=False,
+    então nenhum outro trecho do firmware precisa checar a presença dele."""
+    global oled, oled_ok
+    if not OLED_ENABLED:
+        return False
+    try:
+        from machine import Pin, SoftI2C
+        from sh1106 import SH1106_I2C
+        # timeout (us) limita quanto o bit-bang espera por clock-stretch/ACK
+        # antes de desistir com OSError - sem isso, um soluço no barramento
+        # I2C (ruído de RF da própria antena WiFi, display travado, etc.)
+        # emperra o driver para sempre dentro de display_message(), o que
+        # congelaria o firmware inteiro sem exceção nenhuma pra pegar.
+        i2c = SoftI2C(scl=Pin(OLED_SCL_PIN), sda=Pin(OLED_SDA_PIN), timeout=50000)
+        # res=None: os módulos SH1106 128x64 mais comuns não expõem (ou não
+        # precisam de) um pino de reset separado no barramento I2C.
+        oled = SH1106_I2C(OLED_WIDTH, OLED_HEIGHT, i2c, res=None, addr=OLED_ADDR)
+        oled_ok = True
+        display_message("ACCESS-NG", "FECHO", "Iniciando...")
+        print("[OLED] Inicializado (SH1106)")
+        return True
+    except Exception as e:
+        oled = None
+        oled_ok = False
+        print("[OLED] Indisponível: %s" % e)
+        return False
+
+
+def _wrap_display_line(text, width=16):
+    text = str(text)
+    lines = []
+    for raw in text.split("\n"):
+        words = raw.split(" ")
+        line = ""
+        for word in words:
+            if not word:
+                continue
+            if len(word) > width:
+                if line:
+                    lines.append(line)
+                    line = ""
+                while len(word) > width:
+                    lines.append(word[:width])
+                    word = word[width:]
+            candidate = word if not line else line + " " + word
+            if len(candidate) <= width:
+                line = candidate
+            else:
+                lines.append(line)
+                line = word
+        lines.append(line)
+    return lines
+
+
+def display_message(title, *lines):
+    if not oled_ok or oled is None:
+        return
+    try:
+        oled.fill(0)
+        oled.text(str(title)[:16], 0, 0)
+        oled.hline(0, 10, OLED_WIDTH, 1)
+        y = 16
+        for line in lines:
+            for wrapped in _wrap_display_line(line):
+                if y > OLED_HEIGHT - 8:
+                    break
+                oled.text(wrapped[:16], 0, y)
+                y += 10
+            if y > OLED_HEIGHT - 8:
+                break
+        oled.show()
+    except Exception as e:
+        print("[OLED] Falha ao atualizar: %s" % e)
 
 
 # --- UART / Protocolo FECHO ---------------------------------------------------
@@ -507,6 +628,7 @@ def uart_poll():
         elif cmd == _UART_CMD_TAG and len(data) == 5:
             tag = ubinascii.hexlify(data[:4]).decode("utf-8").upper()
             tipo = data[4]
+            display_message("UART", "TAG recebida", tag)
             allowed = unlock_door("uart")
             _uart_send(_UART_CMD_PERMITIDO if allowed else _UART_CMD_NEGADO)
             if allowed:
@@ -523,8 +645,14 @@ def connect_wifi():
     global _wifi_reconnects, _wifi_last_reconnect_s, _wifi_last_disconnect_status
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    # Pequeno assentamento: no ESP32-C3, chamar connect() logo após active(True)
+    # (tipicamente no boot a frio) pode pegar o driver WiFi ainda inicializando,
+    # o que faz connect() levantar OSError("Wifi Internal State Error") em vez
+    # de simplesmente falhar depois de forma assíncrona.
+    time.sleep_ms(100)
     if wlan.isconnected():
         print("[WiFi] IP: %s" % wlan.ifconfig()[0])
+        display_message("WIFI", "Conectado", wlan.ifconfig()[0])
         return True
 
     if _wifi_last_reconnect_s is not None:
@@ -535,17 +663,48 @@ def connect_wifi():
     _wifi_last_reconnect_s = time.time()
 
     print("[WiFi] Conectando em %s..." % WIFI_SSID)
-    wlan.connect(WIFI_SSID, WIFI_PASS)
+    display_message("WIFI", "Conectando", WIFI_SSID)
+    try:
+        wlan.connect(WIFI_SSID, WIFI_PASS)
+    except OSError as e:
+        # Mesmo erro de estado interno pode ser lançado aqui em vez de na
+        # inicialização - trata como falha de conexão (o chamador já tem
+        # lógica de retry com espera) em vez de derrubar o firmware inteiro.
+        print("[WiFi] Erro ao conectar: %s" % e)
+        led_vd2.value(0)
+        display_message("WIFI", "Erro ao conectar", "tentando de novo")
+        _wifi_reset_radio(wlan)
+        return False
     for _ in range(30):
         if wlan.isconnected():
             print("[WiFi] IP: %s" % wlan.ifconfig()[0])
+            display_message("WIFI", "Conectado", wlan.ifconfig()[0])
             return True
         led_vd2.value(1 - led_vd2.value())
         time.sleep(0.5)
 
     led_vd2.value(0)
     print("[WiFi] Falha")
+    display_message("WIFI", "Falha", "verifique rede")
+    _wifi_reset_radio(wlan)
     return False
+
+
+def _wifi_reset_radio(wlan):
+    """Depois de uma tentativa de conexão que falha ou expira, o driver WiFi
+    do ESP32-C3 pode ficar preso num estado interno inconsistente: toda
+    chamada seguinte de connect() passa a levantar OSError("Wifi Internal
+    State Error"), mesmo com rede e senha corretas (visto em campo - a
+    primeira tentativa só dá timeout, e todas as seguintes já saem direto
+    no erro). Um ciclo completo active(False)/active(True) reinicia a
+    máquina de estados do driver e evita esse travamento permanente."""
+    try:
+        wlan.active(False)
+        time.sleep_ms(200)
+        wlan.active(True)
+        time.sleep_ms(100)
+    except OSError as e:
+        print("[WiFi] Erro ao reiniciar rádio: %s" % e)
 
 
 # --- OTA -----------------------------------------------------------------
@@ -746,6 +905,7 @@ def check_for_update():
         return None
 
     print("[OTA] Nova versão disponível:", remota_versao)
+    display_message("OTA", "Nova versao", remota_versao)
     return remote
 
 
@@ -786,9 +946,11 @@ def apply_update(remote):
         versao = remote.get("versao", "")
         path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
         print("[OTA] Baixando", "http://" + OTA_HOST + path)
+        display_message("OTA", "Baixando", versao)
         status, _ = _http_request(OTA_HOST, path, dest_file="main.new", timeout=30)
         if status != 200 or not _valida_payload("main.new", versao):
             print("[OTA] Download inválido (status=%s) - abortando" % status)
+            display_message("OTA", "Falha download", "mantendo atual")
             try:
                 os.remove("main.new")
             except OSError:
@@ -809,10 +971,12 @@ def apply_update(remote):
             pass
 
         print("[OTA] Atualizado para", versao, "- reiniciando")
+        display_message("OTA", "Atualizado", versao)
         time.sleep(1)
         _soft_reset()
     except Exception as e:
         print("[OTA] Erro ao aplicar atualização:", e)
+        display_message("OTA", "Erro ao aplicar", str(e)[:16])
         return False
 
 
@@ -907,8 +1071,10 @@ def _apply_set_config(params):
             json.dump(_cfg_file, f)
     except Exception as e:
         print("[Config] Erro ao gravar config.json:", e)
+        display_message("CONFIG", "Erro ao gravar", str(e)[:16])
         return
     print("[Config] Novos parametros gravados, reiniciando:", list(validos.keys()))
+    display_message("CONFIG", "Config gravada", "reiniciando...")
     time.sleep(1)
     _soft_reset()
 
@@ -955,6 +1121,7 @@ def _on_message(topic, payload):
             _update_requested = True
         elif data.get("command") == "reboot":
             print("[MQTT] Comando de reinício recebido - reiniciando...")
+            display_message("COMANDO", "Reiniciando", "aguarde...")
             status_pulse(200)
             time.sleep_ms(300)
             _soft_reset()
@@ -992,6 +1159,7 @@ def mqtt_connect():
     client.subscribe(_topics()["coldstart_result"])
     _client = client
     print("[MQTT] Conectado ao broker %s:%s" % (MQTT_BROKER, MQTT_PORT))
+    display_message("MQTT", "Conectado", MQTT_BROKER)
 
 
 def do_coldstart():
@@ -1011,6 +1179,7 @@ def do_coldstart():
             )
             status_pulse()
             print("[MQTT] Coldstart publicado, aguardando confirmação...")
+            display_message("COLDSTART", "Publicado", "aguardando...")
 
             t0 = time.time()
             tick = 0
@@ -1037,10 +1206,12 @@ def do_coldstart():
             _client.subscribe(_topics()["command"])
             _set_link(True)
             print("[MQTT] Coldstart OK - ambiente_id=%s" % AMBIENTE_ID)
+            display_message("COLDSTART OK", "Ambiente %s" % AMBIENTE_ID, "Sistema pronto")
             return
 
         print("[MQTT] Coldstart negado/sem resposta (%s) - tentando em 15s..." %
               _coldstart_result)
+        display_message("COLDSTART", "Sem resposta", "tentando em 15s")
         led_vd2.value(0)
         for _ in range(15):
             led_vd2.value(1 - led_vd2.value())
@@ -1108,12 +1279,14 @@ def main():
     _ota_boot_guard()
     init_gpio()
     init_uart()
+    init_display()
 
     wlan = network.WLAN(network.STA_IF)
     if not wlan.active():
         wlan.active(True)
     DEVICE_MAC = ubinascii.hexlify(wlan.config("mac"), ":").decode()
     print("[Device] MAC: %s" % DEVICE_MAC)
+    display_message("DISPOSITIVO", "MAC", DEVICE_MAC)
 
     while not connect_wifi():
         _set_link(False)
@@ -1134,6 +1307,7 @@ def main():
     last_heartbeat = time.time()
     _ota_confirmar_versao_boa()
     print("[Main] Operacional\n")
+    display_message("ACCESS-NG", "Operacional", "Ambiente %s" % AMBIENTE_ID)
 
     last_ota_check = time.time()
     ota_check_and_maybe_apply()
@@ -1142,6 +1316,7 @@ def main():
         try:
             if not network.WLAN(network.STA_IF).isconnected():
                 print("[WiFi] Reconectando...")
+                display_message("WIFI", "Reconectando", WIFI_SSID)
                 _set_link(False)
                 if connect_wifi():
                     mqtt_connect()
@@ -1173,6 +1348,7 @@ def main():
 
         except OSError as e:
             print("[MQTT] Erro de rede: %s - reconectando..." % e)
+            display_message("MQTT", "Erro de rede", "reconectando")
             _set_link(False)
             try:
                 if not network.WLAN(network.STA_IF).isconnected():

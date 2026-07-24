@@ -245,7 +245,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.8"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.10"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
@@ -645,6 +645,11 @@ def connect_wifi():
     global _wifi_reconnects, _wifi_last_reconnect_s, _wifi_last_disconnect_status
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    # Pequeno assentamento: no ESP32-C3, chamar connect() logo após active(True)
+    # (tipicamente no boot a frio) pode pegar o driver WiFi ainda inicializando,
+    # o que faz connect() levantar OSError("Wifi Internal State Error") em vez
+    # de simplesmente falhar depois de forma assíncrona.
+    time.sleep_ms(100)
     if wlan.isconnected():
         print("[WiFi] IP: %s" % wlan.ifconfig()[0])
         return True
@@ -657,7 +662,15 @@ def connect_wifi():
     _wifi_last_reconnect_s = time.time()
 
     print("[WiFi] Conectando em %s..." % WIFI_SSID)
-    wlan.connect(WIFI_SSID, WIFI_PASS)
+    try:
+        wlan.connect(WIFI_SSID, WIFI_PASS)
+    except OSError as e:
+        # Mesmo erro de estado interno pode ser lançado aqui em vez de na
+        # inicialização - trata como falha de conexão (o chamador já tem
+        # lógica de retry com espera) em vez de derrubar o firmware inteiro.
+        print("[WiFi] Erro ao conectar: %s" % e)
+        _wifi_reset_radio(wlan)
+        return False
     for _ in range(30):
         if wlan.isconnected():
             print("[WiFi] IP: %s" % wlan.ifconfig()[0])
@@ -665,7 +678,25 @@ def connect_wifi():
         time.sleep(0.5)
 
     print("[WiFi] Falha")
+    _wifi_reset_radio(wlan)
     return False
+
+
+def _wifi_reset_radio(wlan):
+    """Depois de uma tentativa de conexão que falha ou expira, o driver WiFi
+    do ESP32-C3 pode ficar preso num estado interno inconsistente: toda
+    chamada seguinte de connect() passa a levantar OSError("Wifi Internal
+    State Error"), mesmo com rede e senha corretas (visto em campo - a
+    primeira tentativa só dá timeout, e todas as seguintes já saem direto
+    no erro). Um ciclo completo active(False)/active(True) reinicia a
+    máquina de estados do driver e evita esse travamento permanente."""
+    try:
+        wlan.active(False)
+        time.sleep_ms(200)
+        wlan.active(True)
+        time.sleep_ms(100)
+    except OSError as e:
+        print("[WiFi] Erro ao reiniciar rádio: %s" % e)
 
 
 # --- OTA -----------------------------------------------------------------------
