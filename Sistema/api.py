@@ -1140,6 +1140,12 @@ _ESP32C3_FECHO_CONFIG_FIELDS = [
     ('UART_TX_PIN', 'Pino TX UART', 'int', False),
     ('UART_RX_PIN', 'Pino RX UART', 'int', False),
     ('UART_BAUDRATE', 'Baudrate UART', 'int', False),
+    ('OLED_ENABLED', 'Display OLED habilitado', 'bool', False),
+    ('OLED_SCL_PIN', 'Pino SCL OLED', 'int', False),
+    ('OLED_SDA_PIN', 'Pino SDA OLED', 'int', False),
+    ('OLED_WIDTH', 'Largura OLED', 'int', False),
+    ('OLED_HEIGHT', 'Altura OLED', 'int', False),
+    ('OLED_ADDR', 'Endereço I2C OLED', 'int', False),
     ('OTA_ENABLED', 'OTA habilitado', 'bool', False),
     ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
 ]
