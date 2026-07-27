@@ -21,6 +21,12 @@
           onsubmit="return confirm('Reiniciar {{ c.nome }} agora? O dispositivo ficará offline por alguns segundos.')">
       <button class="btn btn-sm btn-outline-danger">Reiniciar</button>
     </form>
+    <form method="POST" action="{{ url_for('admin_cerberos_debug_toggle', id=c.id) }}" style="display:inline;"
+          title="Com debug ativo, todo heartbeat grava o payload completo no log (normalmente só os de diagnóstico gravam)">
+      <button class="btn btn-sm {{ 'btn-gold' if c.debug_ativo else 'btn-outline-secondary' }}">
+        {{ 'Debug ativo' if c.debug_ativo else 'Ativar debug' }}
+      </button>
+    </form>
     <a href="{{ url_for('admin_cerberos_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
     {% endif %}
   </div>

@@ -24,6 +24,12 @@
           title="Reenvia a whitelist local de TAGs (tags.json), usada no fallback offline via UART">
       <button class="btn btn-sm btn-outline-secondary">Sincronizar TAGs</button>
     </form>
+    <form method="POST" action="{{ url_for('admin_caronte_debug_toggle', id=c.id) }}" style="display:inline;"
+          title="Com debug ativo, todo heartbeat grava o payload completo no log (normalmente só os de diagnóstico gravam)">
+      <button class="btn btn-sm {{ 'btn-gold' if c.debug_ativo else 'btn-outline-secondary' }}">
+        {{ 'Debug ativo' if c.debug_ativo else 'Ativar debug' }}
+      </button>
+    </form>
     <a href="{{ url_for('admin_caronte_editar', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Editar</a>
     {% endif %}
   </div>

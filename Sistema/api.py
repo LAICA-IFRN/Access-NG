@@ -1822,6 +1822,25 @@ def admin_cerberos_reiniciar(id):
     return redirect(request.referrer or url_for('admin_cerberoses'))
 
 
+@app.route('/admin/cerberoses/<int:id>/debug', methods=['POST'])
+@painel_required
+def admin_cerberos_debug_toggle(id):
+    """Ativa/desativa o log completo de heartbeat (AccessLog) deste
+    dispositivo - por padrão, heartbeat só alimenta o SLA (DeviceHeartbeat)
+    sem poluir a tabela de logs; com debug ativo, cada heartbeat também
+    grava o payload inteiro, útil pra investigar um dispositivo específico."""
+    usuario = _current_session_usuario()
+    c = db.query(Cerberos).filter(Cerberos.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    c.debug_ativo = not c.debug_ativo
+    db.commit()
+    flash(f'Debug de heartbeat {"ativado" if c.debug_ativo else "desativado"} para {c.nome}.', 'success')
+    return redirect(request.referrer or url_for('admin_cerberoses'))
+
+
 @app.route('/admin/cerberoses/<int:id>/config')
 @painel_required
 def admin_cerberos_config(id):
@@ -2101,6 +2120,25 @@ def admin_caronte_reiniciar(id):
     flash('Comando de reinício enviado.' if ok else
           'Dispositivo sem broker MQTT conectado — não foi possível reiniciar.',
           'success' if ok else 'warning')
+    return redirect(request.referrer or url_for('admin_carontes'))
+
+
+@app.route('/admin/carontes/<int:id>/debug', methods=['POST'])
+@painel_required
+def admin_caronte_debug_toggle(id):
+    """Ativa/desativa o log completo de heartbeat (AccessLog) deste
+    dispositivo - por padrão, heartbeat só alimenta o SLA (DeviceHeartbeat)
+    sem poluir a tabela de logs; com debug ativo, cada heartbeat também
+    grava o payload inteiro, útil pra investigar um dispositivo específico."""
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    c.debug_ativo = not c.debug_ativo
+    db.commit()
+    flash(f'Debug de heartbeat {"ativado" if c.debug_ativo else "desativado"} para {c.mac}.', 'success')
     return redirect(request.referrer or url_for('admin_carontes'))
 
 
