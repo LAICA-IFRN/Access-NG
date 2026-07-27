@@ -29,6 +29,16 @@ usuarios_ambientes = Table(
     Column("ambiente_id", ForeignKey("ambientes.id"), primary_key=True),
 )
 
+# Quem, dentre os frequentadores de um ambiente, também pode abrir a
+# fechadura pelo Caronte web (portal/app) - permissão à parte do acesso
+# físico via TAG, concedida individualmente por (usuario, ambiente).
+usuarios_web = Table(
+    "usuarios_web",
+    Base.metadata,
+    Column("usuario_id", ForeignKey("usuarios.id"), primary_key=True),
+    Column("ambiente_id", ForeignKey("ambientes.id"), primary_key=True),
+)
+
 
 class Usuario(Base):
     __tablename__ = 'usuarios'
@@ -41,6 +51,7 @@ class Usuario(Base):
     tag: Mapped["TAG"] = relationship(back_populates="usuario")
     mac: Mapped["MAC"] = relationship(back_populates="usuario")
     ambientes: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes, back_populates="frequentadores")
+    ambientes_web: Mapped[List[Ambiente]] = relationship(secondary=usuarios_web, back_populates="usuarios_web")
     papeis: Mapped[List["PapelAmbiente"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 
 
@@ -68,7 +79,9 @@ class Ambiente(Base):
     latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     raio_metros: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    web_habilitado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     frequentadores: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes, back_populates="ambientes")
+    usuarios_web: Mapped[List[Usuario]] = relationship(secondary=usuarios_web, back_populates="ambientes_web")
     papeis: Mapped[List["PapelAmbiente"]] = relationship(back_populates="ambiente", cascade="all, delete-orphan")
     cerberoses: Mapped[List[Cerberos]] = relationship(back_populates="ambiente")
     carontes: Mapped[List[Caronte]] = relationship(back_populates="ambiente")
@@ -260,3 +273,5 @@ for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'wifi_last_reconnect_s', 'INTEGER')
     _add_column_if_missing(_table, 'wifi_last_disconnect_status', 'INTEGER')
     _add_column_if_missing(_table, 'ap_bssid', 'VARCHAR(20)')
+
+_add_column_if_missing('ambientes', 'web_habilitado', 'BOOLEAN DEFAULT 0')

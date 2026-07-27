@@ -76,7 +76,9 @@
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
       <thead><tr>
-        <th>Nome</th><th>Matrícula</th><th>TAG</th><th>Papel</th><th></th>
+        <th>Nome</th><th>Matrícula</th><th>TAG</th><th>Papel</th>
+        {% if ambiente.web_habilitado %}<th>Caronte Web</th>{% endif %}
+        <th></th>
       </tr></thead>
       <tbody>
       {% for item in usuarios_vinculados %}
@@ -87,6 +89,19 @@
         <td>
           {% if item.papel %}<span class="badge" style="background:#2d2d4e; color:#ccc;">{{ item.papel }}</span>{% else %}—{% endif %}
         </td>
+        {% if ambiente.web_habilitado %}
+        <td>
+          {% if pode_editar_usuarios %}
+          <form method="POST" action="{{ url_for('admin_ambiente_usuario_web_toggle', id=ambiente.id, usuario_id=item.usuario.id) }}">
+            <button class="btn btn-sm py-0 px-2 {{ 'btn-outline-secondary' if item.pode_web else 'btn-outline-danger' }}">
+              {{ 'Habilitado' if item.pode_web else 'Desabilitado' }}
+            </button>
+          </form>
+          {% else %}
+          <span class="badge badge-{{ 'online' if item.pode_web else 'unknown' }}">{{ 'Habilitado' if item.pode_web else 'Desabilitado' }}</span>
+          {% endif %}
+        </td>
+        {% endif %}
         <td class="text-right">
           <a href="{{ url_for('admin_usuario_editar', id=item.usuario.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
           {% if pode_editar_usuarios %}
@@ -98,7 +113,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="text-center" style="color:#555;">Nenhum usuário vinculado.</td></tr>
+      <tr><td colspan="{{ 6 if ambiente.web_habilitado else 5 }}" class="text-center" style="color:#555;">Nenhum usuário vinculado.</td></tr>
       {% endfor %}
       </tbody>
     </table>

@@ -39,6 +39,12 @@
                 <option value="{{ p }}">{{ p|capitalize }}</option>
                 {% endfor %}
               </select>
+              {% if ambiente.web_habilitado %}
+              <div class="form-check mr-2">
+                <input class="form-check-input" type="checkbox" name="permitir_web" id="web-{{ u.id }}">
+                <label class="form-check-label" for="web-{{ u.id }}" style="font-size:.85rem;">Caronte Web</label>
+              </div>
+              {% endif %}
               <button type="submit" class="btn btn-sm btn-gold">Adicionar</button>
             </form>
           </td>

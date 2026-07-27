@@ -71,6 +71,14 @@
         </select>
       </div>
       {% endif %}
+      {% if from_ambiente.web_habilitado %}
+      <div class="form-group">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="permitir_web" id="permitirWebCheck">
+          <label class="form-check-label" for="permitirWebCheck">Permitir Caronte Web neste Tartaro</label>
+        </div>
+      </div>
+      {% endif %}
       {% else %}
       <div class="form-group">
         <label>Acesso aos Tartaros</label>

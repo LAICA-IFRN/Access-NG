@@ -71,9 +71,14 @@ class Tartaro():
             return False
 
     def autenticarWeb(self, matricula: str, pin: str, ambiente_id: int) -> bool:
-        """Authenticate a user via browser (web Caronte) and trigger the ambiente's Cerberoses."""
+        """Authenticate a user via browser (web Caronte) and trigger the ambiente's Cerberoses.
+
+        Exige três coisas: o Tartaro ter o Caronte web habilitado, o usuário
+        ser frequentador do ambiente (mesmo critério do acesso físico por
+        TAG) e ter permissão explícita de uso do Caronte web *nesse*
+        ambiente (usuarios_web) - concedida à parte pelo admin/gerente."""
         ambiente = db.query(Ambiente).filter(Ambiente.id == ambiente_id).first()
-        if not ambiente:
+        if not ambiente or not ambiente.web_habilitado:
             return False
         usuario = db.query(Usuario).filter(
             Usuario.matricula == matricula,
@@ -81,17 +86,23 @@ class Tartaro():
         ).first()
         if not usuario:
             return False
-        if usuario in ambiente.frequentadores:
+        if usuario in ambiente.frequentadores and usuario in ambiente.usuarios_web:
             for c in ambiente.cerberoses:
                 self.acionarCerberos(c.mac)
             return True
         return False
 
-    def ambientesProximos(self, lat: float, lon: float) -> list:
-        """Return all Ambientes whose geofence contains the given coordinates."""
+    def ambientesProximos(self, lat: float, lon: float, usuario: "Usuario" = None) -> list:
+        """Return Ambientes with Caronte web habilitado whose geofence contains
+        the given coordinates. Se um usuario for informado, restringe ainda
+        mais aos ambientes onde ele tem permissão de uso do Caronte web -
+        evita mostrar no app um ambiente "disponível" que na hora de abrir
+        seria negado por falta de permissão."""
         proximos = []
-        for amb in db.query(Ambiente).all():
+        for amb in db.query(Ambiente).filter(Ambiente.web_habilitado == True).all():
             if amb.latitude is None or amb.longitude is None:
+                continue
+            if usuario is not None and usuario not in amb.usuarios_web:
                 continue
             raio = amb.raio_metros or 50
             if _distancia_metros(lat, lon, amb.latitude, amb.longitude) <= raio:

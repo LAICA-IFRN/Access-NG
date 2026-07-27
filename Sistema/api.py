@@ -692,8 +692,9 @@ def caronte_ambientes_proximos():
     except (KeyError, ValueError):
         return jsonify({'error': 'lat e lon obrigatórios'}), 400
 
+    usuario = db.query(Usuario).filter(Usuario.id == session['user_id']).first()
     tartaro = Tartaro()
-    proximos = tartaro.ambientesProximos(lat, lon)
+    proximos = tartaro.ambientesProximos(lat, lon, usuario=usuario)
     result = []
     for a in proximos:
         online = [c for c in a.cerberoses if c.status == 'online']
@@ -1407,9 +1408,11 @@ def admin_ambiente_ver(id):
          for c in ambiente.carontes]
     )
 
+    web_ids = {u.id for u in ambiente.usuarios_web}
     usuarios_vinculados = sorted(
         (
-            {'usuario': u, 'papel': _papel_em(u, id), 'tag': u.tag.numero if u.tag else None}
+            {'usuario': u, 'papel': _papel_em(u, id), 'tag': u.tag.numero if u.tag else None,
+             'pode_web': u.id in web_ids}
             for u in ambiente.frequentadores
         ),
         key=lambda item: item['usuario'].nome,
@@ -1489,6 +1492,8 @@ def admin_ambiente_usuario_vincular(id):
             pa.papel = papel
         else:
             db.add(PapelAmbiente(usuario_id=alvo.id, ambiente_id=id, papel=papel))
+    if ambiente.web_habilitado and 'permitir_web' in request.form and ambiente not in alvo.ambientes_web:
+        alvo.ambientes_web.append(ambiente)
     db.commit()
     _sync_tags_ambientes([id])
     flash(f'{alvo.nome} adicionado ao Tartaro.', 'success')
@@ -1511,12 +1516,41 @@ def admin_ambiente_usuario_remover(id, usuario_id):
 
     if ambiente in alvo.ambientes:
         alvo.ambientes.remove(ambiente)
+    if ambiente in alvo.ambientes_web:
+        alvo.ambientes_web.remove(ambiente)
     pa = db.query(PapelAmbiente).filter_by(usuario_id=alvo.id, ambiente_id=id).first()
     if pa:
         db.delete(pa)
     db.commit()
     _sync_tags_ambientes([id])
     flash(f'{alvo.nome} removido do Tartaro.', 'success')
+    return redirect(url_for('admin_ambiente_ver', id=id))
+
+
+@app.route('/admin/ambientes/<int:id>/usuarios/<int:usuario_id>/web', methods=['POST'])
+@painel_required
+def admin_ambiente_usuario_web_toggle(id, usuario_id):
+    """Liga/desliga a permissão de um usuário usar o Caronte web neste
+    Tartaro (independente do acesso físico via TAG, que continua valendo
+    normalmente)."""
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    if not pode_editar_usuarios(usuario, id):
+        abort(403)
+
+    alvo = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if alvo is None or alvo not in ambiente.frequentadores:
+        abort(404)
+
+    if alvo in ambiente.usuarios_web:
+        ambiente.usuarios_web.remove(alvo)
+        flash(f'Caronte web desabilitado para {alvo.nome}.', 'success')
+    else:
+        ambiente.usuarios_web.append(alvo)
+        flash(f'Caronte web habilitado para {alvo.nome}.', 'success')
+    db.commit()
     return redirect(url_for('admin_ambiente_ver', id=id))
 
 
@@ -1531,6 +1565,7 @@ def admin_ambiente_novo():
             latitude=float(f['latitude']) if f.get('latitude') else None,
             longitude=float(f['longitude']) if f.get('longitude') else None,
             raio_metros=int(f['raio_metros']) if f.get('raio_metros') else 50,
+            web_habilitado='web_habilitado' in f,
         )
         db.add(amb)
         db.commit()
@@ -1552,6 +1587,7 @@ def admin_ambiente_editar(id):
         amb.latitude = float(f['latitude']) if f.get('latitude') else None
         amb.longitude = float(f['longitude']) if f.get('longitude') else None
         amb.raio_metros = int(f['raio_metros']) if f.get('raio_metros') else 50
+        amb.web_habilitado = 'web_habilitado' in f
         db.commit()
         flash('Ambiente atualizado.', 'success')
         return redirect(url_for('admin_ambientes'))
@@ -2494,6 +2530,8 @@ def admin_usuario_novo():
             papel = f.get('papel', '').strip()
             if papel in papeis_validos and from_ambiente.id in ambientes_gerente_ids:
                 db.add(PapelAmbiente(usuario_id=u.id, ambiente_id=from_ambiente.id, papel=papel))
+            if from_ambiente.web_habilitado and 'permitir_web' in f:
+                u.ambientes_web.append(from_ambiente)
         else:
             amb_ids_escopo = {a.id for a in ambientes}
             amb_ids_form = {int(x) for x in request.form.getlist('ambientes')} & amb_ids_escopo

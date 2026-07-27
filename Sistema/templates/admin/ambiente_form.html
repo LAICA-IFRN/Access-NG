@@ -80,6 +80,18 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
 
+      <div class="form-group">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="web_habilitado" id="webHabilitadoCheck"
+                 {% if ambiente and ambiente.web_habilitado %}checked{% endif %}>
+          <label class="form-check-label" for="webHabilitadoCheck" style="color:#c9a227;">Permite Caronte Web</label>
+        </div>
+        <small style="color:#888;">
+          Além disso habilitado aqui, cada usuário precisa de permissão individual pra usar o Caronte web
+          neste Tartaro — concedida na página do próprio Tartaro.
+        </small>
+      </div>
+
       <button type="submit" class="btn btn-gold">Salvar</button>
     </form>
   </div>
