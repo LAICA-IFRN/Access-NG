@@ -1407,6 +1407,14 @@ def admin_ambiente_ver(id):
          for c in ambiente.carontes]
     )
 
+    usuarios_vinculados = sorted(
+        (
+            {'usuario': u, 'papel': _papel_em(u, id), 'tag': u.tag.numero if u.tag else None}
+            for u in ambiente.frequentadores
+        ),
+        key=lambda item: item['usuario'].nome,
+    )
+
     return render_template(
         'admin/ambiente_ver.html',
         ambiente=ambiente,
@@ -1414,7 +1422,102 @@ def admin_ambiente_ver(id):
         desde=desde.isoformat(),
         ate=ate.isoformat(),
         dispositivos=dispositivos,
+        usuarios_vinculados=usuarios_vinculados,
+        pode_criar_usuarios=pode_criar_usuarios(usuario, id),
+        pode_editar_usuarios=pode_editar_usuarios(usuario, id),
     )
+
+
+@app.route('/admin/ambientes/<int:id>/usuarios/adicionar')
+@painel_required
+def admin_ambiente_usuario_adicionar(id):
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    if not pode_criar_usuarios(usuario, id):
+        abort(403)
+
+    search = request.args.get('search', '').strip()
+    vinculados_ids = {u.id for u in ambiente.frequentadores}
+    resultados = []
+    if search:
+        candidatos = (
+            db.query(Usuario)
+            .outerjoin(TAG, TAG.usuario_id == Usuario.id)
+            .filter(or_(
+                Usuario.nome.contains(search),
+                Usuario.matricula.contains(search),
+                TAG.numero.contains(search),
+            ))
+            .order_by(Usuario.nome)
+            .limit(20)
+            .all()
+        )
+        resultados = [u for u in candidatos if u.id not in vinculados_ids]
+
+    papeis_validos = ('gerente', 'colaborador', 'leitor') if usuario.admin else ('colaborador', 'leitor')
+    return render_template(
+        'admin/ambiente_usuario_adicionar.html',
+        ambiente=ambiente, search=search, resultados=resultados,
+        papeis_validos=papeis_validos,
+    )
+
+
+@app.route('/admin/ambientes/<int:id>/usuarios/vincular', methods=['POST'])
+@painel_required
+def admin_ambiente_usuario_vincular(id):
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    if not pode_criar_usuarios(usuario, id):
+        abort(403)
+
+    alvo = db.query(Usuario).filter(Usuario.id == request.form.get('usuario_id')).first()
+    if alvo is None:
+        abort(404)
+
+    papeis_validos = ('gerente', 'colaborador', 'leitor') if usuario.admin else ('colaborador', 'leitor')
+    papel = request.form.get('papel', '').strip()
+
+    if ambiente not in alvo.ambientes:
+        alvo.ambientes.append(ambiente)
+    if papel in papeis_validos:
+        pa = db.query(PapelAmbiente).filter_by(usuario_id=alvo.id, ambiente_id=id).first()
+        if pa:
+            pa.papel = papel
+        else:
+            db.add(PapelAmbiente(usuario_id=alvo.id, ambiente_id=id, papel=papel))
+    db.commit()
+    _sync_tags_ambientes([id])
+    flash(f'{alvo.nome} adicionado ao Tartaro.', 'success')
+    return redirect(url_for('admin_ambiente_ver', id=id))
+
+
+@app.route('/admin/ambientes/<int:id>/usuarios/<int:usuario_id>/remover', methods=['POST'])
+@painel_required
+def admin_ambiente_usuario_remover(id, usuario_id):
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    if not pode_editar_usuarios(usuario, id):
+        abort(403)
+
+    alvo = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if alvo is None:
+        abort(404)
+
+    if ambiente in alvo.ambientes:
+        alvo.ambientes.remove(ambiente)
+    pa = db.query(PapelAmbiente).filter_by(usuario_id=alvo.id, ambiente_id=id).first()
+    if pa:
+        db.delete(pa)
+    db.commit()
+    _sync_tags_ambientes([id])
+    flash(f'{alvo.nome} removido do Tartaro.', 'success')
+    return redirect(url_for('admin_ambiente_ver', id=id))
 
 
 @app.route('/admin/ambientes/novo', methods=['GET', 'POST'])
@@ -2360,6 +2463,14 @@ def admin_usuarios():
 @painel_required
 def admin_usuario_novo():
     usuario = _current_session_usuario()
+
+    from_ambiente = None
+    ambiente_id_param = request.values.get('ambiente_id', type=int)
+    if ambiente_id_param:
+        amb = db.query(Ambiente).filter(Ambiente.id == ambiente_id_param).first()
+        if amb and pode_criar_usuarios(usuario, amb.id):
+            from_ambiente = amb
+
     ambientes = [a for a in db.query(Ambiente).all() if pode_criar_usuarios(usuario, a.id)]
     if not usuario.admin and not ambientes:
         abort(403)
@@ -2376,21 +2487,31 @@ def admin_usuario_novo():
         db.add(u)
         db.flush()
         _upsert_tag(u, f.get('tag', ''))
-        amb_ids_escopo = {a.id for a in ambientes}
-        amb_ids_form = {int(x) for x in request.form.getlist('ambientes')} & amb_ids_escopo
-        for amb_id in amb_ids_form:
-            amb = db.query(Ambiente).filter(Ambiente.id == amb_id).first()
-            u.ambientes.append(amb)
-            papel = f.get(f'papel_{amb_id}', '').strip()
-            papeis_validos = ('gerente', 'colaborador', 'leitor') if usuario.admin else ('colaborador', 'leitor')
-            if papel in papeis_validos and amb_id in ambientes_gerente_ids:
-                db.add(PapelAmbiente(usuario_id=u.id, ambiente_id=amb_id, papel=papel))
+        papeis_validos = ('gerente', 'colaborador', 'leitor') if usuario.admin else ('colaborador', 'leitor')
+        if from_ambiente:
+            amb_ids_form = {from_ambiente.id}
+            u.ambientes.append(from_ambiente)
+            papel = f.get('papel', '').strip()
+            if papel in papeis_validos and from_ambiente.id in ambientes_gerente_ids:
+                db.add(PapelAmbiente(usuario_id=u.id, ambiente_id=from_ambiente.id, papel=papel))
+        else:
+            amb_ids_escopo = {a.id for a in ambientes}
+            amb_ids_form = {int(x) for x in request.form.getlist('ambientes')} & amb_ids_escopo
+            for amb_id in amb_ids_form:
+                amb = db.query(Ambiente).filter(Ambiente.id == amb_id).first()
+                u.ambientes.append(amb)
+                papel = f.get(f'papel_{amb_id}', '').strip()
+                if papel in papeis_validos and amb_id in ambientes_gerente_ids:
+                    db.add(PapelAmbiente(usuario_id=u.id, ambiente_id=amb_id, papel=papel))
         db.commit()
         _sync_tags_ambientes(amb_ids_form)
         flash('Usuário criado.', 'success')
+        if from_ambiente:
+            return redirect(url_for('admin_ambiente_ver', id=from_ambiente.id))
         return redirect(url_for('admin_usuarios'))
     return render_template('admin/usuario_form.html', usuario=None, ambientes=ambientes,
-                           papeis_atuais={}, pode_papel={a.id: a.id in ambientes_gerente_ids for a in ambientes})
+                           papeis_atuais={}, pode_papel={a.id: a.id in ambientes_gerente_ids for a in ambientes},
+                           from_ambiente=from_ambiente)
 
 
 @app.route('/admin/usuarios/<int:id>/editar', methods=['GET', 'POST'])

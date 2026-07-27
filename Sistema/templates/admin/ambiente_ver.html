@@ -65,6 +65,45 @@
     </table>
   </div>
 </div>
+
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Usuários</span>
+    {% if pode_criar_usuarios %}
+    <a href="{{ url_for('admin_ambiente_usuario_adicionar', id=ambiente.id) }}" class="btn btn-sm btn-gold">+ Adicionar usuário</a>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr>
+        <th>Nome</th><th>Matrícula</th><th>TAG</th><th>Papel</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for item in usuarios_vinculados %}
+      <tr>
+        <td>{{ item.usuario.nome }}</td>
+        <td style="font-family:monospace; font-size:.85rem;">{{ item.usuario.matricula }}</td>
+        <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">{{ item.tag or '—' }}</td>
+        <td>
+          {% if item.papel %}<span class="badge" style="background:#2d2d4e; color:#ccc;">{{ item.papel }}</span>{% else %}—{% endif %}
+        </td>
+        <td class="text-right">
+          <a href="{{ url_for('admin_usuario_editar', id=item.usuario.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
+          {% if pode_editar_usuarios %}
+          <form method="POST" action="{{ url_for('admin_ambiente_usuario_remover', id=ambiente.id, usuario_id=item.usuario.id) }}" style="display:inline;"
+                onsubmit="return confirm('Remover {{ item.usuario.nome }} deste Tartaro?')">
+            <button class="btn btn-sm btn-outline-danger py-0 px-2">Remover</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-center" style="color:#555;">Nenhum usuário vinculado.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 <style>.badge-online{background:#1e7e34}.badge-offline{background:#7e1e1e}.badge-unknown{background:#444}</style>
 {% endblock %}
 

@@ -1,0 +1,65 @@
+{% extends "admin/base.html" %}
+{% block title %}Adicionar usuário — {{ ambiente.nome }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5 style="color:#c9a227; margin:0;">Adicionar usuário — {{ ambiente.nome }}</h5>
+  <a href="{{ url_for('admin_ambiente_ver', id=ambiente.id) }}" style="color:#888; font-size:.85rem;">← Voltar</a>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Vincular usuário existente</div>
+  <div class="card-body">
+    <form method="GET" class="form-row align-items-end mb-3">
+      <div class="form-group col-md-6 mb-0">
+        <input type="text" name="search" class="form-control" autofocus
+               placeholder="Buscar por nome, matrícula ou TAG..." value="{{ search }}">
+      </div>
+      <div class="form-group col-auto mb-0">
+        <button type="submit" class="btn btn-gold">Buscar</button>
+      </div>
+    </form>
+
+    {% if search %}
+      {% if resultados %}
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Nome</th><th>Matrícula</th><th>TAG</th><th>Papel</th><th></th></tr></thead>
+        <tbody>
+        {% for u in resultados %}
+        <tr>
+          <td>{{ u.nome }}</td>
+          <td style="font-family:monospace; font-size:.85rem;">{{ u.matricula }}</td>
+          <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">{{ u.tag.numero if u.tag else '—' }}</td>
+          <td colspan="2">
+            <form method="POST" action="{{ url_for('admin_ambiente_usuario_vincular', id=ambiente.id) }}"
+                  class="form-inline">
+              <input type="hidden" name="usuario_id" value="{{ u.id }}">
+              <select name="papel" class="form-control form-control-sm mr-2">
+                <option value="">Sem papel</option>
+                {% for p in papeis_validos %}
+                <option value="{{ p }}">{{ p|capitalize }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn btn-sm btn-gold">Adicionar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="color:#555; font-size:.85rem; margin:0;">Nenhum usuário encontrado (ou já vinculado a este Tartaro).</p>
+      {% endif %}
+    {% else %}
+    <p style="color:#555; font-size:.85rem; margin:0;">Digite um nome, matrícula ou TAG pra buscar.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Ou criar um usuário novo</div>
+  <div class="card-body">
+    <p style="color:#888; font-size:.85rem;">Cria um usuário já vinculado direto a este Tartaro, sem passar pela lista de todos os ambientes.</p>
+    <a href="{{ url_for('admin_usuario_novo', ambiente_id=ambiente.id) }}" class="btn btn-outline-secondary">+ Novo usuário para este Tartaro</a>
+  </div>
+</div>
+{% endblock %}
