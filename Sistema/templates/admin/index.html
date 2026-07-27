@@ -27,29 +27,46 @@
 </div>
 
 {% if analytics %}
+{% set ad = analytics.devices %}
+{% set status_label = {'online': 'Online', 'offline': 'Offline', 'unknown': 'Desconhecido'} %}
 <div class="row mt-2">
-  {% set ad = analytics.devices %}
-  <div class="col-6 col-md-4 mb-3">
-    <div class="card text-center">
-      <div class="card-body py-3">
-        <div style="font-size:2.5rem; font-weight:bold; color:#1e7e34;">{{ ad.online }}</div>
-        <div style="font-size:.8rem; color:#888; text-transform:uppercase; letter-spacing:1px;">Online</div>
+  <div class="col-12 col-lg-7 mb-4">
+    <div class="card h-100">
+      <div class="card-header">Ambientes (Tartaros)</div>
+      <div class="card-body p-0">
+        {% if ambientes_overview %}
+        <table class="table mb-0" style="font-size:.85rem;">
+          <tbody>
+            {% for item in ambientes_overview %}
+            <tr>
+              <td style="width:10px;"><span class="badge badge-{{ item.status }}" style="display:inline-block; width:.55rem; height:.55rem; padding:0; border-radius:50%;"></span></td>
+              <td>
+                <a href="{{ url_for('admin_ambiente_ver', id=item.ambiente.id) }}" style="color:#e0e0e0; font-weight:bold;">{{ item.ambiente.nome }}</a>
+                <div style="font-size:.75rem; color:#888;">
+                  {{ item.cerberoses }} cérbero{{ 's' if item.cerberoses != 1 else '' }} · {{ item.carontes }} caronte{{ 's' if item.carontes != 1 else '' }}
+                </div>
+              </td>
+              <td class="text-right"><span class="badge badge-{{ item.status }}">{{ status_label[item.status] }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p style="color:#555; font-size:.85rem; padding:1rem; margin:0;">Nenhum Tartaro cadastrado.</p>
+        {% endif %}
       </div>
     </div>
   </div>
-  <div class="col-6 col-md-4 mb-3">
-    <div class="card text-center">
-      <div class="card-body py-3">
-        <div style="font-size:2.5rem; font-weight:bold; color:#7e1e1e;">{{ ad.offline }}</div>
-        <div style="font-size:.8rem; color:#888; text-transform:uppercase; letter-spacing:1px;">Offline</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-md-4 mb-3">
-    <div class="card text-center">
-      <div class="card-body py-3">
-        <div style="font-size:2.5rem; font-weight:bold; color:#888;">{{ ad.unknown }}</div>
-        <div style="font-size:.8rem; color:#888; text-transform:uppercase; letter-spacing:1px;">Desconhecido</div>
+  <div class="col-12 col-lg-5 mb-4">
+    <div class="card h-100">
+      <div class="card-header">Status das Fechaduras</div>
+      <div class="card-body">
+        {% for key in ['online', 'offline', 'unknown'] %}
+        <div class="d-flex justify-content-between align-items-center {{ 'mb-3' if not loop.last }}">
+          <span><span class="badge badge-{{ key }}" style="display:inline-block; width:.6rem; height:.6rem; padding:0; border-radius:50%; margin-right:.5rem;"></span>{{ status_label[key] }}</span>
+          <span style="font-size:1.3rem; font-weight:bold;">{{ ad[key] }}</span>
+        </div>
+        {% endfor %}
       </div>
     </div>
   </div>

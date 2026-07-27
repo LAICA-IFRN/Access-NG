@@ -1283,6 +1283,33 @@ def _build_dashboard_analytics(ambiente_ids):
     }
 
 
+def _ambientes_overview(ambiente_ids):
+    """Um Tartaro por linha, com contagem de Cerberos/Carontes vinculados e
+    status agregado (online se algum cerbero estiver online, offline se
+    nenhum estiver mas algum já reportou offline, senão desconhecido) - para
+    a seção "Ambientes" da Visão Geral. ambiente_ids=None => todos."""
+    q = db.query(Ambiente)
+    if ambiente_ids is not None:
+        q = q.filter(Ambiente.id.in_(ambiente_ids))
+
+    overview = []
+    for amb in q.order_by(Ambiente.nome).all():
+        statuses = [c.status for c in amb.cerberoses]
+        if 'online' in statuses:
+            status = 'online'
+        elif 'offline' in statuses:
+            status = 'offline'
+        else:
+            status = 'unknown'
+        overview.append({
+            'ambiente': amb,
+            'cerberoses': len(amb.cerberoses),
+            'carontes': len(amb.carontes),
+            'status': status,
+        })
+    return overview
+
+
 @app.route('/admin/')
 @painel_required
 def admin_index():
@@ -1308,10 +1335,12 @@ def admin_index():
         }
 
     analytics = None
+    ambientes_overview = []
     recent_device_events = []
     recent_access_events = []
     if pode_ver_analytics:
         analytics = _build_dashboard_analytics(analytics_ids)
+        ambientes_overview = _ambientes_overview(analytics_ids)
         scoped_log_q = db.query(AccessLog) if analytics_ids is None else (
             db.query(AccessLog).filter(AccessLog.ambiente_id.in_(analytics_ids))
         )
@@ -1336,6 +1365,7 @@ def admin_index():
         'admin/index.html',
         stats=stats,
         analytics=analytics,
+        ambientes_overview=ambientes_overview,
         recent_device_events=recent_device_events,
         recent_access_events=recent_access_events
     )
@@ -2270,23 +2300,38 @@ def _sync_tags_ambientes(ambiente_ids):
             _mqtt().sync_tags_ambiente(amb)
 
 
+_USUARIOS_POR_PAGINA = 30
+
+
 @app.route('/admin/usuarios')
 @painel_required
 def admin_usuarios():
     usuario = _current_session_usuario()
     ambiente_ids = _ambientes_com_papel(usuario, ('gerente', 'colaborador'))
-    if ambiente_ids is None:
-        usuarios = db.query(Usuario).all()
-    elif not ambiente_ids:
-        usuarios = []
+    search = request.args.get('search', '').strip()
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+
+    if ambiente_ids is not None and not ambiente_ids:
+        usuarios, total, total_pages = [], 0, 1
     else:
-        usuarios = (
-            db.query(Usuario)
-            .join(Usuario.ambientes)
-            .filter(Ambiente.id.in_(ambiente_ids))
-            .distinct()
-            .all()
-        )
+        query = db.query(Usuario)
+        if ambiente_ids is not None:
+            query = query.join(Usuario.ambientes).filter(Ambiente.id.in_(ambiente_ids)).distinct()
+        if search:
+            query = query.outerjoin(TAG, TAG.usuario_id == Usuario.id).filter(or_(
+                Usuario.nome.contains(search),
+                Usuario.matricula.contains(search),
+                TAG.numero.contains(search),
+            ))
+        query = query.order_by(Usuario.nome)
+        total = query.count()
+        total_pages = max(1, -(-total // _USUARIOS_POR_PAGINA))  # ceil division
+        page = min(page, total_pages)
+        usuarios = query.offset((page - 1) * _USUARIOS_POR_PAGINA).limit(_USUARIOS_POR_PAGINA).all()
+
     ambientes_gerente_ids = set(_ambientes_com_papel(usuario, ('gerente',)) or [])
 
     def _pode_editar(u):
@@ -2307,7 +2352,8 @@ def admin_usuarios():
     pode_editar_map = {u.id: _pode_editar(u) for u in usuarios}
     pode_excluir_map = {u.id: _pode_excluir(u) for u in usuarios}
     return render_template('admin/usuarios.html', usuarios=usuarios,
-                           pode_editar_map=pode_editar_map, pode_excluir_map=pode_excluir_map)
+                           pode_editar_map=pode_editar_map, pode_excluir_map=pode_excluir_map,
+                           search=search, page=page, total_pages=total_pages, total=total)
 
 
 @app.route('/admin/usuarios/novo', methods=['GET', 'POST'])

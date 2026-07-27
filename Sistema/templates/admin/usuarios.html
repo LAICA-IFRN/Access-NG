@@ -5,6 +5,23 @@
   <h5 style="color:#c9a227; margin:0;">Usuários</h5>
   <a href="{{ url_for('admin_usuario_novo') }}" class="btn btn-gold btn-sm">+ Novo</a>
 </div>
+<form method="GET" class="mb-3">
+  <div class="form-row align-items-center">
+    <div class="form-group col-md-4 mb-0">
+      <input type="text" name="search" class="form-control" placeholder="Buscar por nome, matrícula ou TAG..."
+             value="{{ search }}">
+    </div>
+    <div class="form-group col-auto mb-0">
+      <button type="submit" class="btn btn-gold">Buscar</button>
+      {% if search %}
+      <a href="{{ url_for('admin_usuarios') }}" class="btn btn-outline-secondary">Limpar</a>
+      {% endif %}
+    </div>
+    <div class="form-group col-auto mb-0 ml-auto" style="color:#888; font-size:.85rem;">
+      {{ total }} usuário{{ 's' if total != 1 else '' }}
+    </div>
+  </div>
+</form>
 <div class="card">
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
@@ -41,10 +58,25 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-center" style="color:#555;">Nenhum usuário cadastrado.</td></tr>
+      <tr><td colspan="7" class="text-center" style="color:#555;">
+        {{ 'Nenhum usuário encontrado para "%s".' % search if search else 'Nenhum usuário cadastrado.' }}
+      </td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+{% if total_pages > 1 %}
+<nav class="mt-3">
+  <ul class="pagination pagination-sm justify-content-center mb-0">
+    <li class="page-item {{ 'disabled' if page <= 1 }}">
+      <a class="page-link" href="{{ url_for('admin_usuarios', search=search, page=page-1) }}">Anterior</a>
+    </li>
+    <li class="page-item disabled"><span class="page-link">Página {{ page }} de {{ total_pages }}</span></li>
+    <li class="page-item {{ 'disabled' if page >= total_pages }}">
+      <a class="page-link" href="{{ url_for('admin_usuarios', search=search, page=page+1) }}">Próxima</a>
+    </li>
+  </ul>
+</nav>
+{% endif %}
 {% endblock %}
