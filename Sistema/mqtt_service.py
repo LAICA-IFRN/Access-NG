@@ -388,8 +388,14 @@ class MqttService:
         finally:
             db.remove()
 
+    # Campos de diagnóstico que só vêm preenchidos nos heartbeats "ricos"
+    # (a cada HEARTBEAT_DIAG_EVERY no firmware) - presença de qualquer um
+    # deles indica que vale a pena guardar o payload inteiro na AccessLog
+    # (usado pelos gráficos de RSSI/memória/temperatura no admin).
+    _HEARTBEAT_DIAG_FIELDS = ('rssi', 'mem_free', 'cpu_temp', 'wifi_status', 'wifi_channel', 'bssid')
+
     def _handle_heartbeat(self, mac, payload=None):
-        from Model import Cerberos, Caronte, AccessLog, db
+        from Model import Cerberos, Caronte, AccessLog, DeviceHeartbeat, db
         try:
             payload = payload or {}
             now = datetime.datetime.utcnow()
@@ -429,18 +435,26 @@ class MqttService:
                     updated = True
                     found_device = device
             if updated:
-                db.add(AccessLog(
-                    timestamp=now,
-                    path='mqtt:heartbeat',
-                    method='MQTT',
-                    mac=mac,
-                    event_type='mqtt_heartbeat',
-                    result='sucesso',
-                    ambiente_id=found_device.ambiente_id,
-                    ambiente_nome=found_device.ambiente.nome if found_device.ambiente else None,
-                    payload=json.dumps(payload),
-                    message=f'Heartbeat MQTT recebido de {mac}'
-                ))
+                # Todo heartbeat conta como "contato" pra reconstrução do SLA
+                # (_intervalos_online), mas nessa tabela leve e dedicada, não
+                # na AccessLog geral - evita que o heartbeat periódico (a
+                # cada ~25s por dispositivo) inunde os logs de auditoria.
+                db.add(DeviceHeartbeat(mac=mac, timestamp=now))
+
+                tem_diagnostico = any(payload.get(k) is not None for k in self._HEARTBEAT_DIAG_FIELDS)
+                if tem_diagnostico or found_device.debug_ativo:
+                    db.add(AccessLog(
+                        timestamp=now,
+                        path='mqtt:heartbeat',
+                        method='MQTT',
+                        mac=mac,
+                        event_type='mqtt_heartbeat',
+                        result='sucesso',
+                        ambiente_id=found_device.ambiente_id,
+                        ambiente_nome=found_device.ambiente.nome if found_device.ambiente else None,
+                        payload=json.dumps(payload),
+                        message=f'Heartbeat MQTT recebido de {mac}'
+                    ))
                 db.commit()
             else:
                 db.add(AccessLog(

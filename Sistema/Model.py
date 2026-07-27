@@ -143,6 +143,7 @@ class Cerberos(Base):
     ap_bssid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    debug_ativo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class Caronte(Base):
@@ -177,6 +178,7 @@ class Caronte(Base):
     ap_bssid: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    debug_ativo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
@@ -207,6 +209,21 @@ class AccessLog(Base):
     payload: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     message: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class DeviceHeartbeat(Base):
+    """Registro leve (só mac + timestamp) de cada heartbeat recebido - usado
+    exclusivamente para reconstruir os intervalos online/offline do SLA
+    (_intervalos_online). Fica fora da AccessLog de propósito: heartbeat
+    chega a cada HEARTBEAT_INTERVAL (tipicamente 25s) por dispositivo e
+    inundava a tabela de logs geral (usada pra auditoria/busca), deixando o
+    painel lento. Detalhe de diagnóstico (rssi/mem/temp) continua indo pra
+    AccessLog nos heartbeats "ricos" (a cada HEARTBEAT_DIAG_EVERY) e quando o
+    dispositivo está com debug_ativo - ver mqtt_service._handle_heartbeat."""
+    __tablename__ = 'device_heartbeats'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mac: Mapped[str] = mapped_column(String(50), index=True)
+    timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, index=True)
 
 
 meta.create_all(engine)
@@ -275,3 +292,6 @@ for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'ap_bssid', 'VARCHAR(20)')
 
 _add_column_if_missing('ambientes', 'web_habilitado', 'BOOLEAN DEFAULT 0')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'debug_ativo', 'BOOLEAN DEFAULT 0')

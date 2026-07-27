@@ -1001,17 +1001,25 @@ def _aberturas_series(ambiente_ids, desde, ate):
 
 
 def _intervalos_online(mac, desde, ate):
-    """Intervalos (inicio, fim) em que o dispositivo esteve online, derivados dos
-    contatos em AccessLog (qualquer linha com esse mac), usando o mesmo limiar do
-    monitor de offline: sem contato por OFFLINE_THRESHOLD segundos = offline.
+    """Intervalos (inicio, fim) em que o dispositivo esteve online, derivados
+    dos contatos - qualquer linha em AccessLog (exceto device_offline) mais
+    os heartbeats "leves" em DeviceHeartbeat (que não viram AccessLog, ver
+    mqtt_service._handle_heartbeat) -, usando o mesmo limiar do monitor de
+    offline: sem contato por OFFLINE_THRESHOLD segundos = offline.
     """
     delta = datetime.timedelta(seconds=OFFLINE_THRESHOLD)
-    contatos = [ts for (ts,) in db.query(AccessLog).filter(
+    contatos_log = [ts for (ts,) in db.query(AccessLog).filter(
         AccessLog.mac.ilike(mac),
         AccessLog.event_type != 'device_offline',
         AccessLog.timestamp >= desde - delta,
         AccessLog.timestamp <= ate,
-    ).with_entities(AccessLog.timestamp).order_by(AccessLog.timestamp).all()]
+    ).with_entities(AccessLog.timestamp).all()]
+    contatos_heartbeat = [ts for (ts,) in db.query(DeviceHeartbeat).filter(
+        DeviceHeartbeat.mac.ilike(mac),
+        DeviceHeartbeat.timestamp >= desde - delta,
+        DeviceHeartbeat.timestamp <= ate,
+    ).with_entities(DeviceHeartbeat.timestamp).all()]
+    contatos = sorted(contatos_log + contatos_heartbeat)
 
     intervalos = []
     for ts in contatos:
