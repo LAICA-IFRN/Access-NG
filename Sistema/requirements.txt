@@ -2,3 +2,4 @@ sqlalchemy
 Flask
 flask-bootstrap
 paho-mqtt
+requests
