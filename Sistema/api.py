@@ -1390,6 +1390,7 @@ _DIAG_METRICS = {
     'rssi': 'Sinal WiFi (dBm)',
     'mem_free': 'Memória Livre (B)',
     'cpu_temp': 'Temperatura CPU (°C)',
+    'fs_free': 'Espaço Livre em Disco (B)',
 }
 
 
