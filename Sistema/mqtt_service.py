@@ -396,7 +396,7 @@ class MqttService:
     # (a cada HEARTBEAT_DIAG_EVERY no firmware) - presença de qualquer um
     # deles indica que vale a pena guardar o payload inteiro na AccessLog
     # (usado pelos gráficos de RSSI/memória/temperatura no admin).
-    _HEARTBEAT_DIAG_FIELDS = ('rssi', 'mem_free', 'cpu_temp', 'wifi_status', 'wifi_channel', 'bssid')
+    _HEARTBEAT_DIAG_FIELDS = ('rssi', 'mem_free', 'cpu_temp', 'wifi_status', 'wifi_channel', 'bssid', 'fs_free')
 
     def _handle_heartbeat(self, mac, payload=None):
         from Model import Cerberos, Caronte, AccessLog, DeviceHeartbeat, db
@@ -436,6 +436,10 @@ class MqttService:
                         device.wifi_last_disconnect_status = payload['wifi_last_disconnect_status']
                     if payload.get('bssid') is not None:
                         device.ap_bssid = payload['bssid']
+                    if payload.get('fs_free') is not None:
+                        device.fs_free = payload['fs_free']
+                    if payload.get('fs_total') is not None:
+                        device.fs_total = payload['fs_total']
                     updated = True
                     found_device = device
             if updated:
