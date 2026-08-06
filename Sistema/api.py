@@ -2677,10 +2677,16 @@ def admin_usuarios():
     usuario = _current_session_usuario()
     ambiente_ids = _ambientes_com_papel(usuario, ('gerente', 'colaborador'))
     search = request.args.get('search', '').strip()
+    pendente_only = request.args.get('pendente') == '1'
     try:
         page = max(1, int(request.args.get('page', 1)))
     except ValueError:
         page = 1
+
+    # Cadastros pendentes (auto-criados via SUAP, aprovado=False) ainda não
+    # têm ambiente nenhum, então o join de escopo abaixo já os esconde
+    # naturalmente de quem não é admin geral — aprovar é decisão de admin.
+    pendentes_count = db.query(Usuario).filter(Usuario.aprovado == False).count() if usuario.admin else 0
 
     if ambiente_ids is not None and not ambiente_ids:
         usuarios, total, total_pages = [], 0, 1
@@ -2688,13 +2694,15 @@ def admin_usuarios():
         query = db.query(Usuario)
         if ambiente_ids is not None:
             query = query.join(Usuario.ambientes).filter(Ambiente.id.in_(ambiente_ids)).distinct()
+        if pendente_only:
+            query = query.filter(Usuario.aprovado == False)
         if search:
             query = query.outerjoin(TAG, TAG.usuario_id == Usuario.id).filter(or_(
                 Usuario.nome.contains(search),
                 Usuario.matricula.contains(search),
                 TAG.numero.contains(search),
             ))
-        query = query.order_by(Usuario.nome)
+        query = query.order_by(Usuario.aprovado.asc(), Usuario.nome)
         total = query.count()
         total_pages = max(1, -(-total // _USUARIOS_POR_PAGINA))  # ceil division
         page = min(page, total_pages)
@@ -2721,7 +2729,29 @@ def admin_usuarios():
     pode_excluir_map = {u.id: _pode_excluir(u) for u in usuarios}
     return render_template('admin/usuarios.html', usuarios=usuarios,
                            pode_editar_map=pode_editar_map, pode_excluir_map=pode_excluir_map,
-                           search=search, page=page, total_pages=total_pages, total=total)
+                           search=search, page=page, total_pages=total_pages, total=total,
+                           pendente_only=pendente_only, pendentes_count=pendentes_count)
+
+
+@app.route('/admin/usuarios/<int:id>/aprovar', methods=['POST'])
+@admin_required
+def admin_usuario_aprovar(id):
+    """Aprova um cadastro pendente (auto-criado via login SUAP) - só depois
+    disso o usuário consegue de fato logar no Caronte web ou ser vinculado a
+    um Tartaro. Ação de admin geral: sem ambiente ainda, não há gerente pra
+    decidir por um Tartaro específico."""
+    u = db.query(Usuario).filter(Usuario.id == id).first()
+    if u is None:
+        abort(404)
+    u.aprovado = True
+    db.commit()
+    _create_audit_log(
+        event_type='usuario_aprovado', result='sucesso',
+        message=f'Cadastro de {u.nome} ({u.matricula}) aprovado',
+        usuario=u
+    )
+    flash(f'{u.nome} aprovado.', 'success')
+    return redirect(request.referrer or url_for('admin_usuarios'))
 
 
 @app.route('/admin/usuarios/novo', methods=['GET', 'POST'])
