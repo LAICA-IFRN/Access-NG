@@ -248,6 +248,7 @@ class MqttService:
             client.subscribe(f'{PREFIX}/+/caronte/+/tag')
             client.subscribe(f'{PREFIX}/+/cerberos/+/status')
             client.subscribe(f'{PREFIX}/+/cerberos/+/entrada')
+            client.subscribe(f'{PREFIX}/+/cerberos/+/uart_tag')
             client.subscribe(f'{PREFIX}/+/cerberos/+/config/result')
             client.subscribe(f'{PREFIX}/+/caronte/+/config/result')
         else:
@@ -283,6 +284,9 @@ class MqttService:
             # access-ng/{amb_id}/cerberos/{mac}/entrada
             elif len(parts) == 5 and parts[2] == 'cerberos' and parts[4] == 'entrada':
                 self._handle_entrada(parts[3].replace('-', ':'), payload)
+            # access-ng/{amb_id}/cerberos/{mac}/uart_tag
+            elif len(parts) == 5 and parts[2] == 'cerberos' and parts[4] == 'uart_tag':
+                self._handle_uart_tag(parts[3].replace('-', ':'), payload)
             # access-ng/{amb_id}/{cerberos|caronte}/{mac}/config/result
             elif len(parts) == 6 and parts[2] in ('cerberos', 'caronte') and parts[4] == 'config' and parts[5] == 'result':
                 self._handle_config_result(parts[3].replace('-', ':'), parts[2], payload)
@@ -535,6 +539,42 @@ class MqttService:
             print(f'[MQTT] Entrada física {mac} (pin={pin})')
         except Exception as e:
             print(f'[MQTT] Erro entrada {mac}: {e}')
+            db.rollback()
+        finally:
+            db.remove()
+
+    def _handle_uart_tag(self, mac, payload):
+        """TAG liberada pelo FECHO via fallback offline UART - a decisão de
+        acesso já foi tomada pelo Caronte (whitelist local), aqui é só
+        auditoria: o FECHO nunca valida a TAG contra nada, só tenta abrir."""
+        from Model import Cerberos, AccessLog, db
+        try:
+            now = datetime.datetime.utcnow()
+            tag = payload.get('tag')
+            allow = payload.get('allow')
+            cerberos = db.query(Cerberos).filter(Cerberos.mac.ilike(mac)).first()
+            db.add(AccessLog(
+                timestamp=now,
+                path='mqtt:uart_tag',
+                method='MQTT',
+                mac=mac,
+                tag=tag,
+                event_type='uart_tag',
+                result='sucesso' if allow else 'falha',
+                ambiente_id=cerberos.ambiente_id if cerberos else None,
+                ambiente_nome=cerberos.ambiente.nome if cerberos and cerberos.ambiente else None,
+                payload=json.dumps(payload),
+                message=(
+                    f'TAG liberada via UART (fallback offline) em {cerberos.nome} ({mac}): '
+                    f'{"permitido" if allow else "negado"}'
+                    if cerberos else
+                    f'TAG via UART de Cerberos não cadastrado: {mac}'
+                )
+            ))
+            db.commit()
+            print(f'[MQTT] UART TAG {mac}: {"OK" if allow else "NEGADO"}')
+        except Exception as e:
+            print(f'[MQTT] Erro uart_tag {mac}: {e}')
             db.rollback()
         finally:
             db.remove()
