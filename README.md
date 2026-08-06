@@ -32,11 +32,13 @@ Access-NG/
     │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID
     │   ├── Cerberos.ino               # Sketch alternativo/legado
     │   ├── CerberosESP32.py           # Firmware MicroPython (ESP32) — Cerberos MQTT enxuto, com entrada física e OTA
+    │   ├── CerberosESP32C3.py         # Firmware MicroPython (ESP32-C3) — "FECHO": LEDs, relé, display OLED e UART com o Caronte
+    │   ├── sh1106.py                  # Driver MicroPython do display OLED SH1106 (usado pelo FECHO)
     │   ├── Cerberos_BitDogLab.py      # Firmware MicroPython (Pico W) — modo REST
     │   └── Cerberos_BitDogLab_MQTT.py # Firmware MicroPython (Pico W) — modo MQTT
     ├── Autenticador/
     │   ├── Caronte_RFID.ino           # ESP leitor RFID via MFRC522, envia tag por UART ao Cerberos
-    │   └── CaronteESP32C3.py          # Firmware MicroPython (ESP32-C3) — Caronte com leitor Wiegand, MQTT
+    │   └── CaronteESP32C3.py          # Firmware MicroPython (ESP32-C3) — Caronte com leitor Wiegand, MQTT, whitelist local de TAGs e UART com o FECHO
     ├── Ambiente/
     │   └── TempHumi.ino               # Sensor de temperatura/umidade
     └── ModPotencia/
@@ -58,11 +60,15 @@ Fluxo RFID físico:
 Fluxo Caronte web/mobile:
 
 1. O usuário acessa `GET /caronte`.
-2. Faz login com `matricula` e `pin`.
+2. Faz login com `matricula`/`pin`, ou (se configurado) com **Entrar com o SUAP** — ver
+   [Login via SUAP (OAuth2)](#login-via-suap-oauth2).
 3. O navegador solicita permissão de geolocalização.
-4. O portal busca ambientes próximos em `GET /caronte/ambientes-proximos?lat=&lon=`.
+4. O portal busca ambientes próximos em `GET /caronte/ambientes-proximos?lat=&lon=` — só
+   retorna Tartaros com `web_habilitado=True` e, se logado, onde o usuário tem permissão
+   explícita de uso do Caronte web (`usuarios_web`).
 5. O usuário toca em **Entrar**.
-6. O servidor valida novamente a localização, confere permissão do usuário e aciona os Cerberoses do ambiente.
+6. O servidor valida novamente a localização e a permissão (mesmos dois critérios do passo
+   4, mais o Tartaro ter algum Cerberos `online`), depois aciona os Cerberoses do ambiente.
 
 Fluxo de status:
 
@@ -88,6 +94,31 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 
 O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
 
+Fluxo UART Caronte ↔ FECHO (fallback offline, opcional):
+
+1. O Sistema publica `{"command":"set_tags","tags":[...]}` no tópico de comando do
+   Caronte sempre que a lista de frequentadores/TAGs de um Tartaro muda (e depois de
+   todo coldstart) — o firmware grava essa lista em `tags.json`, na própria placa.
+2. Com `UART_ENABLED=true` nos dois firmwares, o Caronte manda um KEEP-ALIVE por UART
+   ao FECHO a cada `UART_KEEPALIVE_S`; sem ACK do FECHO por 3 intervalos seguidos, ele é
+   considerado offline e o fallback abaixo não é tentado.
+3. O fluxo normal de autenticação continua sendo o MQTT de sempre (`.../tag` →
+   aguardar `.../result`). Só quando o broker/servidor não responde a tempo
+   (`AUTH_TIMEOUT_S`) é que o Caronte consulta a whitelist local (`tags.json`) e, se a
+   TAG constar lá (e o FECHO estiver online), decide sozinho e manda o pedido de
+   liberação direto ao FECHO via UART — sem depender do broker para essa decisão.
+4. O FECHO não valida a TAG contra nada: só tenta acionar o relé (respeitando o
+   cooldown de proteção da solenóide) e responde PERMITIDO/NEGADO. Publica a TAG
+   liberada assim em `access-ng/{amb_id}/cerberos/{mac}/uart_tag`, para auditoria no
+   servidor mesmo quando a decisão foi tomada offline.
+
+Protocolo de quadros (mesmo dos dois firmwares): `7E LEN CMD [dados] CS`, onde `CS`
+fecha a soma de `LEN+CMD+dados+CS` em `0 mod 256` (complemento de dois). Comandos:
+KEEP-ALIVE (`01`), ACK (`13`), PERMITIDO (`02`), NEGADO (`03`) e ENVIO DE TAG (`04`,
+com a TAG em 4 bytes + o tipo Wiegand `0x1A`/26 ou `0x22`/34). Detalhes completos no
+cabeçalho de [`CaronteESP32C3.py`](Hardware/Autenticador/CaronteESP32C3.py) e
+[`CerberosESP32C3.py`](Hardware/Fechadura/CerberosESP32C3.py).
+
 ### Tópicos MQTT (referência)
 
 Prefixo fixo: `access-ng`. Tabela completa dos tópicos publicados/assinados pelo `mqtt_service.py`:
@@ -100,21 +131,24 @@ Prefixo fixo: `access-ng`. Tabela completa dos tópicos publicados/assinados pel
 | `access-ng/{amb_id}/caronte/{mac}/tag` | dispositivo → Sistema | `{"tag":..., "chave":...}` | TAG lida por um Caronte MQTT. |
 | `access-ng/{amb_id}/caronte/{mac}/result` | Sistema → dispositivo | `{"allow": true\|false, "motivo"?}` | Resultado da autenticação da TAG. |
 | `access-ng/{amb_id}/cerberos/{mac}/command` | Sistema → dispositivo | `{"command":"unlock"}`, `{"command":"check_update"}`, `{"command":"reboot"}`, `{"command":"get_config"}` ou `{"command":"set_config","params":{...}}` | Comando de abertura, checagem de OTA, reinício remoto ou leitura/escrita de configuração do Cerberos. |
-| `access-ng/{amb_id}/caronte/{mac}/command` | Sistema → dispositivo | `{"command":"check_update"}`, `{"command":"reboot"}`, `{"command":"get_config"}` ou `{"command":"set_config","params":{...}}` | Mesmos comandos do Cerberos, exceto `unlock` (só o Cerberos aciona relé). |
+| `access-ng/{amb_id}/caronte/{mac}/command` | Sistema → dispositivo | `{"command":"check_update"}`, `{"command":"reboot"}`, `{"command":"get_config"}`, `{"command":"set_config","params":{...}}` ou `{"command":"set_tags","tags":[...]}` | Mesmos comandos do Cerberos, exceto `unlock` (só o Cerberos aciona relé), mais `set_tags` (grava a whitelist local de TAGs usada no fallback offline via UART com o FECHO). |
 | `access-ng/{amb_id}/cerberos/{mac}/status` | dispositivo → Sistema | `{"status": "..."}` | Atualização de status enviada pelo próprio Cerberos (padrão `online` se omitido). |
 | `access-ng/{amb_id}/cerberos/{mac}/entrada` | dispositivo → Sistema | `{"mac":..., "pin":...}` | Entrada física (botão/contato local) detectada pelo Cerberos. |
+| `access-ng/{amb_id}/cerberos/{mac}/uart_tag` | dispositivo → Sistema | `{"mac":..., "tag":..., "tipo":..., "allow":...}` | TAG liberada pelo FECHO via fallback offline UART (decisão já tomada pelo Caronte) — só auditoria. |
 | `access-ng/{amb_id}/cerberos/{mac}/config/result` | dispositivo → Sistema | `{...}` (config efetiva reportada pelo firmware) | Resposta ao `get_config`/`set_config` do Cerberos; grava em `Cerberos.config_atual`. |
 | `access-ng/{amb_id}/caronte/{mac}/config/result` | dispositivo → Sistema | `{...}` (config efetiva reportada pelo firmware) | Resposta ao `get_config`/`set_config` do Caronte; grava em `Caronte.config_atual`. |
 
 O Sistema assina `coldstart/+`, `heartbeat/+`, `+/caronte/+/tag`, `+/cerberos/+/status`,
-`+/cerberos/+/entrada`, `+/cerberos/+/config/result` e `+/caronte/+/config/result`; os
-demais tópicos da tabela são publicados pelo próprio Sistema para os dispositivos assinarem.
+`+/cerberos/+/entrada`, `+/cerberos/+/uart_tag`, `+/cerberos/+/config/result` e
+`+/caronte/+/config/result`; os demais tópicos da tabela são publicados pelo próprio
+Sistema para os dispositivos assinarem.
 
 ## Requisitos
 
 - Python 3.10+ recomendado.
 - SQLite.
 - `paho-mqtt` (incluído em `Sistema/requirements.txt`) — necessário para o suporte a MQTT. Sem ele, o `mqtt_service` fica desabilitado e o Sistema funciona normalmente apenas com REST.
+- `requests` (incluído em `Sistema/requirements.txt`) — necessário para o login via SUAP (troca de `code` por `access_token` e consulta à API do SUAP). Sem SUAP configurado, essa dependência fica ociosa.
 - Para firmware:
   - Arduino IDE ou PlatformIO.
   - Bibliotecas Arduino usadas pelos sketches:
@@ -199,12 +233,24 @@ Colunas adicionadas automaticamente em `cerberoses` e `carontes`:
 - `ap_bssid VARCHAR(20)`
 - `config_atual VARCHAR(2000)`
 - `config_atualizado_em DATETIME`
+- `debug_ativo BOOLEAN DEFAULT 0` — com `true`, todo heartbeat grava o payload completo em `access_logs` (por padrão só os heartbeats "ricos" de diagnóstico gravam — ver [Heartbeat sem sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log))
 
 Colunas adicionadas automaticamente em `ambientes`:
 
 - `latitude FLOAT`
 - `longitude FLOAT`
 - `raio_metros INTEGER`
+- `web_habilitado BOOLEAN DEFAULT 0` — Tartaro precisa disso ligado para aparecer no Caronte web (ver [Caronte web: quem pode usar](#caronte-web-quem-pode-usar))
+
+Coluna adicionada automaticamente em `usuarios`:
+
+- `aprovado BOOLEAN DEFAULT 1` — `1` para quem já existia (cadastro manual já é confiável por definição); só quem se auto-cadastra via SUAP entra com `0`, sem acesso a nenhum Tartaro até aprovação — ver [Login via SUAP (OAuth2)](#login-via-suap-oauth2).
+
+Tabelas novas (criadas via `meta.create_all`, sem precisar de `ALTER TABLE`):
+
+- `usuarios_web` — associação N:N entre `usuarios` e `ambientes` (`usuario_id`, `ambiente_id`), separada de `usuarios_ambientes`: só quem está aqui pode usar o Caronte web para aquele Tartaro, mesmo que tenha acesso físico normal — ver [Caronte web: quem pode usar](#caronte-web-quem-pode-usar).
+- `device_heartbeats` — `id`, `mac`, `timestamp`; registro leve (só isso, nenhum outro campo) de cada heartbeat recebido, usado exclusivamente para reconstruir o SLA sem inflar `access_logs` — ver [Heartbeat sem sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log).
+- `suap_config` — linha única (`id=1`) com `client_id`/`client_secret`/`ativo` do login via SUAP — ver [Login via SUAP (OAuth2)](#login-via-suap-oauth2).
 
 ## Modelo de dados
 
@@ -217,9 +263,11 @@ Tabela: `usuarios`
 - `matricula`
 - `pin`
 - `admin`
+- `aprovado` (padrão `true`; `false` só em cadastros auto-criados via SUAP, até um admin aprovar — ver [Login via SUAP (OAuth2)](#login-via-suap-oauth2))
 - relacionamento com `TAG`
 - relacionamento com `MAC`
 - relacionamento muitos-para-muitos com `Ambiente` via `usuarios_ambientes` (frequentadores/acesso físico)
+- relacionamento muitos-para-muitos com `Ambiente` via `usuarios_web` (quem pode usar o Caronte web em cada Tartaro — ver [Caronte web: quem pode usar](#caronte-web-quem-pode-usar))
 - relacionamento um-para-muitos com `PapelAmbiente` (papéis por Tartaro — gerente/colaborador/leitor)
 
 ### TAG
@@ -250,13 +298,16 @@ Tabela: `ambientes`
 - `latitude`
 - `longitude`
 - `raio_metros`
+- `web_habilitado` (padrão `false` — Tartaro precisa disso ligado para aparecer no Caronte web, além de cada usuário precisar estar em `usuarios_web`)
 - `frequentadores`
+- `usuarios_web` (subconjunto de `frequentadores` autorizado a usar o Caronte web neste Tartaro)
 - `papeis` (usuários com papel `gerente`/`colaborador`/`leitor` neste Tartaro)
 - `cerberoses`
 - `carontes`
 
 `latitude`, `longitude` e `raio_metros` são usados pelo Caronte web para validar
 proximidade. O raio padrão usado pelo código é 50 metros quando o campo está vazio.
+Veja [Caronte web: quem pode usar](#caronte-web-quem-pode-usar) para `web_habilitado`/`usuarios_web`.
 
 ### PapelAmbiente
 
@@ -319,6 +370,9 @@ Tabela: `cerberoses`
   no gráfico de Sinal WiFi
 - `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
   reportada pelo firmware via `get_config`/`set_config`
+- `debug_ativo` (padrão `false`) — com `true`, todo heartbeat grava o payload
+  completo em `access_logs`, não só os de diagnóstico — ver [Heartbeat sem
+  sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log)
 
 Representa a fechadura/dispositivo acionável.
 
@@ -352,8 +406,37 @@ Tabela: `carontes`
   no gráfico de Sinal WiFi
 - `config_atual` (JSON) e `config_atualizado_em` — última configuração efetiva
   reportada pelo firmware via `get_config`/`set_config`
+- `debug_ativo` (padrão `false`) — com `true`, todo heartbeat grava o payload
+  completo em `access_logs`, não só os de diagnóstico — ver [Heartbeat sem
+  sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log)
 
 Representa o leitor/autenticador fixo.
+
+### DeviceHeartbeat
+
+Tabela: `device_heartbeats`
+
+- `id`
+- `mac`
+- `timestamp`
+
+Só isso — de propósito. Um registro por heartbeat recebido, usado
+exclusivamente para reconstruir o SLA sem inflar `access_logs` com uma
+linha completa a cada ~25s por dispositivo. Ver [Heartbeat sem
+sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log).
+
+### SuapConfig
+
+Tabela: `suap_config`
+
+- `id` (sempre `1` — linha única)
+- `client_id`
+- `client_secret`
+- `ativo`
+
+Credenciais da aplicação OAuth cadastrada no SUAP e o liga/desliga do botão
+"Entrar com o SUAP" no Caronte web. Editada em `/admin/integracao-suap`. Ver
+[Login via SUAP (OAuth2)](#login-via-suap-oauth2).
 
 ## Papéis e permissões
 
@@ -377,6 +460,70 @@ Qualquer usuário com `admin=True` ou com pelo menos um papel pode entrar em
 `/admin/login`; o menu lateral e o conteúdo das telas se ajustam
 automaticamente ao que aquele usuário pode ver/fazer. Tartaros, Brokers MQTT
 e a exclusão/limpeza de logs continuam exclusivos do administrador geral.
+
+## Login via SUAP (OAuth2)
+
+Além do login por matrícula/PIN, o Caronte web aceita **Entrar com o SUAP**
+(authorization code do OAuth2) como caminho adicional — os dois convivem, e a
+matrícula devolvida pelo SUAP é a chave de sincronização com `Usuario.matricula`.
+
+### Configuração
+
+1. Cadastre uma aplicação em "Meus Aplicativos" no SUAP com **Authorization
+   grant type = Authorization code** e **Client type = Confidential**.
+2. A **Redirect URI** precisa ser exatamente a que aparece em
+   `/admin/integracao-suap` (comparação exata, sem barra a mais/a menos) —
+   normalmente `https://SEU-HOST/caronte/suap/callback` (ou com o prefixo do
+   proxy reverso, se houver, ex.: `.../access-ng/caronte/suap/callback`).
+3. Copie o `client_id`/`client_secret` gerados para `/admin/integracao-suap`
+   (admin geral) e marque **Ativo** — o `client_secret` só é mostrado pelo
+   SUAP uma única vez, no momento da criação da aplicação.
+
+### Fluxo
+
+1. `GET /caronte/suap` redireciona para o SUAP com `state` aleatório guardado
+   na sessão (proteção CSRF).
+2. `GET /caronte/suap/callback` recebe `code`+`state`, valida o `state`, troca
+   o `code` por um `access_token` (`POST /o/token/` no SUAP) e busca a
+   identificação em `GET /api/rh/eu/` com esse token.
+3. A matrícula (`identificacao`) é usada para achar o `Usuario`:
+   - **Já existe**: sincroniza o nome (`nome_usual`/`nome`) e loga.
+   - **Não existe**: cria um `Usuario` novo com `aprovado=False` — sem
+     nenhum Tartaro vinculado, PIN aleatório (nunca comunicado) — e mostra
+     uma página de "cadastro pendente", sem logar.
+4. Um cadastro com `aprovado=False` não consegue logar (mesmo com matrícula
+   batendo) até um admin geral aprovar em `/admin/usuarios` (badge "pendente
+   (SUAP)", botão **Aprovar**, filtro `?pendente=1`).
+
+O endpoint de identificação do SUAP mudou pelo menos uma vez no passado
+(`/api/eu/` → `/api/rh/eu/`); se voltar a mudar, o caminho certo pode ser
+conferido no schema OpenAPI ao vivo do SUAP
+(`https://suap.ifrn.edu.br/api/openapi.json`, `operationId
+api_endpoints_rh_eu`) — só a constante `SUAP_USERINFO_URL` em `api.py`
+precisa mudar.
+
+## Caronte web: quem pode usar
+
+Antes, qualquer Tartaro com latitude/longitude configurado já era utilizável
+pelo Caronte web, e qualquer frequentador (mesmo critério do acesso físico
+por TAG) podia abrir por ali. Agora são dois portões independentes, e os
+dois precisam estar abertos:
+
+1. **Por Tartaro** — `Ambiente.web_habilitado` (checkbox "Permite Caronte
+   Web" no formulário de Tartaro). Sem isso, o Tartaro nem aparece em
+   `GET /caronte/ambientes-proximos`, não importa a localização de ninguém.
+2. **Por usuário, dentro daquele Tartaro** — tabela `usuarios_web`. Mesmo
+   sendo frequentador normal (acesso físico/TAG funcionando), o usuário só
+   abre pelo Caronte web se também estiver nessa lista. Gerenciado na página
+   do próprio Tartaro (`/admin/ambientes/<id>`, seção "Usuários"): botão
+   Habilitado/Desabilitado por pessoa, ou já marcando "Caronte Web" na hora
+   de vincular/criar o usuário.
+
+`Tartaro.autenticarWeb()` e `Tartaro.ambientesProximos()` checam os dois
+critérios (mais estar dentro do raio e o Tartaro ter algum Cerberos
+`online`) — a lista de "ambientes próximos" já vem filtrada pela permissão
+de quem está logado, então o app nunca mostra um Tartaro como "disponível"
+que seria negado na hora de tentar abrir.
 
 ## Endpoints do Sistema
 
@@ -593,12 +740,16 @@ só vê/gerencia os Tartaros onde tem papel.
 | --- | --- | --- |
 | `GET/POST` | `/admin/login` | Login administrativo. |
 | `GET` | `/admin/logout` | Logout administrativo. |
-| `GET` | `/admin/` | Visão Geral: contagens de ambientes/Cerberoses/Carontes/usuários, dispositivos online/offline, gráficos de linha de latência média da API (24h) e de aberturas por dia (14 dias), e últimas atividades/tentativas de acesso. |
+| `GET` | `/admin/` | Visão Geral: contagens de ambientes/Cerberoses/Carontes/usuários, uma lista "Ambientes (Tartaros)" com status agregado de cada um, card "Status dos Dispositivos" (online/offline/desconhecido, somando Cerberos e Caronte), gráficos de linha de latência média da API (24h) e de aberturas por dia (14 dias), e últimas atividades/tentativas de acesso. |
 | `GET` | `/admin/ambientes` | Lista Tartaros. |
 | `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
-| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia, com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias), e a lista dos equipamentos daquele Tartaro com o SLA (24h) de cada um. |
-| `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro. |
+| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias), a lista dos equipamentos daquele Tartaro com o SLA (24h) de cada um, e a seção "Usuários" (quem tem acesso, papel, TAG e, se `web_habilitado`, permissão de Caronte Web — com botão "+ Adicionar usuário"). |
+| `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro, incluindo o checkbox "Permite Caronte Web" (`web_habilitado`). |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
+| `GET` | `/admin/ambientes/<id>/usuarios/adicionar` | Tela para vincular um usuário existente (busca por nome/matrícula/TAG) ou criar um novo já pré-vinculado a esse Tartaro (sem passar pelo checklist de todos os ambientes). |
+| `POST` | `/admin/ambientes/<id>/usuarios/vincular` | Vincula um usuário existente ao Tartaro, com papel opcional e permissão opcional de Caronte Web. |
+| `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/remover` | Desvincula o usuário do Tartaro (remove papel e permissão de Caronte Web também). |
+| `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/web` | Liga/desliga a permissão desse usuário usar o Caronte Web nesse Tartaro específico (`usuarios_web`). |
 | `GET` | `/admin/cerberoses` | Lista Cerberoses. |
 | `POST` | `/admin/cerberoses/verificar-atualizacao` | Notifica via MQTT (`check_update`) todos os Cerberoses listados (escopados ao papel do usuário) para verificarem se há firmware novo agora. |
 | `GET/POST` | `/admin/cerberoses/novo` | Cria Cerberos. |
@@ -607,6 +758,7 @@ só vê/gerencia os Tartaros onde tem papel.
 | `POST` | `/admin/cerberoses/<id>/abrir` | Envia comando manual de abertura para o Cerberos. |
 | `POST` | `/admin/cerberoses/<id>/verificar-atualizacao` | Notifica esse Cerberos via MQTT para verificar atualização de firmware agora. |
 | `POST` | `/admin/cerberoses/<id>/reiniciar` | Envia comando de reinício remoto (`reboot`) via MQTT. |
+| `POST` | `/admin/cerberoses/<id>/debug` | Liga/desliga `debug_ativo` — com ele ativo, todo heartbeat grava o payload completo no log (ver [Heartbeat sem sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log)). |
 | `GET` | `/admin/cerberoses/<id>/config` | Mostra a última configuração efetiva reportada pelo Cerberos (campos sensíveis mascarados). |
 | `POST` | `/admin/cerberoses/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Cerberos que reporte sua configuração atual. |
 | `POST` | `/admin/cerberoses/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
@@ -619,6 +771,8 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET/POST` | `/admin/carontes/<id>/editar` | Edita Caronte fixo. |
 | `POST` | `/admin/carontes/<id>/verificar-atualizacao` | Notifica esse Caronte via MQTT para verificar atualização de firmware agora. |
 | `POST` | `/admin/carontes/<id>/reiniciar` | Envia comando de reinício remoto (`reboot`) via MQTT. |
+| `POST` | `/admin/carontes/<id>/debug` | Liga/desliga `debug_ativo`, mesma regra do Cerberos. |
+| `POST` | `/admin/carontes/<id>/tags/sincronizar` | Reenvia a whitelist local de TAGs do ambiente (`set_tags`), usada no fallback offline via UART com o FECHO — normalmente já acontece sozinho a cada coldstart/mudança de frequentador, esse botão é só pra forçar na hora. |
 | `GET` | `/admin/carontes/<id>/config` | Mostra a última configuração efetiva reportada pelo Caronte (campos sensíveis mascarados). |
 | `POST` | `/admin/carontes/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Caronte que reporte sua configuração atual. |
 | `POST` | `/admin/carontes/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
@@ -628,10 +782,14 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET/POST` | `/admin/brokers/novo` | Cria Broker MQTT e conecta o `mqtt_service`. |
 | `GET/POST` | `/admin/brokers/<id>/editar` | Edita Broker MQTT e reconecta/desconecta conforme `ativo`. |
 | `POST` | `/admin/brokers/<id>/excluir` | Desconecta e remove Broker MQTT. |
-| `GET` | `/admin/usuarios` | Lista usuários. |
-| `GET/POST` | `/admin/usuarios/novo` | Cria usuário e define ambientes permitidos. |
+| `GET` | `/admin/usuarios` | Lista usuários, paginada (30 por página), com busca (`?search=` — nome/matrícula/TAG) e filtro de pendentes (`?pendente=1`). |
+| `GET/POST` | `/admin/usuarios/novo` | Cria usuário e define ambientes permitidos. Com `?ambiente_id=<id>` (link a partir da página do Tartaro), pula o checklist e já pré-vincula só àquele Tartaro. |
 | `GET/POST` | `/admin/usuarios/<id>/editar` | Edita usuário e permissões. |
+| `POST` | `/admin/usuarios/<id>/aprovar` | Aprova um cadastro pendente (`aprovado=False`, auto-criado via login SUAP) — exige admin geral, já que sem Tartaro ainda não há gerente pra decidir. |
 | `POST` | `/admin/usuarios/<id>/excluir` | Remove usuário. |
+| `GET/POST` | `/admin/integracao-suap` | Configura o login via SUAP: `client_id`/`client_secret`, liga/desliga, e mostra a Redirect URI exata a cadastrar no SUAP. Admin geral. |
+| `GET` | `/caronte/suap` | Inicia o login via SUAP (redireciona pro `/o/authorize/` do SUAP). |
+| `GET` | `/caronte/suap/callback` | Callback do OAuth2: troca `code` por token, busca identificação, loga ou cria cadastro pendente — ver [Login via SUAP (OAuth2)](#login-via-suap-oauth2). |
 | `GET` | `/admin/logs` | Visualiza logs de acesso à API e tentativas de dispositivos. |
 | `POST` | `/admin/logs/excluir` | Exclui logs selecionados. |
 | `POST` | `/admin/logs/limpar` | Limpa logs conforme filtros aplicados. |
@@ -653,9 +811,10 @@ só vê/gerencia os Tartaros onde tem papel.
 > (ou admin) via `pode_gerenciar_dispositivos`. Um `leitor` chega até essa
 > página pelo link "Ver" na tabela de equipamentos de "Meu Tartaro", já que
 > o menu lateral só mostra "Cerberoses"/"Carontes" para quem tem papel
-> `gerente`. O SLA é calculado em cima do histórico de contato já registrado
-> em `AccessLog` (toda requisição de um dispositivo — REST ou heartbeat
-> MQTT — grava uma linha com o `mac`); não há tabela nova nem coluna nova.
+> `gerente`. O SLA é calculado em cima do histórico de contato do dispositivo —
+> qualquer linha não-`device_offline` em `AccessLog` (coldstart, tag, status
+> etc.) mais os heartbeats leves em `DeviceHeartbeat` (ver [Heartbeat sem
+> sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log)).
 >
 > As rotas `verificar-atualizacao` (por dispositivo e em massa) exigem
 > `pode_gerenciar_dispositivos` — a mesma regra de `abrir`/`excluir` (admin
@@ -668,6 +827,19 @@ só vê/gerencia os Tartaros onde tem papel.
 > `gerente` ou `leitor` (só do(s) Tartaro(s) onde tem o papel). Quem só tem
 > papel `colaborador` vê a Visão Geral sem esses widgets e não tem acesso a
 > `/admin/ambientes/<id>` nem a `/admin/logs`.
+>
+> As rotas de usuários dentro de um Tartaro (`/admin/ambientes/<id>/usuarios/*`)
+> seguem a mesma régua de `admin_usuarios`/`admin_usuario_editar`: adicionar
+> (`adicionar`/`vincular`, e criar novo com `?ambiente_id=`) exige
+> `pode_criar_usuarios` (admin, `gerente` ou `colaborador` daquele Tartaro);
+> remover e o toggle de Caronte Web exigem `pode_editar_usuarios` (admin ou
+> `gerente`). Já `/admin/usuarios/<id>/aprovar` e `/admin/integracao-suap` são
+> exclusivos do administrador geral — um cadastro pendente ainda não tem
+> Tartaro nenhum para um `gerente` decidir por ele.
+>
+> `/admin/cerberoses/<id>/debug`, `/admin/carontes/<id>/debug` e
+> `/admin/carontes/<id>/tags/sincronizar` exigem `pode_gerenciar_dispositivos`,
+> igual `reiniciar`/`abrir`/`excluir`.
 
 > Se não houver um administrador cadastrado, o sistema agora cria um usuário padrão automaticamente na primeira execução:
 > - Matrícula: `admin`
@@ -684,7 +856,7 @@ A API registra todos os acessos em `access_logs`, no banco `Sistema/Acesso.db`. 
 - `ip` — origem da requisição
 - `mac` — endereço MAC do dispositivo, se presente
 - `tag` — tag usada na tentativa, se presente
-- `event_type` — tipo do evento, como `api_request`, `login_admin`, `comando_abertura`, `mqtt_heartbeat`, `mqtt_status`, `mqtt_command` ou `entrada_fisica`
+- `event_type` — tipo do evento, como `api_request`, `login_admin`, `login_caronte` (matrícula/PIN ou SUAP), `comando_abertura`, `mqtt_heartbeat`, `mqtt_status`, `mqtt_command`, `entrada_fisica`, `uart_tag` (TAG liberada via fallback offline pelo FECHO) ou `usuario_aprovado`
 - `result` — resultado resumido do evento, como `sucesso` ou `negado`
 - `ambiente_id` e `ambiente_nome` — Tartaro relacionado, quando identificado
 - `usuario_id` e `usuario_nome` — usuário relacionado, quando identificado
@@ -953,8 +1125,8 @@ firmwares MicroPython, com campos próprios:
 
 `Hardware/Autenticador/CaronteESP32C3.py` é o firmware do Caronte fixo para um
 ESP32-C3 com leitor RFID Wiegand (D0/D1), substituindo o leitor MFRC522/UART
-de `Caronte_RFID.ino` para essa placa. Não possui Cerberos embutido — apenas lê
-a TAG e publica via MQTT.
+de `Caronte_RFID.ino` para essa placa. Não possui Cerberos embutido — lê a TAG,
+publica via MQTT e, opcionalmente, fala com o FECHO por UART como fallback.
 
 ```json
 {
@@ -978,7 +1150,17 @@ a TAG e publica via MQTT.
     "LED_VD2_PIN"        : 3,
     "LED_VD3_PIN"        : 2,
     "WG_TIMEOUT_MS"      : 25,
-    "AUTH_TIMEOUT_S"     : 5
+    "AUTH_TIMEOUT_S"     : 5,
+
+    "UART_ENABLED"       : false,
+    "UART_ID"            : 1,
+    "UART_TX_PIN"        : 21,
+    "UART_RX_PIN"        : 20,
+    "UART_BAUDRATE"      : 9600,
+    "UART_KEEPALIVE_S"   : 5,
+
+    "OTA_ENABLED"        : true,
+    "OTA_CHECK_INTERVAL" : 3600
 }
 ```
 
@@ -994,32 +1176,120 @@ a TAG e publica via MQTT.
   e aguarda o resultado em `access-ng/{ambiente_id}/caronte/{mac}/result` por até
   `AUTH_TIMEOUT_S` segundos, sinalizando o resultado com bipes/LEDs
   (`feedback_allow`/`feedback_deny`).
+- **Whitelist local + fallback UART** (opcional, `UART_ENABLED`): mantém uma
+  cópia local das TAGs autorizadas do ambiente em `tags.json`, atualizada via
+  comando MQTT `set_tags` (empurrado pelo Sistema a cada mudança de
+  frequentador/TAG e a cada coldstart). O fluxo normal continua sendo MQTT; só
+  quando ele não responde a tempo (`AUTH_TIMEOUT_S`) é que decide pela
+  whitelist local e manda a liberação direto ao FECHO via UART — ver [Fluxo
+  UART Caronte ↔ FECHO](#arquitetura).
+- **Display OLED** (opcional, `OLED_ENABLED`, driver `sh1106.py`): mesmo
+  princípio do FECHO abaixo — se não detectar o display no boot, segue
+  normalmente sem ele.
+- **Heartbeat visual** (LEDs VD2/VD3): pulso curto alternando entre os dois a
+  cada ~2s enquanto operacional (WiFi+MQTT conectados, aguardando leitura de
+  TAG) — indicação visual não-bloqueante de "sistema online". Pausa sozinho
+  durante reconexão de WiFi/MQTT.
 - Segue o mesmo fluxo de coldstart/heartbeat MQTT dos demais firmwares e também
   requer `umqtt` instalado via `mip`.
 
+### ESP32-C3 (MicroPython) — FECHO (Cerberos com UART/OLED)
+
+`Hardware/Fechadura/CerberosESP32C3.py` é outro firmware para a fechadura,
+apelidado de **FECHO** pela equipe de hardware — mesma placa ESP32-C3 do
+Caronte acima, só que cumprindo o papel de Cerberos: LEDs de feedback, relé
+da tranca e display OLED, com um link UART opcional para o Caronte. Continua
+aceitando comando remoto de abertura via MQTT normalmente.
+
+```json
+{
+    "WIFI_SSID"          : "nome-da-rede",
+    "WIFI_PASS"          : "senha-da-rede",
+
+    "MQTT_BROKER"        : "broker.exemplo.com",
+    "MQTT_PORT"          : 1883,
+    "MQTT_USER"          : "",
+    "MQTT_PASS"          : "",
+    "MQTT_TLS"           : false,
+
+    "DEVICE_KEY"         : "chave-cadastrada-no-banco",
+    "HEARTBEAT_INTERVAL" : 25,
+
+    "LED_VM_PIN"         : 1,
+    "LED_VD1_PIN"        : 4,
+    "LED_VD2_PIN"        : 3,
+    "LED_VD3_PIN"        : 2,
+    "RELAY_PIN"          : 6,
+    "RELAY_ACTIVE_MS"    : 2000,
+    "RELAY_COOLDOWN_MS"  : 3000,
+
+    "UART_ENABLED"       : false,
+    "UART_ID"            : 1,
+    "UART_TX_PIN"        : 21,
+    "UART_RX_PIN"        : 20,
+    "UART_BAUDRATE"      : 9600,
+
+    "OLED_ENABLED"       : true,
+    "OLED_SCL_PIN"       : 7,
+    "OLED_SDA_PIN"       : 8,
+    "OLED_WIDTH"         : 128,
+    "OLED_HEIGHT"        : 64,
+    "OLED_ADDR"          : 60,
+
+    "OTA_ENABLED"        : true,
+    "OTA_CHECK_INTERVAL" : 3600
+}
+```
+
+- `RELAY_ACTIVE_MS` é sempre limitado a 2000ms no código (independente do que
+  vier em `config.json`), e `RELAY_COOLDOWN_MS` impõe um intervalo mínimo
+  entre acionamentos — proteção da solenóide contra picos de comando
+  repetidos via MQTT ou UART, pedido explícito da equipe de hardware.
+- **UART com o Caronte** (`UART_ENABLED`): responde KEEP-ALIVE com ACK, e ao
+  receber uma TAG (já autorizada pelo Caronte — o FECHO não valida nada)
+  tenta abrir e responde PERMITIDO/NEGADO. Publica a TAG liberada em
+  `access-ng/{amb_id}/cerberos/{mac}/uart_tag` para auditoria — ver [Fluxo
+  UART Caronte ↔ FECHO](#arquitetura).
+- **Display OLED** (`OLED_ENABLED`, driver `sh1106.py`, mesmo diretório):
+  tenta inicializar no boot via `SoftI2C` com timeout (evita travar o
+  firmware se o barramento I2C emperrar); se não detectar o display
+  fisicamente, loga e segue operando normalmente sem ele. Com o display
+  presente, mostra mensagens nos eventos principais (boot, WiFi, MQTT,
+  coldstart, abertura/negação da tranca, TAG recebida via UART, OTA).
+- Segue o mesmo fluxo de coldstart/heartbeat MQTT/OTA dos demais firmwares,
+  com arquivo de versão próprio (`Hardware/Fechadura/version_esp32c3.json`)
+  para ciclo de release independente dos outros dois firmwares do mesmo
+  diretório.
+
 ## OTA (atualização remota de firmware)
 
-Os três firmwares MQTT em campo (`Cerberos_BitDogLab_MQTT.py`,
-`CerberosESP32.py` e `CaronteESP32C3.py`) atualizam a si mesmos sem precisar
-reconectar via USB/Thonny. O firmware continua vivendo só no GitHub — não há
-upload pelo painel nem tabela no banco guardando o código.
+Os quatro firmwares MQTT em campo (`Cerberos_BitDogLab_MQTT.py`,
+`CerberosESP32.py`, `CerberosESP32C3.py`/FECHO e `CaronteESP32C3.py`)
+atualizam a si mesmos sem precisar reconectar via USB/Thonny. O firmware
+continua vivendo só no GitHub — não há upload pelo painel nem tabela no
+banco guardando o código.
 
 ### Como funciona
 
 1. Cada dispositivo tem uma constante `FIRMWARE_VERSAO` no topo do arquivo.
 2. Existe um arquivo de versão no repositório, ao lado do firmware:
    `Hardware/Fechadura/version.json` (`Cerberos_BitDogLab_MQTT.py`),
-   `Hardware/Fechadura/version_esp32.json` (`CerberosESP32.py`) e
+   `Hardware/Fechadura/version_esp32.json` (`CerberosESP32.py`),
+   `Hardware/Fechadura/version_esp32c3.json` (`CerberosESP32C3.py`/FECHO) e
    `Hardware/Autenticador/version.json` (`CaronteESP32C3.py`) — um arquivo por
-   firmware, para que cada um tenha ciclo de release independente mesmo
-   compartilhando o diretório `Fechadura/`. Formato: `{"versao": "1.3.11", "ref": "main"}`
-   (o campo `ref` não é mais usado pelo firmware — ver observação abaixo).
+   firmware, para que cada um tenha ciclo de release independente mesmo os
+   três primeiros compartilhando o diretório `Fechadura/`. Formato:
+   `{"versao": "1.3.11", "ref": "main"}` (o campo `ref` não é mais usado pelo
+   firmware — ver observação abaixo).
 3. Os arquivos de firmware e de versão são servidos pelo **próprio Sistema**,
    em `GET /ota/<filepath>` ([api.py](Sistema/api.py)), restrito a uma
    whitelist fixa (`_OTA_ALLOWED_FILES`) que nunca lê arquivo fora dessa
-   lista. O dispositivo busca `version.json`/`version_esp32.json` em
+   lista — **todo firmware/version novo precisa ser adicionado a essa lista
+   manualmente**, ou a OTA dele fica quebrada (404) mesmo com o arquivo
+   existindo no repositório. O dispositivo busca `version.json`/
+   `version_esp32.json`/`version_esp32c3.json` em
    `http://{OTA_HOST}:{OTA_PORT}/access-ng/ota/{OTA_VERSION_PATH}` — HTTP
-   puro nos três firmwares (não HTTPS): no ESP32/ESP32-C3 o handshake
+   puro nos quatro firmwares (não HTTPS): no ESP32/ESP32-C3 o handshake
    TLS/RSA estourava a memória disponível (`MBEDTLS_ERR_RSA_PUBLIC_FAILED`),
    e os arquivos de OTA são públicos, sem segredo em trânsito, então HTTP
    puro é aceitável — mesma lógica de expor o broker MQTT em texto puro na
@@ -1077,9 +1347,10 @@ já no boot ajuda a diagnosticar dispositivos que falham por sinal fraco
 antes mesmo do primeiro heartbeat. O heartbeat MQTT, por sua vez, pode
 reportar `ip`, `uptime`, `rssi` (sinal WiFi em dBm), `mem_free` (memória
 livre em bytes) e `cpu_temp` (°C) — só uma fração dos heartbeats carrega
-esses campos de diagnóstico, para não sobrecarregar o payload. Tudo é
-gravado em `Cerberos`/`Caronte` e também persiste no `AccessLog` de cada
-heartbeat, servindo de base para os gráficos.
+esses campos de diagnóstico, para não sobrecarregar o payload. Esses
+valores sempre atualizam `Cerberos`/`Caronte` direto; a persistência em
+`AccessLog` (base dos gráficos) é mais seletiva — ver [Heartbeat sem
+sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log) logo abaixo.
 
 A página `/admin/cerberoses/<id>` (e a equivalente de Caronte) mostra esses
 valores mais recentes; clicar em "Sinal WiFi", "Memória Livre" ou
@@ -1104,6 +1375,30 @@ Faixas de cor usadas no gráfico: **verde** de -50 a -30 dBm, **laranja** de
 não descarta problema de conectividade — se o dispositivo ainda cair com sinal
 bom, a causa provável está em outro lugar (roteador, firmware, alimentação),
 não na intensidade do rádio.
+
+### Heartbeat sem sobrecarregar o log
+
+Heartbeat MQTT chega a cada `HEARTBEAT_INTERVAL` (tipicamente 25s) **por
+dispositivo** — gravar cada um como uma linha cheia em `access_logs` (usada
+também para busca/auditoria geral em `/admin/logs`) inundava essa tabela
+rapidinho e deixava o painel lento. A solução separa dois interesses que
+antes estavam misturados na mesma tabela:
+
+- **`device_heartbeats`** (tabela nova, só `mac`+`timestamp`) recebe **todo**
+  heartbeat, sempre — é o que `_intervalos_online()` usa pra reconstruir o
+  SLA (junto com qualquer outro evento não-`device_offline` do mesmo `mac`
+  em `AccessLog`, como coldstart/tag/status). O SLA continua com a mesma
+  precisão de antes.
+- **`access_logs`** só ganha uma linha `mqtt_heartbeat` completa (com o
+  payload inteiro) quando o heartbeat é "rico" em diagnóstico (carrega
+  `rssi`/`mem_free`/`cpu_temp`/etc. — uma fração dos heartbeats, ver acima)
+  **ou** quando o dispositivo está com `debug_ativo=True`.
+
+`debug_ativo` é um botão por dispositivo ("Ativar debug"/"Debug ativo") nas
+páginas `/admin/cerberoses/<id>` e `/admin/carontes/<id>` — liga o log
+completo de cada heartbeat pra investigar um dispositivo específico, sem
+precisar ligar isso pra todo mundo. `POST /admin/cerberoses/<id>/debug` e
+`/admin/carontes/<id>/debug` fazem o toggle.
 
 #### Diagnóstico WiFi estendido
 
@@ -1156,7 +1451,7 @@ AP ou se o AP que ele usava caiu.
 
 ### Reinício e reconfiguração remota
 
-Os três firmwares MQTT também aceitam, no mesmo tópico de comando usado
+Os quatro firmwares MQTT também aceitam, no mesmo tópico de comando usado
 para abertura/OTA:
 
 - `{"command":"reboot"}` — reinicia o dispositivo imediatamente. Acionado
@@ -1174,14 +1469,14 @@ para abertura/OTA:
   auditoria.
 
 O conjunto de campos editáveis muda conforme o firmware (BitDogLab,
-`CerberosESP32.py` ou `CaronteESP32C3.py`), detectado pelo `hardware`
-reportado no coldstart.
+`CerberosESP32.py`, `CerberosESP32C3.py`/FECHO ou `CaronteESP32C3.py`),
+detectado pelo `hardware` reportado no coldstart.
 
 ### Fora de escopo desta versão
 
 A variante REST do Cerberos (`Cerberos_BitDogLab.py`) e os firmwares legados
 Arduino (`Cerberos_UART.ino`, `Cerberos.ino`, `Caronte_RFID.ino`) não recebem
-OTA — o mecanismo cobre só os três firmwares MQTT atualmente em campo.
+OTA — o mecanismo cobre só os quatro firmwares MQTT atualmente em campo.
 
 ### Configuração de IP
 
@@ -1451,3 +1746,36 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   O gráfico "Sinal WiFi" do painel sobrepõe marcadores nos pontos onde o AP
   mudou, para diagnosticar roaming excessivo ou queda do AP em uso — veja
   [Diagnóstico WiFi estendido](#diagnóstico-wifi-estendido).
+- Novo firmware `Hardware/Fechadura/CerberosESP32C3.py` — "FECHO", mesma
+  placa ESP32-C3 do Caronte, papel de Cerberos (LEDs, relé, display OLED
+  SH1106 opcional via `sh1106.py`), com ciclo de release próprio
+  (`version_esp32c3.json`) — veja a seção [Firmware](#firmware).
+- Caronte (`CaronteESP32C3.py`) ganhou whitelist local de TAGs (`tags.json`,
+  atualizada via comando MQTT `set_tags`) e link UART opcional com o FECHO:
+  fallback offline quando o MQTT não responde a tempo, decidindo pela
+  whitelist local e mandando a liberação direto ao FECHO — veja [Fluxo UART
+  Caronte ↔ FECHO](#arquitetura). Ganhou também display OLED opcional e um
+  heartbeat visual (LEDs VD2/VD3 piscando em chase enquanto operacional).
+- Volume de heartbeat na `AccessLog` reduzido: heartbeat MQTT agora só grava
+  linha completa no log quando é "rico" em diagnóstico ou quando o
+  dispositivo está com `debug_ativo=True` (novo toggle por dispositivo); todo
+  heartbeat continua alimentando o SLA através da nova tabela leve
+  `DeviceHeartbeat` — veja [Heartbeat sem sobrecarregar o
+  log](#heartbeat-sem-sobrecarregar-o-log).
+- Caronte web ganhou dois portões de permissão independentes: `Ambiente.web_habilitado`
+  (Tartaro precisa habilitar) e a tabela `usuarios_web` (usuário precisa de
+  permissão explícita por Tartaro, além do acesso físico normal) — veja
+  [Caronte web: quem pode usar](#caronte-web-quem-pode-usar).
+- Gestão de usuários direto na página do Tartaro
+  (`/admin/ambientes/<id>`, seção "Usuários"): vincular usuário existente,
+  criar um novo já pré-vinculado (sem o checklist de todos os ambientes), ou
+  remover — além do toggle de Caronte Web por pessoa. A listagem geral de
+  usuários (`/admin/usuarios`) ganhou busca e paginação.
+- Visão Geral (`/admin/`) reorganizada: cards de status agrupados por
+  Tartaro (lista "Ambientes (Tartaros)" com status agregado de cada um) ao
+  lado de um card "Status dos Dispositivos" — antes só mostrava contadores
+  soltos rotulados "Fechaduras", mesmo somando Cerberos e Caronte.
+- Login via SUAP (OAuth2) no Caronte web, além do login por matrícula/PIN:
+  sincronização por matrícula, cadastro automático pendente de aprovação
+  para matrícula nova, tela de configuração em `/admin/integracao-suap` —
+  veja [Login via SUAP (OAuth2)](#login-via-suap-oauth2).
