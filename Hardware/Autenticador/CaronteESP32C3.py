@@ -43,10 +43,10 @@ Não possui Cerberos embutido — apenas leitura e publicação.
 
 --- Pinagem ESP32 SSC C3 -----------------------------------------------------
 
-  GPIO 01 -> LED VM  (vermelho) — não soldado nesta placa
-  GPIO 02 -> LED VD3 (verde 3)  — não soldado nesta placa
-  GPIO 03 -> LED VD2 (verde 2)  — não soldado nesta placa
-  GPIO 04 -> LED VD1 (verde 1)  — não soldado nesta placa
+  GPIO 01 -> LED VM  (vermelho) — feedback de acesso negado
+  GPIO 02 -> LED VD3 (verde 3)  — heartbeat visual (chase com VD2)
+  GPIO 03 -> LED VD2 (verde 2)  — heartbeat visual (chase com VD3)
+  GPIO 04 -> LED VD1 (verde 1)  — feedback de acesso permitido
   GPIO 05 -> Wiegand D0 (ativo baixo)
   GPIO 06 -> Buzzer (ativo alto)
   GPIO 07 -> Wiegand D1 (ativo baixo)
@@ -56,6 +56,15 @@ Não possui Cerberos embutido — apenas leitura e publicação.
   GPIO 10 -> Enable RS485      — não soldado nesta placa
   GPIO 20 -> RX UART (link com o FECHO/Cerberos) — não soldado nesta placa
   GPIO 21 -> TX UART (link com o FECHO/Cerberos) — não soldado nesta placa
+
+--- Heartbeat visual (LEDs VD2/VD3) --------------------------------------------
+
+  Enquanto operacional (WiFi+MQTT conectados, aguardando leitura de TAG), um
+  pulso curto alterna VD2 -> VD3 a cada HEARTBEAT_LED_INTERVAL_MS - indica
+  visualmente "sistema online, esperando um comando". Implementado sem
+  bloquear o loop principal (led_heartbeat(), baseado em time.ticks_ms());
+  para automaticamente durante reconexão de WiFi/MQTT, já que só é chamado
+  no trecho de operação normal do loop.
 
 --- Protocolo Wiegand --------------------------------------------------------
 
@@ -245,7 +254,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.10"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.11"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
@@ -452,6 +461,39 @@ def feedback_deny():
     beep(600)
     time.sleep_ms(400)
     led_vm.value(0)
+
+
+# --- Heartbeat visual (VD2/VD3) -----------------------------------------------
+
+HEARTBEAT_LED_INTERVAL_MS = 2000   # tempo entre pulsos (o "silencio" do padrao)
+HEARTBEAT_LED_PULSE_MS    = 80     # duracao de cada LED aceso no chase
+
+_heartbeat_led_step     = 0   # 0=aguardando, 1=VD2 aceso, 2=VD3 aceso
+_heartbeat_led_last_ms  = 0
+
+
+def led_heartbeat():
+    """Pulso curto alternando VD2 -> VD3 a cada HEARTBEAT_LED_INTERVAL_MS -
+    indica visualmente "sistema online, esperando comando". Não bloqueia:
+    cada chamada só avança um passo do padrão se o tempo já decorreu, então
+    precisa ser chamada a cada volta do loop principal (não usar sleep aqui)."""
+    global _heartbeat_led_step, _heartbeat_led_last_ms
+    agora = time.ticks_ms()
+    decorrido = time.ticks_diff(agora, _heartbeat_led_last_ms)
+
+    if _heartbeat_led_step == 0 and decorrido >= HEARTBEAT_LED_INTERVAL_MS:
+        led_vd2.value(1)
+        _heartbeat_led_step = 1
+        _heartbeat_led_last_ms = agora
+    elif _heartbeat_led_step == 1 and decorrido >= HEARTBEAT_LED_PULSE_MS:
+        led_vd2.value(0)
+        led_vd3.value(1)
+        _heartbeat_led_step = 2
+        _heartbeat_led_last_ms = agora
+    elif _heartbeat_led_step == 2 and decorrido >= HEARTBEAT_LED_PULSE_MS:
+        led_vd3.value(0)
+        _heartbeat_led_step = 0
+        _heartbeat_led_last_ms = agora
 
 
 def _decode_wiegand(buf, count):
@@ -1280,6 +1322,8 @@ def main():
                 else:
                     time.sleep(5)
                     continue
+
+            led_heartbeat()
 
             # Leitura Wiegand completa: silêncio > WG_TIMEOUT_MS
             if _wg_count > 0 and time.ticks_diff(time.ticks_ms(), _wg_last_ms) > WG_TIMEOUT_MS:
