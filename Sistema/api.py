@@ -768,10 +768,15 @@ def caronte_suap_callback():
         return redirect(url_for('caronte_login'))
 
     # Campos confirmados no schema ao vivo do SUAP (EuSchema, /api/rh/eu/):
-    # 'identificacao' é sempre presente (matrícula/SIAPE conforme o vínculo);
-    # 'nome_usual' é o nome preferido de exibição, com 'nome' como fallback.
+    # 'identificacao' é sempre presente (matrícula/SIAPE conforme o vínculo).
+    # Nome completo é 'nome_registro' (nome civil/de registro) - 'nome_usual'
+    # é o nome curto/preferido (o mesmo exibido no crachá), então só entra
+    # como fallback se os campos de nome completo vierem vazios.
     matricula = str(dados.get('identificacao') or dados.get('matricula') or '').strip()
-    nome = str(dados.get('nome_usual') or dados.get('nome') or dados.get('nome_completo') or '').strip()
+    nome = str(
+        dados.get('nome_registro') or dados.get('nome')
+        or dados.get('nome_completo') or dados.get('nome_usual') or ''
+    ).strip()
     if not matricula:
         _create_audit_log(
             event_type='login_caronte', result='falha',
