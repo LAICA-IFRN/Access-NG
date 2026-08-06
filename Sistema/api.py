@@ -7,11 +7,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from collections import defaultdict
 from sqlalchemy import or_
+from urllib.parse import urlencode
 import datetime
 import threading
 import time
 import os
 import json
+import secrets
+import requests
 from mqtt_service import get_service as _mqtt
 
 app = Flask(__name__, template_folder="templates")
@@ -639,13 +642,170 @@ def api_status():
     return jsonify(result)
 
 
+# ── Login SUAP (OAuth2) ────────────────────────────────────────────────────────
+#
+# Autorização/token/dados do usuário via app OAuth cadastrada no SUAP
+# ("Meus Aplicativos"). Endpoint de identificação conferido contra o schema
+# OpenAPI ao vivo do SUAP (https://suap.ifrn.edu.br/api/openapi.json,
+# operationId "api_endpoints_rh_eu") - os clientes de referência oficiais do
+# IFRN (github.com/ifrn-oficial/cliente_suap_django e .../javascript) usam
+# o caminho antigo "/api/eu/", que o SUAP descontinuou; o atual mora sob o
+# módulo de Gestão de Pessoas. Campos (EuSchema) batem com os que os
+# clientes de referência já usavam: identificacao, nome, nome_usual.
+SUAP_AUTH_URL     = 'https://suap.ifrn.edu.br/o/authorize/'
+SUAP_TOKEN_URL    = 'https://suap.ifrn.edu.br/o/token/'
+SUAP_USERINFO_URL = 'https://suap.ifrn.edu.br/api/rh/eu/'
+SUAP_SCOPE        = 'identificacao email documentos_pessoais'
+
+
+def _suap_config():
+    """Config singular (id=1) do login via SUAP - cria a linha (desativada)
+    na primeira vez que for acessada, mesmo padrão do ensure_default_admin."""
+    cfg = db.query(SuapConfig).filter(SuapConfig.id == 1).first()
+    if cfg is None:
+        cfg = SuapConfig(id=1, ativo=False)
+        db.add(cfg)
+        db.commit()
+    return cfg
+
+
+@app.route('/caronte/suap')
+def caronte_suap_login():
+    cfg = _suap_config()
+    if not cfg.ativo or not cfg.client_id:
+        flash('Login via SUAP não está disponível no momento.', 'warning')
+        return redirect(url_for('caronte_login'))
+    state = secrets.token_urlsafe(24)
+    session['suap_oauth_state'] = state
+    params = {
+        'response_type': 'code',
+        'client_id': cfg.client_id,
+        'redirect_uri': url_for('caronte_suap_callback', _external=True),
+        'state': state,
+    }
+    if SUAP_SCOPE:
+        params['scope'] = SUAP_SCOPE
+    return redirect(f'{SUAP_AUTH_URL}?{urlencode(params)}')
+
+
+@app.route('/caronte/suap/callback')
+def caronte_suap_callback():
+    cfg = _suap_config()
+
+    erro = request.args.get('error')
+    if erro:
+        _create_audit_log(
+            event_type='login_caronte', result='falha',
+            message=f'SUAP recusou a autorização: {erro}'
+        )
+        flash('Login com o SUAP cancelado ou recusado.', 'warning')
+        return redirect(url_for('caronte_login'))
+
+    state_esperado = session.pop('suap_oauth_state', None)
+    code = request.args.get('code')
+    if not code or not state_esperado or request.args.get('state') != state_esperado:
+        _create_audit_log(
+            event_type='login_caronte', result='falha',
+            message='Callback do SUAP com state/code inválido (CSRF ou sessão expirada)'
+        )
+        flash('Sessão de login expirada, tente novamente.', 'danger')
+        return redirect(url_for('caronte_login'))
+
+    if not cfg.ativo or not cfg.client_id or not cfg.client_secret:
+        flash('Login via SUAP não está configurado.', 'danger')
+        return redirect(url_for('caronte_login'))
+
+    try:
+        token_resp = requests.post(SUAP_TOKEN_URL, data={
+            'grant_type': 'authorization_code',
+            'code': code,
+            'redirect_uri': url_for('caronte_suap_callback', _external=True),
+            'client_id': cfg.client_id,
+            'client_secret': cfg.client_secret,
+        }, timeout=10)
+        token_resp.raise_for_status()
+        access_token = token_resp.json()['access_token']
+
+        info_resp = requests.get(
+            SUAP_USERINFO_URL,
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10,
+        )
+        info_resp.raise_for_status()
+        dados = info_resp.json()
+    except Exception as e:
+        # Nunca loga access_token/client_secret - só o erro em si.
+        _create_audit_log(
+            event_type='login_caronte', result='falha',
+            message=f'Erro na comunicação com o SUAP: {e}'
+        )
+        flash('Não foi possível confirmar seu login com o SUAP. Tente novamente.', 'danger')
+        return redirect(url_for('caronte_login'))
+
+    # Campos confirmados no schema ao vivo do SUAP (EuSchema, /api/rh/eu/):
+    # 'identificacao' é sempre presente (matrícula/SIAPE conforme o vínculo);
+    # 'nome_usual' é o nome preferido de exibição, com 'nome' como fallback.
+    matricula = str(dados.get('identificacao') or dados.get('matricula') or '').strip()
+    nome = str(dados.get('nome_usual') or dados.get('nome') or dados.get('nome_completo') or '').strip()
+    if not matricula:
+        _create_audit_log(
+            event_type='login_caronte', result='falha',
+            message='Resposta do SUAP sem matrícula', payload=dados
+        )
+        flash('O SUAP não retornou uma matrícula válida.', 'danger')
+        return redirect(url_for('caronte_login'))
+
+    usuario = db.query(Usuario).filter(Usuario.matricula == matricula).first()
+
+    if usuario is None:
+        # Auto-cadastro pendente: cria já com PIN aleatório (nunca comunicado
+        # a ninguém - dá pra sobrescrever depois em "Editar usuário") e
+        # aprovado=False, sem nenhum Tartaro vinculado até um admin aprovar.
+        usuario = Usuario(
+            nome=nome or matricula,
+            matricula=matricula,
+            pin='%04d' % secrets.randbelow(10000),
+            admin=False,
+            aprovado=False,
+        )
+        db.add(usuario)
+        db.commit()
+        _create_audit_log(
+            event_type='login_caronte', result='pendente',
+            message=f'Novo usuário via SUAP aguardando aprovação: {usuario.nome} ({matricula})',
+            usuario=usuario
+        )
+        return render_template('caronte/suap_pendente.html', nome=usuario.nome)
+
+    if nome and usuario.nome != nome:
+        usuario.nome = nome
+        db.commit()
+
+    if not usuario.aprovado:
+        _create_audit_log(
+            event_type='login_caronte', result='pendente',
+            message=f'Login via SUAP negado - cadastro ainda pendente: {usuario.nome}',
+            usuario=usuario
+        )
+        return render_template('caronte/suap_pendente.html', nome=usuario.nome)
+
+    _create_audit_log(
+        event_type='login_caronte', result='sucesso',
+        message='Login no portal Caronte via SUAP',
+        usuario=usuario
+    )
+    session['user_id'] = usuario.id
+    session['user_nome'] = usuario.nome
+    return redirect(url_for('caronte_portal'))
+
+
 # ── Web Caronte ──────────────────────────────────────────────────────────────
 
 @app.route('/caronte')
 def caronte_login():
     if 'user_id' in session:
         return render_template('caronte/home.html', user_nome=session.get('user_nome'))
-    return render_template('caronte/login.html')
+    return render_template('caronte/login.html', suap_ativo=_suap_config().ativo)
 
 
 @app.route('/caronte/login', methods=['POST'])
