@@ -111,6 +111,7 @@
           <div class="diag-item diag-clickable" onclick="abrirHistorico('Memória Livre', '{{ url_for('admin_cerberos_historico', id=c.id, metric='mem_free') }}', 'mem_free')"><span class="diag-label">Memória Livre</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free).replace(',', '.') ~ ' B') if c.mem_free is not none else '—' }}</span></div>
           <div class="diag-item diag-clickable" onclick="abrirHistorico('Temperatura CPU', '{{ url_for('admin_cerberos_historico', id=c.id, metric='cpu_temp') }}', 'cpu_temp')"><span class="diag-label">Temperatura CPU</span><span class="diag-value">{{ (c.cpu_temp ~ ' °C') if c.cpu_temp is not none else '—' }}</span></div>
           <div class="diag-item"><span class="diag-label">Memória Mínima</span><span class="diag-value">{{ ('{:,}'.format(c.mem_free_min).replace(',', '.') ~ ' B') if c.mem_free_min is not none else '—' }}</span></div>
+          <div class="diag-item diag-clickable" onclick="abrirHistorico('Espaço Livre em Disco', '{{ url_for('admin_cerberos_historico', id=c.id, metric='fs_free') }}', 'fs_free')"><span class="diag-label">Espaço em Disco</span><span class="diag-value">{{ ('{:,}'.format(c.fs_free).replace(',', '.') ~ ' B') if c.fs_free is not none else '—' }}{% if c.fs_total %} / {{ '{:,}'.format(c.fs_total).replace(',', '.') }} B ({{ (c.fs_free / c.fs_total * 100) | round(1) }}%){% endif %}</span></div>
           <div class="diag-item"><span class="diag-label">Canal WiFi</span><span class="diag-value">{{ c.wifi_channel if c.wifi_channel is not none else '—' }}</span></div>
           <div class="diag-item" title="MAC do rádio do Access Point associado — mostrado como marcador no gráfico de Sinal WiFi"><span class="diag-label">Access Point (BSSID)</span><span class="diag-value" style="font-family:monospace;">{{ c.ap_bssid or '—' }}</span></div>
           <div class="diag-item" title="Código bruto de network.WLAN.status() do MicroPython — varia por placa/versão"><span class="diag-label">Status WiFi (código)</span><span class="diag-value">{{ c.wifi_status if c.wifi_status is not none else '—' }}</span></div>
@@ -258,7 +259,7 @@
         dataset.fill = true;
       }
       var yScale = { ticks: { color: '#888' }, grid: { color: '#2d2d4e' } };
-      if (metric === 'mem_free') { yScale.min = 0; }
+      if (metric === 'mem_free' || metric === 'fs_free') { yScale.min = 0; }
       var plugins = { legend: { display: false } };
       if (tooltipCallbacks) { plugins.tooltip = { callbacks: tooltipCallbacks }; }
       histChart = new Chart(ctx, {
