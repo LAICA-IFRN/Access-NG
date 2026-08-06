@@ -164,7 +164,7 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.7"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.8"   # bump manual a cada release publicada
 # Arquivo proprio (nao o version.json do Cerberos_BitDogLab_MQTT.py) para que
 # os dois firmwares deste diretorio tenham ciclos de release independentes.
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
@@ -182,7 +182,7 @@ OTA_PORT          = 80
 # --- DIAGNOSTICO ---------------------------------------------------------
 
 HARDWARE_INFO         = "Cerberos ESP32 DevKit"
-HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp vao a cada N heartbeats
+HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp/fs_free vao a cada N heartbeats
 
 
 _SOFT_RESET_FLAG = "soft_reset.flag"
@@ -252,6 +252,18 @@ def _read_cpu_temp():
         return round((esp32.raw_temperature() - 32) * 5 / 9, 1)
     except Exception:
         return None
+
+
+def _read_fs_stats():
+    """Espaco livre/total (bytes) do filesystem da placa - usado para saber
+    se cabe a proxima atualizacao OTA (baixa main.new antes de trocar com
+    main.py). (None, None) se indisponivel."""
+    try:
+        s = os.statvfs('/')
+        frsize = s[1]
+        return s[4] * frsize, s[2] * frsize  # (f_bavail, f_blocks) * f_frsize
+    except Exception:
+        return None, None
 
 
 def _read_wifi_status():
@@ -941,6 +953,9 @@ def publish_heartbeat():
             payload["wifi_last_reconnect_s"] = time.time() - _wifi_last_reconnect_s
         if _wifi_last_disconnect_status is not None:
             payload["wifi_last_disconnect_status"] = _wifi_last_disconnect_status
+        fs_free, fs_total = _read_fs_stats()
+        payload["fs_free"] = fs_free
+        payload["fs_total"] = fs_total
     _client.publish(_topics()["heartbeat"], json.dumps(payload))
     status_pulse()
 
