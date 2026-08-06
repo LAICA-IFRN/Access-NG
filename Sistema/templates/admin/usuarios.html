@@ -5,7 +5,16 @@
   <h5 style="color:#c9a227; margin:0;">Usuários</h5>
   <a href="{{ url_for('admin_usuario_novo') }}" class="btn btn-gold btn-sm">+ Novo</a>
 </div>
+{% if pendentes_count %}
+<div class="alert alert-warning py-2 d-flex justify-content-between align-items-center">
+  <span>{{ pendentes_count }} cadastro{{ 's' if pendentes_count != 1 else '' }} via SUAP aguardando aprovação.</span>
+  {% if not pendente_only %}
+  <a href="{{ url_for('admin_usuarios', pendente='1') }}" class="btn btn-sm btn-outline-dark">Ver pendentes</a>
+  {% endif %}
+</div>
+{% endif %}
 <form method="GET" class="mb-3">
+  {% if pendente_only %}<input type="hidden" name="pendente" value="1">{% endif %}
   <div class="form-row align-items-center">
     <div class="form-group col-md-4 mb-0">
       <input type="text" name="search" class="form-control" placeholder="Buscar por nome, matrícula ou TAG..."
@@ -13,12 +22,12 @@
     </div>
     <div class="form-group col-auto mb-0">
       <button type="submit" class="btn btn-gold">Buscar</button>
-      {% if search %}
+      {% if search or pendente_only %}
       <a href="{{ url_for('admin_usuarios') }}" class="btn btn-outline-secondary">Limpar</a>
       {% endif %}
     </div>
     <div class="form-group col-auto mb-0 ml-auto" style="color:#888; font-size:.85rem;">
-      {{ total }} usuário{{ 's' if total != 1 else '' }}
+      {{ total }} usuário{{ 's' if total != 1 else '' }}{{ ' pendente(s)' if pendente_only else '' }}
     </div>
   </div>
 </form>
@@ -36,7 +45,10 @@
         <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">
           {{ u.tag.numero if u.tag else '—' }}
         </td>
-        <td>{% if u.admin %}<span class="badge" style="background:#c9a227; color:#000;">admin</span>{% endif %}</td>
+        <td>
+          {% if u.admin %}<span class="badge" style="background:#c9a227; color:#000;">admin</span>{% endif %}
+          {% if not u.aprovado %}<span class="badge" style="background:#c97e22; color:#000;">pendente (SUAP)</span>{% endif %}
+        </td>
         <td style="font-size:.8rem; color:#888;">
           {{ u.ambientes|map(attribute='nome')|join(', ') or '—' }}
         </td>
@@ -46,6 +58,11 @@
           {% else %}—{% endfor %}
         </td>
         <td class="text-right">
+          {% if not u.aprovado and current_usuario.admin %}
+          <form method="POST" action="{{ url_for('admin_usuario_aprovar', id=u.id) }}" style="display:inline;">
+            <button class="btn btn-sm btn-gold py-0 px-2">Aprovar</button>
+          </form>
+          {% endif %}
           {% if pode_editar_map.get(u.id) %}
           <a href="{{ url_for('admin_usuario_editar', id=u.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Editar</a>
           {% endif %}
@@ -70,11 +87,11 @@
 <nav class="mt-3">
   <ul class="pagination pagination-sm justify-content-center mb-0">
     <li class="page-item {{ 'disabled' if page <= 1 }}">
-      <a class="page-link" href="{{ url_for('admin_usuarios', search=search, page=page-1) }}">Anterior</a>
+      <a class="page-link" href="{{ url_for('admin_usuarios', search=search, page=page-1, pendente=('1' if pendente_only else none)) }}">Anterior</a>
     </li>
     <li class="page-item disabled"><span class="page-link">Página {{ page }} de {{ total_pages }}</span></li>
     <li class="page-item {{ 'disabled' if page >= total_pages }}">
-      <a class="page-link" href="{{ url_for('admin_usuarios', search=search, page=page+1) }}">Próxima</a>
+      <a class="page-link" href="{{ url_for('admin_usuarios', search=search, page=page+1, pendente=('1' if pendente_only else none)) }}">Próxima</a>
     </li>
   </ul>
 </nav>

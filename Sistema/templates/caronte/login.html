@@ -24,6 +24,13 @@
     .alert { border-radius:8px; font-size:.85rem; }
     .admin-link { text-align:center; margin-top:1.5rem; font-size:.75rem; color:#444; }
     .admin-link a { color:#555; }
+    .divider { display:flex; align-items:center; color:#444; font-size:.75rem;
+               margin:1.25rem 0; text-transform:uppercase; letter-spacing:1px; }
+    .divider::before, .divider::after { content:""; flex:1; border-top:1px solid #2d2d4e; }
+    .divider span { padding:0 .75rem; }
+    .btn-suap { background:#0d0d1a; color:#e0e0e0; border:1px solid #2d2d4e; border-radius:8px;
+                width:100%; height:48px; font-size:.95rem; font-weight:600; }
+    .btn-suap:hover { border-color:#c9a227; color:#c9a227; }
   </style>
 </head>
 <body>
@@ -48,6 +55,10 @@
     </div>
     <button type="submit" class="btn-access">Entrar</button>
   </form>
+  {% if suap_ativo %}
+  <div class="divider"><span>ou</span></div>
+  <a href="{{ url_for('caronte_suap_login') }}" class="btn btn-suap d-flex align-items-center justify-content-center">Entrar com o SUAP</a>
+  {% endif %}
   <div class="admin-link"><a href="{{ url_for('admin_login') }}">Painel Admin</a></div>
 </div>
 <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>

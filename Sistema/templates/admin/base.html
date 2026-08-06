@@ -62,6 +62,8 @@
       {% if current_usuario.admin %}
       <a class="nav-link {% if 'broker' in request.endpoint %}active{% endif %}"
          href="{{ url_for('admin_brokers') }}" style="font-size:.85rem; color:#4e9;">Brokers MQTT</a>
+      <a class="nav-link {% if 'integracao_suap' in request.endpoint %}active{% endif %}"
+         href="{{ url_for('admin_integracao_suap') }}" style="font-size:.85rem; color:#4e9;">Login SUAP</a>
       {% endif %}
       <hr style="border-color:#2d2d4e; margin:.5rem 0;">
       <a class="nav-link" href="{{ url_for('admin_logout') }}" style="color:#7e1e1e;">Sair</a>

@@ -48,6 +48,11 @@ class Usuario(Base):
     pin: Mapped[str] = mapped_column(String(4))
     senha: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     admin: Mapped[bool] = mapped_column(Boolean)
+    # True para todo cadastro feito por um admin/gerente (ele já está vindo
+    # de alguém de confiança). False só para quem se auto-cadastra via SUAP
+    # OAuth e ainda não foi aprovado - fica sem acesso a nenhum Tartaro até
+    # a aprovação, mesmo que a matrícula bata com um cadastro futuro.
+    aprovado: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     tag: Mapped["TAG"] = relationship(back_populates="usuario")
     mac: Mapped["MAC"] = relationship(back_populates="usuario")
     ambientes: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes, back_populates="frequentadores")
@@ -211,6 +216,17 @@ class AccessLog(Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
+class SuapConfig(Base):
+    """Configuração (linha única, id=1) do login via SUAP OAuth2 - client_id/
+    client_secret cadastrados no painel de aplicações do SUAP, mais o
+    liga/desliga do botão "Entrar com o SUAP" no portal do Caronte web."""
+    __tablename__ = 'suap_config'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    client_secret: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
 class DeviceHeartbeat(Base):
     """Registro leve (só mac + timestamp) de cada heartbeat recebido - usado
     exclusivamente para reconstruir os intervalos online/offline do SLA
@@ -295,3 +311,8 @@ _add_column_if_missing('ambientes', 'web_habilitado', 'BOOLEAN DEFAULT 0')
 
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'debug_ativo', 'BOOLEAN DEFAULT 0')
+
+# DEFAULT 1: usuários já cadastrados foram todos criados manualmente por um
+# admin/gerente, então já são "aprovados" por definição - só ganham aprovado=0
+# quem se auto-cadastrar via SUAP OAuth dali em diante.
+_add_column_if_missing('usuarios', 'aprovado', 'BOOLEAN DEFAULT 1')
