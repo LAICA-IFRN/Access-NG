@@ -149,6 +149,8 @@ class Cerberos(Base):
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
     debug_ativo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    fs_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fs_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class Caronte(Base):
@@ -184,6 +186,8 @@ class Caronte(Base):
     config_atual: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     config_atualizado_em: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
     debug_ativo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    fs_free: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fs_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     def receberTAG(self, tag: TAG) -> bool:
         for user in self.ambiente.frequentadores:
@@ -316,3 +320,7 @@ for _table in ('cerberoses', 'carontes'):
 # admin/gerente, então já são "aprovados" por definição - só ganham aprovado=0
 # quem se auto-cadastrar via SUAP OAuth dali em diante.
 _add_column_if_missing('usuarios', 'aprovado', 'BOOLEAN DEFAULT 1')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'fs_free', 'INTEGER')
+    _add_column_if_missing(_table, 'fs_total', 'INTEGER')
