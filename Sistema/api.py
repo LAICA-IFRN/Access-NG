@@ -669,6 +669,29 @@ def _suap_config():
     return cfg
 
 
+@app.route('/admin/integracao-suap', methods=['GET', 'POST'])
+@admin_required
+def admin_integracao_suap():
+    cfg = _suap_config()
+    if request.method == 'POST':
+        f = request.form
+        cfg.client_id = f.get('client_id', '').strip() or None
+        # em branco = não mexe (evita apagar o secret sem querer ao só
+        # atualizar o client_id ou o checkbox "ativo")
+        if f.get('client_secret', '').strip():
+            cfg.client_secret = f['client_secret'].strip()
+        cfg.ativo = 'ativo' in f
+        db.commit()
+        flash('Configuração do login via SUAP salva.', 'success')
+        return redirect(url_for('admin_integracao_suap'))
+    pendentes_count = db.query(Usuario).filter(Usuario.aprovado == False).count()
+    return render_template(
+        'admin/integracao_suap.html', cfg=cfg,
+        redirect_uri=url_for('caronte_suap_callback', _external=True),
+        pendentes_count=pendentes_count,
+    )
+
+
 @app.route('/caronte/suap')
 def caronte_suap_login():
     cfg = _suap_config()
