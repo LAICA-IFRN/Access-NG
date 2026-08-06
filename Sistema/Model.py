@@ -48,6 +48,11 @@ class Usuario(Base):
     pin: Mapped[str] = mapped_column(String(4))
     senha: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     admin: Mapped[bool] = mapped_column(Boolean)
+    # True para todo cadastro feito por um admin/gerente (ele já está vindo
+    # de alguém de confiança). False só para quem se auto-cadastra via SUAP
+    # OAuth e ainda não foi aprovado - fica sem acesso a nenhum Tartaro até
+    # a aprovação, mesmo que a matrícula bata com um cadastro futuro.
+    aprovado: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     tag: Mapped["TAG"] = relationship(back_populates="usuario")
     mac: Mapped["MAC"] = relationship(back_populates="usuario")
     ambientes: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes, back_populates="frequentadores")
@@ -295,3 +300,8 @@ _add_column_if_missing('ambientes', 'web_habilitado', 'BOOLEAN DEFAULT 0')
 
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'debug_ativo', 'BOOLEAN DEFAULT 0')
+
+# DEFAULT 1: usuários já cadastrados foram todos criados manualmente por um
+# admin/gerente, então já são "aprovados" por definição - só ganham aprovado=0
+# quem se auto-cadastrar via SUAP OAuth dali em diante.
+_add_column_if_missing('usuarios', 'aprovado', 'BOOLEAN DEFAULT 1')
