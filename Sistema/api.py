@@ -32,8 +32,10 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _OTA_ALLOWED_FILES = {
     'Hardware/Fechadura/version.json',
     'Hardware/Fechadura/version_esp32.json',
+    'Hardware/Fechadura/version_esp32c3.json',
     'Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py',
     'Hardware/Fechadura/CerberosESP32.py',
+    'Hardware/Fechadura/CerberosESP32C3.py',
     'Hardware/Autenticador/version.json',
     'Hardware/Autenticador/CaronteESP32C3.py',
 }
