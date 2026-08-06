@@ -90,7 +90,7 @@ Fluxo MQTT (alternativo ao REST, por dispositivo):
 8. Aberturas manuais (`/admin/cerberoses/<id>/abrir`), via Caronte web (`/caronte/solicitar`) e via Caronte fixo REST (`/caronte/autenticarTag`) também publicam o comando MQTT para os Cerberoses vinculados a um broker, além do mecanismo de fila REST existente.
 9. O mesmo tópico de comando também aceita `{"command":"reboot"}` (reinício remoto), `{"command":"get_config"}` (o dispositivo reporta sua configuração efetiva) e `{"command":"set_config","params":{...}}` (o dispositivo grava novos valores em `config.json` e reinicia) — ver [Reinício e reconfiguração remota](#reinício-e-reconfiguração-remota).
 10. A resposta ao `get_config`/`set_config` chega em `access-ng/{amb_id}/{cerberos|caronte}/{mac}/config/result`; o Sistema grava o payload em `Cerberos.config_atual`/`Caronte.config_atual` com o timestamp em `config_atualizado_em`.
-11. O heartbeat MQTT pode incluir campos de diagnóstico (`ip`, `uptime`, `rssi`, `mem_free`, `cpu_temp`) e o coldstart pode incluir `boot_count`, `hardware`, `mcu` e `rssi` (o sinal WiFi no momento do boot ajuda a diagnosticar falhas logo na conexão) — usados nas páginas de detalhe do Cerberos/Caronte no painel (ver [Diagnóstico e histórico](#diagnóstico-e-histórico)).
+11. O heartbeat MQTT pode incluir campos de diagnóstico (`ip`, `uptime`, `rssi`, `mem_free`, `cpu_temp`, `fs_free`/`fs_total`) e o coldstart pode incluir `boot_count`, `hardware`, `mcu` e `rssi` (o sinal WiFi no momento do boot ajuda a diagnosticar falhas logo na conexão) — usados nas páginas de detalhe do Cerberos/Caronte no painel (ver [Diagnóstico e histórico](#diagnóstico-e-histórico)).
 
 O MAC nos tópicos usa `-` no lugar de `:` (compatibilidade com brokers que tratam `:` como separador). O Sistema aceita ambos os formatos ao consultar o banco.
 
@@ -234,6 +234,8 @@ Colunas adicionadas automaticamente em `cerberoses` e `carontes`:
 - `config_atual VARCHAR(2000)`
 - `config_atualizado_em DATETIME`
 - `debug_ativo BOOLEAN DEFAULT 0` — com `true`, todo heartbeat grava o payload completo em `access_logs` (por padrão só os heartbeats "ricos" de diagnóstico gravam — ver [Heartbeat sem sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log))
+- `fs_free INTEGER` — espaço livre (bytes) no filesystem da placa (`os.statvfs('/')`), reportado junto com o restante do diagnóstico
+- `fs_total INTEGER` — espaço total (bytes) do filesystem da placa
 
 Colunas adicionadas automaticamente em `ambientes`:
 
@@ -355,10 +357,13 @@ Tabela: `cerberoses`
 - `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
 - `versao_firmware`, `ip`, `uptime`, `boot_count`, `hardware`, `mcu`, `ssid` — reportados
   no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
-- `rssi`, `mem_free`, `cpu_temp` — diagnóstico reportado periodicamente no heartbeat,
-  com histórico consultável em `/admin/cerberoses/<id>/historico/<metric>`
+- `rssi`, `mem_free`, `cpu_temp`, `fs_free` — diagnóstico reportado periodicamente
+  no heartbeat, com histórico consultável em `/admin/cerberoses/<id>/historico/<metric>`
 - `mem_free_min` — menor valor de `mem_free` já visto desde o boot (equivalente ao
   `ESP.getMinFreeHeap()` do Arduino, calculado em software pelo firmware)
+- `fs_total` — espaço total (bytes) do filesystem da placa, reportado junto com
+  `fs_free` (via `os.statvfs('/')`); usado para saber se cabe a próxima atualização
+  OTA e o crescimento do `tags.json` (whitelist local de TAGs RFID)
 - `wifi_status`, `wifi_channel` — código bruto de `network.WLAN.status()` e canal
   WiFi atual, só o valor mais recente (sem histórico gráfico)
 - `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status` —
@@ -391,10 +396,13 @@ Tabela: `carontes`
 - `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
 - `versao_firmware`, `ip`, `uptime`, `boot_count`, `hardware`, `mcu`, `ssid` — reportados
   no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
-- `rssi`, `mem_free`, `cpu_temp` — diagnóstico reportado periodicamente no heartbeat,
-  com histórico consultável em `/admin/carontes/<id>/historico/<metric>`
+- `rssi`, `mem_free`, `cpu_temp`, `fs_free` — diagnóstico reportado periodicamente
+  no heartbeat, com histórico consultável em `/admin/carontes/<id>/historico/<metric>`
 - `mem_free_min` — menor valor de `mem_free` já visto desde o boot (equivalente ao
   `ESP.getMinFreeHeap()` do Arduino, calculado em software pelo firmware)
+- `fs_total` — espaço total (bytes) do filesystem da placa, reportado junto com
+  `fs_free` (via `os.statvfs('/')`); usado para saber se cabe a próxima atualização
+  OTA e o crescimento do `tags.json` (whitelist local de TAGs RFID)
 - `wifi_status`, `wifi_channel` — código bruto de `network.WLAN.status()` e canal
   WiFi atual, só o valor mais recente (sem histórico gráfico)
 - `wifi_reconnects`, `wifi_last_reconnect_s`, `wifi_last_disconnect_status` —
@@ -762,7 +770,7 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/cerberoses/<id>/config` | Mostra a última configuração efetiva reportada pelo Cerberos (campos sensíveis mascarados). |
 | `POST` | `/admin/cerberoses/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Cerberos que reporte sua configuração atual. |
 | `POST` | `/admin/cerberoses/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
-| `GET` | `/admin/cerberoses/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico; para `rssi` a resposta também inclui `bssids` (o AP associado em cada ponto), usado para marcar troca de Access Point no gráfico. |
+| `GET` | `/admin/cerberoses/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free`, `cpu_temp` ou `fs_free`, para os gráficos de diagnóstico; para `rssi` a resposta também inclui `bssids` (o AP associado em cada ponto), usado para marcar troca de Access Point no gráfico. |
 | `POST` | `/admin/cerberoses/<id>/excluir` | Remove Cerberos. |
 | `GET` | `/admin/carontes` | Lista Carontes fixos. |
 | `POST` | `/admin/carontes/verificar-atualizacao` | Notifica via MQTT todos os Carontes listados (escopados ao papel do usuário) para verificarem atualização agora. |
@@ -776,7 +784,7 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/carontes/<id>/config` | Mostra a última configuração efetiva reportada pelo Caronte (campos sensíveis mascarados). |
 | `POST` | `/admin/carontes/<id>/config/atualizar` | Publica `get_config` via MQTT, pedindo ao Caronte que reporte sua configuração atual. |
 | `POST` | `/admin/carontes/<id>/config` | Publica `set_config` via MQTT com os campos alterados; o dispositivo grava e reinicia. |
-| `GET` | `/admin/carontes/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free` ou `cpu_temp`, para os gráficos de diagnóstico; para `rssi` a resposta também inclui `bssids` (o AP associado em cada ponto), usado para marcar troca de Access Point no gráfico. |
+| `GET` | `/admin/carontes/<id>/historico/<metric>` | JSON com a série histórica (24h) de `rssi`, `mem_free`, `cpu_temp` ou `fs_free`, para os gráficos de diagnóstico; para `rssi` a resposta também inclui `bssids` (o AP associado em cada ponto), usado para marcar troca de Access Point no gráfico. |
 | `POST` | `/admin/carontes/<id>/excluir` | Remove Caronte fixo. |
 | `GET` | `/admin/brokers` | Lista Brokers MQTT. |
 | `GET/POST` | `/admin/brokers/novo` | Cria Broker MQTT e conecta o `mqtt_service`. |
@@ -1346,17 +1354,21 @@ Além da `versao`, o coldstart MQTT pode reportar `boot_count`, `hardware`
 já no boot ajuda a diagnosticar dispositivos que falham por sinal fraco
 antes mesmo do primeiro heartbeat. O heartbeat MQTT, por sua vez, pode
 reportar `ip`, `uptime`, `rssi` (sinal WiFi em dBm), `mem_free` (memória
-livre em bytes) e `cpu_temp` (°C) — só uma fração dos heartbeats carrega
-esses campos de diagnóstico, para não sobrecarregar o payload. Esses
-valores sempre atualizam `Cerberos`/`Caronte` direto; a persistência em
-`AccessLog` (base dos gráficos) é mais seletiva — ver [Heartbeat sem
-sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log) logo abaixo.
+livre em bytes), `cpu_temp` (°C) e `fs_free`/`fs_total` (espaço livre/total
+do filesystem em bytes, via `os.statvfs('/')`) — só uma fração dos
+heartbeats carrega esses campos de diagnóstico, para não sobrecarregar o
+payload. `fs_free`/`fs_total` servem tanto para saber se cabe a próxima
+atualização OTA quanto o crescimento do `tags.json` (whitelist local de
+TAGs RFID do Caronte). Esses valores sempre atualizam `Cerberos`/`Caronte`
+direto; a persistência em `AccessLog` (base dos gráficos) é mais seletiva —
+ver [Heartbeat sem sobrecarregar o log](#heartbeat-sem-sobrecarregar-o-log)
+logo abaixo.
 
 A página `/admin/cerberoses/<id>` (e a equivalente de Caronte) mostra esses
-valores mais recentes; clicar em "Sinal WiFi", "Memória Livre" ou
-"Temperatura CPU" abre um gráfico com a série das últimas 24h, obtida via
-`GET /admin/cerberoses/<id>/historico/<metric>` (`metric` é `rssi`,
-`mem_free` ou `cpu_temp`).
+valores mais recentes; clicar em "Sinal WiFi", "Memória Livre", "Temperatura
+CPU" ou "Espaço em Disco" abre um gráfico com a série das últimas 24h,
+obtida via `GET /admin/cerberoses/<id>/historico/<metric>` (`metric` é
+`rssi`, `mem_free`, `cpu_temp` ou `fs_free`).
 
 No gráfico de RSSI, a linha é colorida por faixa de qualidade do sinal
 (verde/laranja/vermelho) e uma legenda de referência é exibida ao lado:
@@ -1730,8 +1742,8 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   guardada em `Cerberos.config_atual`/`Caronte.config_atual` — veja
   [Reinício e reconfiguração remota](#reinício-e-reconfiguração-remota).
 - Diagnóstico de dispositivo (`ip`, `uptime`, `boot_count`, `hardware`, `mcu`,
-  `ssid`, `rssi`, `mem_free`, `cpu_temp`) reportado via coldstart/heartbeat
-  MQTT, com gráficos históricos de 24h em
+  `ssid`, `rssi`, `mem_free`, `cpu_temp`, `fs_free`/`fs_total`) reportado via
+  coldstart/heartbeat MQTT, com gráficos históricos de 24h em
   `/admin/cerberoses/<id>/historico/<metric>` e equivalente em Carontes —
   veja [Diagnóstico e histórico](#diagnóstico-e-histórico).
 - Diagnóstico WiFi estendido (`mem_free_min`, `wifi_status`, `wifi_channel`,

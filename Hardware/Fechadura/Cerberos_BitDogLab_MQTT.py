@@ -180,7 +180,7 @@ BOOT_COUNT  = None
 
 # ─── OTA ────────────────────────────────────────────────────────────────────────
 
-FIRMWARE_VERSAO   = "1.3.25"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.3.26"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG (nao pelo raw.githubusercontent.com): a rede
 # da IFRN nao entrega de forma confiavel arquivos maiores vindos do CDN do
 # GitHub, mas o dispositivo ja tem conectividade comprovada com este host
@@ -198,7 +198,7 @@ OTA_PORT          = 80
 # ─── DIAGNÓSTICO ────────────────────────────────────────────────────────────────
 
 HARDWARE_INFO         = "BitDogLab V6 (Pico W)"
-HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp vao a cada N heartbeats
+HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp/fs_free vao a cada N heartbeats
 
 
 _SOFT_RESET_FLAG = 'soft_reset.flag'
@@ -268,6 +268,18 @@ def _read_cpu_temp():
         return round(27 - (volts - 0.706) / 0.001721, 1)
     except Exception:
         return None
+
+
+def _read_fs_stats():
+    """Espaço livre/total (bytes) do filesystem da placa - usado para saber
+    se cabe a próxima atualização OTA (baixa main.new antes de trocar com
+    main.py). (None, None) se indisponível."""
+    try:
+        s = os.statvfs('/')
+        frsize = s[1]
+        return s[4] * frsize, s[2] * frsize  # (f_bavail, f_blocks) * f_frsize
+    except Exception:
+        return None, None
 
 
 def _read_wifi_status():
@@ -1122,6 +1134,9 @@ def publish_heartbeat():
             payload['wifi_last_reconnect_s'] = time.time() - _wifi_last_reconnect_s
         if _wifi_last_disconnect_status is not None:
             payload['wifi_last_disconnect_status'] = _wifi_last_disconnect_status
+        fs_free, fs_total = _read_fs_stats()
+        payload['fs_free'] = fs_free
+        payload['fs_total'] = fs_total
     _client.publish(_t()['heartbeat'], json.dumps(payload))
 
 
