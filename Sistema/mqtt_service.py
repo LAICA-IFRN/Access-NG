@@ -115,6 +115,26 @@ class MqttService:
         print(f'[MQTT] reboot → {tipo} {device.mac}')
         return True
 
+    def notify_migrate(self, device, tipo):
+        """Publica {"command":"migrate"} no tópico de comando do dispositivo -
+        só tem efeito em um Caronte ainda rodando o firmware antigo (arquivo
+        único reaproveitado como migrador, Hardware/Autenticador/
+        CaronteESP32C3.py); em qualquer outro dispositivo é ignorado, já que
+        nenhum outro firmware reconhece esse comando. `tipo` é sempre
+        'caronte' aqui - os outros 3 firmwares ainda não têm essa migração."""
+        if not _PAHO_AVAILABLE or not device.broker_id:
+            return False
+        with self._lock:
+            client = self._clients.get(device.broker_id)
+        if not client:
+            print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
+            return False
+        mac_safe = device.mac.replace(':', '-')
+        topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
+        client.publish(topic, json.dumps({'command': 'migrate'}), qos=1)
+        print(f'[MQTT] migrate → {tipo} {device.mac}')
+        return True
+
     def request_config(self, device, tipo):
         """Publica {"command":"get_config"}, pedindo que o dispositivo reporte
         sua configuração efetiva atual (chega depois, assíncrono, no tópico
