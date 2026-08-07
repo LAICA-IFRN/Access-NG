@@ -179,7 +179,7 @@ import micropython
 import gc
 
 from device_defaults import DEFAULTS, SENSITIVE_KEYS
-from accessng import config, wifi, ota
+from accessng import config, wifi, ota, watchdog
 
 micropython.alloc_emergency_exception_buf(100)
 
@@ -1000,6 +1000,7 @@ def main():
     # Na prática, boot.py já deixou o rádio conectado - este laço serve de
     # rede de segurança caso algo tenha mudado entre um passo e outro.
     while not connect_wifi():
+        watchdog.feed()
         beep(120)
         time.sleep(10)
 
@@ -1007,6 +1008,7 @@ def main():
 
     tentativas_mqtt = 0
     while True:
+        watchdog.feed()
         try:
             mqtt_connect()
             do_coldstart()
@@ -1032,6 +1034,7 @@ def main():
     last_uart_keepalive = time.time()
 
     while True:
+        watchdog.feed()
         try:
             if not network.WLAN(network.STA_IF).isconnected():
                 print("[WiFi] Reconectando...")

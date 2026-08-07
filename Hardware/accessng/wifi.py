@@ -10,6 +10,8 @@ import network
 import time
 import os
 
+from accessng import watchdog
+
 
 def _default_needs_radio_reset():
     """O driver WiFi do ESP32-C3 pode ficar preso num estado interno
@@ -45,6 +47,7 @@ def try_connect_once(ssid, password, timeout_s=15, needs_radio_reset=None):
 
     deadline = time.ticks_add(time.ticks_ms(), int(timeout_s * 1000))
     while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+        watchdog.feed()
         if wlan.isconnected():
             print("[WiFi] IP: %s" % wlan.ifconfig()[0])
             return True

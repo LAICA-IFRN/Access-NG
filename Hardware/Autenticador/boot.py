@@ -9,7 +9,14 @@ DEVICE_TYPE = "Caronte"
 
 import machine
 from device_defaults import DEFAULTS, SENSITIVE_KEYS
-from accessng import config, wifi, recovery, ota
+from accessng import config, wifi, recovery, ota, watchdog
+
+# 0) Watchdog de hardware: se algo travar de verdade (não uma exceção,
+#    que os passos abaixo já tratam, mas um laço infinito/driver preso)
+#    o hardware força um reset sozinho. Timeout curto de propósito (ver
+#    accessng/watchdog.py) - quem faz operação longa alimenta durante a
+#    espera, não só uma vez aqui.
+watchdog.arm()
 
 # 1) Marca o boot ANTES de qualquer coisa arriscada: se algo adiante
 #    travar, o próximo boot já enxerga este boot como "não confirmado

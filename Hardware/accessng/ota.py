@@ -25,6 +25,8 @@ import os
 import socket
 import time
 
+from accessng import watchdog
+
 
 def http_request(host, path, port=80, dest_file=None, timeout=10):
     """GET HTTP em host:port+path (sem TLS - o handshake RSA estoura a
@@ -61,6 +63,7 @@ def http_request(host, path, port=80, dest_file=None, timeout=10):
         header_done = False
         try:
             while True:
+                watchdog.feed()
                 chunk = sock.read(1024)
                 if not chunk:
                     break

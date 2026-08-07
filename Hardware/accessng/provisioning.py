@@ -19,7 +19,7 @@ import network
 import socket
 import time
 
-from accessng import config
+from accessng import config, watchdog
 
 _HTTP_404 = b"HTTP/1.0 404 Not Found\r\nConnection: close\r\n\r\n"
 _HTTP_OK_HEADER = (
@@ -63,9 +63,19 @@ def start(device_type, mac_suffix, defaults, sensitive_keys):
         pass
     s.bind(("0.0.0.0", 80))
     s.listen(1)
+    # accept() com timeout curto: sem isso, bloqueia para sempre esperando
+    # alguém conectar, e o watchdog nunca seria alimentado enquanto o
+    # portal espera um técnico (o que pode levar minutos) - o timeout só
+    # existe para dar oportunidade de feed(), não é um limite de espera
+    # real (o loop below tenta de novo indefinidamente).
+    s.settimeout(3)
     print("[Provisioning] http://192.168.4.1/  (SSID: %s)" % ssid)
     while True:
-        conn, addr = s.accept()
+        watchdog.feed()
+        try:
+            conn, addr = s.accept()
+        except OSError:
+            continue  # timeout do accept() - só uma chance de alimentar o watchdog
         try:
             _handle(conn, device_type, mac_suffix, defaults, sensitive_keys)
         except Exception as e:
@@ -79,7 +89,12 @@ def start(device_type, mac_suffix, defaults, sensitive_keys):
 
 
 def _handle(conn, device_type, mac_suffix, defaults, sensitive_keys):
-    conn.settimeout(10)
+    # Timeout curto (não 10s como antes): cada leitura individual precisa
+    # caber com folga dentro da janela do watchdog (8s, ver accessng.
+    # watchdog) - o loop de _read_request tenta de novo e alimenta o
+    # watchdog a cada tentativa, então um cliente lento ainda funciona,
+    # só não trava um único read() por tempo demais.
+    conn.settimeout(3)
     method, path, headers, body = _read_request(conn)
 
     if method == "GET":
@@ -121,6 +136,7 @@ def _read_request(conn, max_head=2048):
     servidor Access-NG)."""
     buf = b""
     while b"\r\n\r\n" not in buf and len(buf) < max_head:
+        watchdog.feed()
         chunk = conn.read(512)
         if not chunk:
             break
@@ -148,6 +164,7 @@ def _read_request(conn, max_head=2048):
         content_length = 0
     body = buf[sep + 4:]
     while len(body) < content_length:
+        watchdog.feed()
         chunk = conn.read(min(512, content_length - len(body)))
         if not chunk:
             break
