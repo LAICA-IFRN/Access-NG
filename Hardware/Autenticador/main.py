@@ -5,6 +5,18 @@ Firmware para um Caronte com leitor Wiegand no ESP32 SSC C3.
 Lê TAGs RFID, publica no broker MQTT e aguarda resultado de autorização.
 Não possui Cerberos embutido — apenas leitura e publicação.
 
+--- Arquivos no dispositivo ----------------------------------------------
+
+  boot.py             -> supervisor mínimo: decide recovery vs main.py
+  device_defaults.py  -> DEFAULTS/SENSITIVE_KEYS (dado puro, sem lógica)
+  main.py             -> este arquivo, a aplicação em si
+  accessng/           -> pacote compartilhado (config/wifi/recovery/
+                          provisioning/ota), instalado uma vez, não
+                          atualizado por OTA nesta fase
+  bibliotecas/         -> vendorizadas (umqtt), buscadas automaticamente
+                          por accessng.ota.ensure_dependencies() na
+                          primeira vez que faltarem
+
 --- config.json --------------------------------------------------------------
 
 {
@@ -40,6 +52,10 @@ Não possui Cerberos embutido — apenas leitura e publicação.
     "OTA_ENABLED"        : true,
     "OTA_CHECK_INTERVAL" : 3600
 }
+
+Se config.json estiver ausente/inválido, boot.py já intercepta antes deste
+arquivo rodar e sobe o portal de provisionamento (AP AccessNG-Caronte-XXXX
+em 192.168.4.1) - este arquivo sempre roda com um config.json válido.
 
 --- Pinagem ESP32 SSC C3 -----------------------------------------------------
 
@@ -136,24 +152,25 @@ Não possui Cerberos embutido — apenas leitura e publicação.
   O firmware se atualiza buscando version.json em
   http://{OTA_HOST}:{OTA_PORT}/ota/{OTA_VERSION_PATH} (HTTP puro, sem TLS —
   o handshake RSA estoura a memória disponível no ESP32-C3; os arquivos de
-  OTA são públicos, sem segredo em trânsito), servido pelo proprio Access-NG
-  (nao pelo raw.githubusercontent.com - a rede da IFRN nao entrega de forma
-  confiavel arquivos maiores vindos do CDN do GitHub). Se a versão remota
-  difere de FIRMWARE_VERSAO, baixa o .py em OTA_FIRMWARE_PATH, valida,
-  grava em main.new, troca com main.py (backup em main.bak) e reinicia.
+  OTA são públicos, sem segredo em trânsito), servido pelo proprio Access-NG.
+  Se a versão remota difere de FIRMWARE_VERSAO, baixa o .py, valida, troca
+  com main.py (backup em main.bak) - toda essa mecânica vive em
+  accessng.ota, chamada daqui como accessng.ota.check_for_update()/
+  apply_update()/confirm_boot_ok().
 
   A checagem ocorre: (1) após o coldstart, (2) periodicamente a cada
   OTA_CHECK_INTERVAL segundos, (3) imediatamente ao receber
   {"command":"check_update"} no tópico de comando.
 
   Rede de segurança: se a versão nova não completar um coldstart com sucesso
-  em até 3 boots, o dispositivo restaura automaticamente main.bak (versão
-  anterior conhecida como boa) e reinicia - evita "brick" remoto.
+  em até 3 boots, boot.py restaura automaticamente main.bak (versão anterior
+  conhecida como boa) e reinicia - evita "brick" remoto. Diferente da versão
+  anterior deste firmware, esse guard agora também dispara para QUALQUER
+  crash-loop de main.py (não só update pendente) - ver accessng/recovery.py.
 """
 
 import machine
 import network
-import socket
 import time
 import json
 import os
@@ -161,63 +178,26 @@ import ubinascii
 import micropython
 import gc
 
+from device_defaults import DEFAULTS, SENSITIVE_KEYS
+from accessng import config, wifi, ota
+
 micropython.alloc_emergency_exception_buf(100)
 
 
 # --- CONFIGURAÇÃO ------------------------------------------------------------
 
-_DEFAULTS = {
-    "WIFI_SSID"          : "wIFRN-IoT",
-    "WIFI_PASS"          : "deviceiotifrn",
-    "MQTT_BROKER"        : "broker.exemplo.com",
-    "MQTT_PORT"          : 1883,
-    "MQTT_USER"          : "",
-    "MQTT_PASS"          : "",
-    "MQTT_TLS"           : False,
-    "DEVICE_KEY"         : "chave-do-dispositivo",
-    "HEARTBEAT_INTERVAL" : 25,
-    "WG_D0_PIN"          : 5,
-    "WG_D1_PIN"          : 7,
-    "BUZZER_PIN"         : 6,
-    "LED_VM_PIN"         : 1,
-    "LED_VD1_PIN"        : 4,
-    "LED_VD2_PIN"        : 3,
-    "LED_VD3_PIN"        : 2,
-    "WG_TIMEOUT_MS"      : 25,
-    "AUTH_TIMEOUT_S"     : 5,
-    "UART_ENABLED"       : False,
-    "UART_ID"            : 1,
-    "UART_TX_PIN"        : 21,
-    "UART_RX_PIN"        : 20,
-    "UART_BAUDRATE"      : 9600,
-    "UART_KEEPALIVE_S"   : 5,
-    "OTA_ENABLED"        : True,
-    "OTA_CHECK_INTERVAL" : 3600,
-}
-
-# Nunca reportados por valor via MQTT (só é possível sobrescrever, não ler).
-_CONFIG_SENSITIVE = ("WIFI_PASS", "DEVICE_KEY", "MQTT_PASS")
 # Únicos que podem ser sobrescritos em memória (sem gravar em config.json) via
 # um bloco "config" na resposta do coldstart — os demais dependem de pinos/
 # hardware já inicializados antes do coldstart, exigindo reboot para valer.
 _CONFIG_RUNTIME_KEYS = ("HEARTBEAT_INTERVAL", "OTA_CHECK_INTERVAL", "OTA_ENABLED",
                         "AUTH_TIMEOUT_S", "WG_TIMEOUT_MS")
 
-try:
-    with open("config.json") as f:
-        _cfg_file = json.load(f)
-    print("[Config] config.json carregado")
-except Exception:
-    _cfg_file = {}
-    print("[Config] Usando valores padrão")
+_cfg_file, _cfg_ok = config.load()
+print("[Config] config.json carregado" if _cfg_ok else "[Config] Usando valores padrão")
 
 
 def cfg(key):
-    default = _DEFAULTS[key]
-    value = _cfg_file.get(key, default)
-    if isinstance(default, list):
-        return value
-    return type(default)(value)
+    return config.get(_cfg_file, DEFAULTS, key)
 
 
 WIFI_SSID          = cfg("WIFI_SSID")
@@ -254,17 +234,20 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.3.12"   # bump manual a cada release publicada
-# Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
-# da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
+FIRMWARE_VERSAO   = "1.4.0"   # bump manual a cada release publicada
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
-OTA_FIRMWARE_PATH = "Hardware/Autenticador/CaronteESP32C3.py"
+OTA_FIRMWARE_PATH = "Hardware/Autenticador/main.py"
 OTA_HOST          = "laica.ifrn.edu.br"
 # HTTP puro (sem TLS): o handshake TLS/RSA estoura a memoria disponivel no
 # ESP32-C3 (MBEDTLS_ERR_RSA_PUBLIC_FAILED+MBEDTLS_ERR_MPI_ALLOC_FAILED). Os
 # arquivos de OTA sao publicos (sem segredos), entao HTTP puro e aceitavel
 # aqui — mesma logica de expor o broker MQTT em texto puro na porta 1883.
 OTA_PORT          = 80
+
+# Bibliotecas que este firmware precisa - accessng.ota.ensure_dependencies()
+# busca as que ainda não existirem localmente. Mesma lista declarada em
+# Hardware/Autenticador/version.json, campo "bibliotecas".
+BIBLIOTECAS = ["umqtt/simple.py", "umqtt/robust.py"]
 
 # --- DIAGNOSTICO -----------------------------------------------------------------
 
@@ -277,8 +260,10 @@ _SOFT_RESET_FLAG = "soft_reset.flag"
 
 def _read_boot_count():
     """Conta reinicios "soft" (machine.reset() chamado pelo proprio firmware:
-    OTA, comando de reboot, rollback). Um boot sem a flag de soft-reset e
-    tratado como reinicio completo (energia caiu) e zera o contador."""
+    OTA, comando de reboot). Um boot sem a flag de soft-reset e tratado como
+    reinicio completo (energia caiu) e zera o contador. Diagnostico puro,
+    reportado no coldstart - NAO tem relacao com boot_state.json/boot_count
+    (esse e o contador de crash-loop de accessng, usado por boot.py)."""
     try:
         with open(_SOFT_RESET_FLAG):
             is_soft = True
@@ -343,9 +328,8 @@ def _read_cpu_temp():
 
 def _read_fs_stats():
     """Espaço livre/total (bytes) do filesystem da placa - usado tanto para
-    saber se cabe a próxima atualização OTA (baixa main.new antes de trocar
-    com main.py) quanto o crescimento do tags.json. (None, None) se
-    indisponível."""
+    saber se cabe a próxima atualização OTA quanto o crescimento do
+    tags.json. (None, None) se indisponível."""
     try:
         s = os.statvfs('/')
         frsize = s[1]
@@ -404,6 +388,22 @@ def _read_ap_bssid():
 _wifi_reconnects = 0
 _wifi_last_reconnect_s = None
 _wifi_last_disconnect_status = None
+
+
+def connect_wifi():
+    """Wrapper fino sobre accessng.wifi.try_connect_once() que preserva o
+    diagnostico de reconexao (contagem/timestamp/motivo) usado no
+    heartbeat - accessng.wifi nao conhece esse conceito, e' especifico
+    desta aplicacao."""
+    global _wifi_reconnects, _wifi_last_reconnect_s, _wifi_last_disconnect_status
+    if network.WLAN(network.STA_IF).isconnected():
+        return True
+    if _wifi_last_reconnect_s is not None:
+        _wifi_last_disconnect_status = _read_wifi_status()
+        _wifi_reconnects += 1
+    _wifi_last_reconnect_s = time.time()
+    print("[WiFi] Conectando em %s..." % WIFI_SSID)
+    return wifi.try_connect_once(WIFI_SSID, WIFI_PASS)
 
 
 # --- HARDWARE ----------------------------------------------------------------
@@ -694,341 +694,22 @@ def fecho_send_tag(tag, wg_count, timeout_ms=1500):
     return False
 
 
-# --- WIFI --------------------------------------------------------------------
-
-def connect_wifi():
-    global _wifi_reconnects, _wifi_last_reconnect_s, _wifi_last_disconnect_status
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    # Pequeno assentamento: no ESP32-C3, chamar connect() logo após active(True)
-    # (tipicamente no boot a frio) pode pegar o driver WiFi ainda inicializando,
-    # o que faz connect() levantar OSError("Wifi Internal State Error") em vez
-    # de simplesmente falhar depois de forma assíncrona.
-    time.sleep_ms(100)
-    if wlan.isconnected():
-        print("[WiFi] IP: %s" % wlan.ifconfig()[0])
-        return True
-
-    if _wifi_last_reconnect_s is not None:
-        # ja tinha conectado antes nesse boot - isso e uma reconexao, nao a
-        # conexao inicial. Guarda o status no momento da queda como motivo.
-        _wifi_last_disconnect_status = _read_wifi_status()
-        _wifi_reconnects += 1
-    _wifi_last_reconnect_s = time.time()
-
-    print("[WiFi] Conectando em %s..." % WIFI_SSID)
-    try:
-        wlan.connect(WIFI_SSID, WIFI_PASS)
-    except OSError as e:
-        # Mesmo erro de estado interno pode ser lançado aqui em vez de na
-        # inicialização - trata como falha de conexão (o chamador já tem
-        # lógica de retry com espera) em vez de derrubar o firmware inteiro.
-        print("[WiFi] Erro ao conectar: %s" % e)
-        _wifi_reset_radio(wlan)
-        return False
-    for _ in range(30):
-        if wlan.isconnected():
-            print("[WiFi] IP: %s" % wlan.ifconfig()[0])
-            return True
-        time.sleep(0.5)
-
-    print("[WiFi] Falha")
-    _wifi_reset_radio(wlan)
-    return False
-
-
-def _wifi_reset_radio(wlan):
-    """Depois de uma tentativa de conexão que falha ou expira, o driver WiFi
-    do ESP32-C3 pode ficar preso num estado interno inconsistente: toda
-    chamada seguinte de connect() passa a levantar OSError("Wifi Internal
-    State Error"), mesmo com rede e senha corretas (visto em campo - a
-    primeira tentativa só dá timeout, e todas as seguintes já saem direto
-    no erro). Um ciclo completo active(False)/active(True) reinicia a
-    máquina de estados do driver e evita esse travamento permanente."""
-    try:
-        wlan.active(False)
-        time.sleep_ms(200)
-        wlan.active(True)
-        time.sleep_ms(100)
-    except OSError as e:
-        print("[WiFi] Erro ao reiniciar rádio: %s" % e)
-
-
 # --- OTA -----------------------------------------------------------------------
 
-def _ota_boot_guard():
-    """Roda antes de tudo no boot. Se há um update pendente que falhou em
-    completar um coldstart por 3 boots seguidos, restaura main.bak (versão
-    anterior conhecida como boa) e reinicia. Nunca levanta exceção - esse
-    código não pode travar o boot normal (sem update pendente, é um no-op)."""
-    try:
-        with open("ota_pending.txt"):
-            pass
-    except OSError:
+def ota_check_and_maybe_apply(state):
+    """Verifica e, se houver versão nova, aplica (reinicia em caso de
+    sucesso - o estado já fica persistido antes do reset)."""
+    remote = ota.check_for_update(OTA_HOST, OTA_PORT, OTA_VERSION_PATH,
+                                   FIRMWARE_VERSAO, OTA_ENABLED)
+    if not remote:
         return
-    try:
-        try:
-            with open("ota_boot_attempts.txt") as f:
-                tentativas = int(f.read().strip())
-        except (OSError, ValueError):
-            tentativas = 0
-        tentativas += 1
-        if tentativas >= 3:
-            print("[OTA] Update pendente falhou %d vezes - restaurando main.bak" % tentativas)
-            try:
-                os.remove("main.py")
-                os.rename("main.bak", "main.py")
-            except OSError:
-                pass
-            for fname in ("ota_pending.txt", "ota_boot_attempts.txt"):
-                try:
-                    os.remove(fname)
-                except OSError:
-                    pass
-            _soft_reset()
-        else:
-            with open("ota_boot_attempts.txt", "w") as f:
-                f.write(str(tentativas))
-    except Exception as e:
-        print("[OTA] Erro no boot guard:", e)
-
-
-def _ota_confirmar_versao_boa():
-    """Chamado após o primeiro coldstart+heartbeat bem-sucedidos na versão
-    atual: remove os marcadores de update pendente (a versão é considerada
-    estável). main.bak permanece como rede de segurança até a próxima
-    atualização."""
-    for fname in ("ota_pending.txt", "ota_boot_attempts.txt"):
-        try:
-            os.remove(fname)
-        except OSError:
-            pass
-
-
-def _http_get(path, host=None, timeout=10):
-    """GET HTTP simples (sem TLS). Retorna (status_code, body_str) ou (None, None)."""
-    return _http_request(host or OTA_HOST, path, timeout=timeout)
-
-
-def _http_request(host, path, dest_file=None, timeout=10):
-    """GET HTTP em host+path (sem TLS — o handshake RSA estoura a memória
-    disponível no ESP32-C3; os arquivos de OTA são públicos, sem segredo em
-    trânsito). Se dest_file for informado, grava o corpo da resposta direto
-    nesse arquivo (streaming) e retorna (status, None); senão acumula o
-    corpo em memória e retorna (status, body_str). Retorna (None, None) em
-    qualquer falha de rede."""
-    sock = None
-    t0 = time.time()
-    gc.collect()
-    try:
-        ai   = socket.getaddrinfo(host, OTA_PORT, 0, socket.SOCK_STREAM)
-        addr = ai[0][-1]
-        print("[OTA] %s -> %s" % (host, addr))
-        sock = socket.socket()
-        sock.settimeout(timeout)
-        sock.connect(addr)
-        if dest_file:
-            print("[OTA] TCP conectado, enviando requisição...")
-
-        req = (
-            "GET " + path + " HTTP/1.1\r\n"
-            "Host: " + host + "\r\n"
-            "User-Agent: access-ng-caronte\r\n"
-            "Connection: close\r\n\r\n"
-        )
-        sock.write(req.encode("utf-8"))
-
-        buf = b""
-        status = None
-        out = None
-        total_bytes = None
-        received = 0
-        if dest_file:
-            out = open(dest_file, "wb")
-        header_done = False
-        try:
-            while True:
-                chunk = sock.read(1024)
-                if not chunk:
-                    break
-                if not header_done:
-                    buf += chunk
-                    sep = buf.find(b"\r\n\r\n")
-                    if sep == -1:
-                        continue
-                    header_done = True
-                    header_str = buf[:sep].decode("utf-8", "ignore")
-                    status = int(header_str.split("\r\n", 1)[0].split()[1])
-                    for line in header_str.split("\r\n")[1:]:
-                        if line.lower().startswith("content-length:"):
-                            try:
-                                total_bytes = int(line.split(":", 1)[1].strip())
-                            except ValueError:
-                                pass
-                    if dest_file:
-                        print("[OTA] Resposta recebida (status=%s, tamanho=%s)" %
-                              (status, total_bytes if total_bytes is not None else "?"))
-                    rest = buf[sep + 4:]
-                    buf = b""
-                    if out:
-                        if rest:
-                            out.write(rest)
-                            received += len(rest)
-                            if total_bytes and received >= total_bytes:
-                                break
-                    else:
-                        buf = rest
-                else:
-                    if out:
-                        out.write(chunk)
-                        received += len(chunk)
-                        if dest_file:
-                            if total_bytes:
-                                print("[OTA] Download: %d/%d bytes (%d%%)" %
-                                      (received, total_bytes, received * 100 // total_bytes))
-                            else:
-                                print("[OTA] Download: %d bytes" % received)
-                        if total_bytes and received >= total_bytes:
-                            break
-                    else:
-                        buf += chunk
-        finally:
-            if out:
-                out.close()
-
-        if status is None:
-            return None, None
-        if dest_file and total_bytes is not None and received < total_bytes:
-            print("[OTA] Download incompleto: %d/%d bytes" % (received, total_bytes))
-            return None, None
-        if dest_file:
-            print("[OTA] Download concluído: %d bytes" % received)
-        return status, (None if out else buf.decode("utf-8", "ignore"))
-    except Exception as e:
-        print("[OTA] Erro HTTP (%.1fs):" % (time.time() - t0), e)
-        return None, None
-    finally:
-        if sock:
-            try:
-                sock.close()
-            except Exception:
-                pass
-        gc.collect()
-
-
-def _parse_versao(v):
-    """Converte "1.3.10" em (1, 3, 10) para comparação numérica.
-    Comparar como string quebra em versões de dois dígitos (ex.:
-    "1.3.10" < "1.3.7" lexicograficamente)."""
-    try:
-        return tuple(int(p) for p in str(v).split("."))
-    except (ValueError, AttributeError):
-        return None
-
-
-def check_for_update():
-    """Busca version.json no repo. Retorna o dict remoto se a versão remota
-    for numericamente MAIOR que a atual, ou None (sem update / qualquer
-    falha). Nunca reinstala uma versão igual ou mais antiga."""
-    if not OTA_ENABLED:
-        return None
-    status, body = _http_get("/access-ng/ota/" + OTA_VERSION_PATH)
-    if status != 200 or not body:
-        return None
-    try:
-        remote = json.loads(body)
-    except Exception:
-        return None
-
-    remota_versao = remote.get("versao")
-    remota_t = _parse_versao(remota_versao)
-    atual_t = _parse_versao(FIRMWARE_VERSAO)
-    if remota_t is None or atual_t is None:
-        if remota_versao == FIRMWARE_VERSAO:
-            return None
-    elif remota_t <= atual_t:
-        return None
-
-    print("[OTA] Nova versão disponível:", remota_versao)
-    return remote
-
-
-def _valida_payload(path, versao):
-    """Checagem barata de sanidade do .py baixado antes de instalar.
-
-    Lê em blocos para não carregar o firmware inteiro na RAM.
-    """
-    try:
-        if os.stat(path)[6] < 500:
-            return False
-        needle_fw = b"FIRMWARE_VERSAO"
-        needle_ver = str(versao).encode("utf-8")
-        found_fw = False
-        found_ver = False
-        tail = b""
-        with open(path, "rb") as f:
-            while True:
-                chunk = f.read(512)
-                if not chunk:
-                    break
-                data = tail + chunk
-                if not found_fw and needle_fw in data:
-                    found_fw = True
-                if needle_ver and not found_ver and needle_ver in data:
-                    found_ver = True
-                if found_fw and found_ver:
-                    return True
-                tail = data[-64:]
-        return False
-    except Exception as e:
-        print("[OTA] Erro ao validar payload:", e)
-        return False
-
-
-def apply_update(remote):
-    """Baixa o firmware, valida, troca main.py e reinicia.
-    Nunca propaga exceção - qualquer falha apenas aborta a atualização."""
-    try:
-        versao = remote.get("versao", "")
-        path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
-        print("[OTA] Baixando", "http://" + OTA_HOST + path)
-        beep(60)
-        status, _ = _http_request(OTA_HOST, path, dest_file="main.new", timeout=30)
-        if status != 200 or not _valida_payload("main.new", versao):
-            print("[OTA] Download inválido (status=%s) - abortando" % status)
-            try:
-                os.remove("main.new")
-            except OSError:
-                pass
-            return False
-
-        try:
-            os.remove("main.bak")
-        except OSError:
-            pass
-        os.rename("main.py", "main.bak")
-        os.rename("main.new", "main.py")
-        with open("ota_pending.txt", "w") as f:
-            f.write(versao)
-        try:
-            os.remove("ota_boot_attempts.txt")
-        except OSError:
-            pass
-
-        print("[OTA] Atualizado para", versao, "- reiniciando")
+    beep(60)
+    if ota.apply_update(state, OTA_HOST, OTA_PORT, OTA_FIRMWARE_PATH, remote,
+                         target_file="main.py", backup_file="main.bak"):
+        config.save_state(state)
         beep(60); time.sleep_ms(80); beep(60)
         time.sleep(1)
         _soft_reset()
-    except Exception as e:
-        print("[OTA] Erro ao aplicar atualização:", e)
-        return False
-
-
-def ota_check_and_maybe_apply():
-    """Verifica e, se houver versão nova, aplica (reinicia em caso de sucesso)."""
-    remote = check_for_update()
-    if remote:
-        apply_update(remote)
 
 
 # --- MQTT --------------------------------------------------------------------
@@ -1059,18 +740,18 @@ def _topics():
 
 
 def _publish_config():
-    """Reporta o config efetivo atual: para cada chave de _DEFAULTS, o valor
+    """Reporta o config efetivo atual: para cada chave de DEFAULTS, o valor
     em uso agora (globals(), reflete tanto config.json quanto uma eventual
     sobrescrita de sessão via coldstart) e se ela está persistida no
     config.json (True) ou vem só do default/sessão (False). Campos sensíveis
     nunca têm o valor reportado, só a flag de persistência."""
     params = {}
-    for key in _DEFAULTS:
+    for key in DEFAULTS:
         persistido = key in _cfg_file
-        if key in _CONFIG_SENSITIVE:
+        if key in SENSITIVE_KEYS:
             params[key] = {"persistido": persistido}
         else:
-            params[key] = {"valor": globals().get(key, _DEFAULTS[key]), "persistido": persistido}
+            params[key] = {"valor": globals().get(key, DEFAULTS[key]), "persistido": persistido}
     topic = _topics().get("config_result")
     if topic:
         _client.publish(topic, json.dumps({"mac": DEVICE_MAC, "params": params}))
@@ -1081,14 +762,13 @@ def _apply_set_config(params):
     """Grava os parâmetros válidos em config.json e reinicia para aplicar
     de forma limpa (vários parâmetros só têm efeito na inicialização do
     hardware, ex. pinos)."""
-    validos = {k: v for k, v in (params or {}).items() if k in _DEFAULTS}
+    validos = {k: v for k, v in (params or {}).items() if k in DEFAULTS}
     if not validos:
         print("[Config] set_config sem parametros validos, ignorando")
         return
     _cfg_file.update(validos)
     try:
-        with open("config.json", "w") as f:
-            json.dump(_cfg_file, f)
+        config.save(_cfg_file)
     except Exception as e:
         print("[Config] Erro ao gravar config.json:", e)
         return
@@ -1103,10 +783,10 @@ def _apply_session_config(config_dict):
     if not isinstance(config_dict, dict):
         return
     for key, value in config_dict.items():
-        if key not in _CONFIG_RUNTIME_KEYS or key not in _DEFAULTS:
+        if key not in _CONFIG_RUNTIME_KEYS or key not in DEFAULTS:
             continue
         try:
-            globals()[key] = type(_DEFAULTS[key])(value)
+            globals()[key] = type(DEFAULTS[key])(value)
             print("[Config] %s sobrescrito para %r (somente sessão)" % (key, globals()[key]))
         except Exception:
             pass
@@ -1291,8 +971,8 @@ def main():
     print("  CARONTE ESP32-C3 - MQTT + WIEGAND")
     print("=" * 48)
 
+    state = config.load_state()
     BOOT_COUNT = _read_boot_count()
-    _ota_boot_guard()
 
     init_gpio()
     init_uart()
@@ -1304,26 +984,37 @@ def main():
     DEVICE_MAC = ubinascii.hexlify(wlan.config("mac"), ":").decode()
     print("[Device] MAC: %s" % DEVICE_MAC)
 
+    # Na prática, boot.py já deixou o rádio conectado - este laço serve de
+    # rede de segurança caso algo tenha mudado entre um passo e outro.
     while not connect_wifi():
         beep(120)
         time.sleep(10)
 
+    ota.ensure_dependencies(OTA_HOST, OTA_PORT, BIBLIOTECAS)
+
+    tentativas_mqtt = 0
     while True:
         try:
             mqtt_connect()
             do_coldstart()
             break
         except Exception as e:
-            print("[MQTT] Falha na conexão: %s - tentando em 10s..." % e)
+            tentativas_mqtt += 1
+            print("[MQTT] Falha na conexão: %s (%d/5) - tentando em 10s..." %
+                  (e, tentativas_mqtt))
             beep(120)
             time.sleep(10)
+            if tentativas_mqtt >= 5:
+                print("[MQTT] Sem sucesso após 5 tentativas - reiniciando")
+                _soft_reset()
 
     last_heartbeat = time.time()
-    _ota_confirmar_versao_boa()
+    ota.confirm_boot_ok(state, FIRMWARE_VERSAO)
+    config.save_state(state)
     print("[Main] Operacional\n")
 
     last_ota_check = time.time()
-    ota_check_and_maybe_apply()
+    ota_check_and_maybe_apply(state)
 
     last_uart_keepalive = time.time()
 
@@ -1343,10 +1034,10 @@ def main():
 
             # Leitura Wiegand completa: silêncio > WG_TIMEOUT_MS
             if _wg_count > 0 and time.ticks_diff(time.ticks_ms(), _wg_last_ms) > WG_TIMEOUT_MS:
-                state = machine.disable_irq()
+                irq_state = machine.disable_irq()
                 count = _wg_count
                 _wg_count = 0
-                machine.enable_irq(state)
+                machine.enable_irq(irq_state)
 
                 tag = _decode_wiegand(_wg_buf, count)
                 print("[RFID] %d bits lidos -> TAG: %s" % (count, tag))
@@ -1389,14 +1080,14 @@ def main():
                 last_heartbeat = time.time()
 
             if OTA_ENABLED and time.time() - last_ota_check >= OTA_CHECK_INTERVAL:
-                ota_check_and_maybe_apply()
+                ota_check_and_maybe_apply(state)
                 last_ota_check = time.time()
 
             _client.check_msg()
 
             if _update_requested:
                 _update_requested = False
-                ota_check_and_maybe_apply()
+                ota_check_and_maybe_apply(state)
                 last_ota_check = time.time()
 
             time.sleep_ms(20)
