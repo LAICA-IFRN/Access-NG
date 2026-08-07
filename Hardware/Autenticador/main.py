@@ -234,7 +234,15 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.4.0"   # bump manual a cada release publicada
+# version.json é compartilhado com o migrador (CaronteESP32C3.py) - os
+# dois têm números de versão independentes (ver _migration_validate_main
+# em CaronteESP32C3.py), mas o "versao" do manifesto só reflete UM dos
+# dois por vez, então precisam ficar alinhados sempre que não houver uma
+# atualização de verdade pendente do main.py em si, senão este
+# dispositivo entende (incorretamente) que há uma versão nova de si
+# mesmo disponível e falha ao validar o download (o próprio arquivo,
+# sem mudança nenhuma, não contém a string da versão "nova").
+FIRMWARE_VERSAO   = "1.4.1"   # bump manual a cada release publicada
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Autenticador/main.py"
 OTA_HOST          = "laica.ifrn.edu.br"
