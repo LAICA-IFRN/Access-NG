@@ -54,10 +54,12 @@ para main.py).
 
 --- Como confirmar que deu certo (remotamente) ---------------------------
 
-  Migrador e main.py definitivo compartilham o mesmo FIRMWARE_VERSAO
-  ("1.4.0") de propósito (ver comentário acima de FIRMWARE_VERSAO) - ou
-  seja, o campo "Firmware" da página do dispositivo NÃO muda entre os
-  dois. O sinal a observar é outro: main.py definitivo reporta
+  O campo "Firmware" da página do dispositivo pode não ser um bom sinal
+  aqui: migrador e main.py definitivo têm números de versão
+  independentes (a validação do main.py baixado durante a migração NÃO
+  exige um valor específico - ver _migration_validate_main), então não
+  dá pra garantir de antemão que vão sempre diferir visualmente. O sinal
+  confiável é outro: main.py definitivo reporta
   HARDWARE_INFO = "Caronte ESP32-C3 (boot.py)" (este arquivo continua
   reportando só "Caronte ESP32-C3", sem o sufixo) - esse valor vai
   parar direto em Caronte.hardware no próximo coldstart e aparece no
@@ -324,10 +326,11 @@ BOOT_COUNT  = None
 
 # IMPORTANTE: precisa ser EXATAMENTE igual ao "versao" em
 # Hardware/Autenticador/version.json - _valida_payload() confere que esse
-# número aparece como substring no arquivo baixado, e um dispositivo já
-# migrado (rodando main.py, também na 1.4.0) usa esse mesmo número pra
-# decidir que não há atualização pendente.
-FIRMWARE_VERSAO   = "1.4.0"   # bump manual a cada release publicada
+# número aparece como substring no arquivo baixado (auto-atualização
+# padrão do próprio migrador, igual qualquer OTA de sempre). NÃO precisa
+# bater com o FIRMWARE_VERSAO do main.py definitivo (main.py) - os dois
+# evoluem de forma independente, ver _migration_validate_main().
+FIRMWARE_VERSAO   = "1.4.1"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
@@ -1161,6 +1164,36 @@ def _migration_compile_check(path):
         return False
 
 
+def _migration_validate_main(path):
+    """Validação leve (streaming, em blocos de 512 bytes - mesmo padrão
+    de _valida_payload()) do main.py definitivo: só confirma tamanho
+    mínimo e a presença da assinatura "FIRMWARE_VERSAO", sem exigir um
+    número de versão específico. Deliberadamente NÃO amarrada à versão
+    do migrador (FIRMWARE_VERSAO deste arquivo) - migrador e main.py
+    definitivo evoluem de forma independente; exigir que os dois números
+    batessem geraria exatamente o problema visto em campo: um bump só no
+    migrador (corrigindo um bug dele) invalidaria a checagem do main.py
+    sem nenhum motivo real."""
+    try:
+        if os.stat(path)[6] < 500:
+            return False
+        needle = b"FIRMWARE_VERSAO"
+        tail = b""
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(512)
+                if not chunk:
+                    break
+                data = tail + chunk
+                if needle in data:
+                    return True
+                tail = data[-64:]
+        return False
+    except Exception as e:
+        print("[Migração] Erro ao validar main.py:", e)
+        return False
+
+
 def _migration_download(repo_path, dest_path, validate=_migration_compile_check):
     """`validate` é chamado com dest_path e decide se o arquivo baixado é
     aceito. Default é _migration_compile_check (checa sintaxe via
@@ -1215,10 +1248,9 @@ def _do_migration():
         main_repo, main_staged = _MIGRATION_MAIN_FILE
         # main.py definitivo é grande o bastante (~40KB) pra estourar
         # memória no compile() (visto em campo) - validação por streaming
-        # (mesma usada pelo OTA de arquivo único de sempre) em vez de
-        # carregar o arquivo inteiro.
-        main_validator = lambda p: _valida_payload(p, FIRMWARE_VERSAO)
-        if not _migration_download(main_repo, main_staged, validate=main_validator):
+        # (não amarrada a nenhum número de versão específico - ver
+        # docstring de _migration_validate_main).
+        if not _migration_download(main_repo, main_staged, validate=_migration_validate_main):
             print("[Migração] Abortada")
             beep(400)
             return False
