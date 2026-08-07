@@ -25,6 +25,19 @@ import threading
 
 PREFIX = 'access-ng'
 
+
+def _mac_topic(mac):
+    """MAC formatado como o dispositivo monta seus próprios tópicos
+    (ubinascii.hexlify(...).decode() sempre produz hexadecimal minúsculo,
+    e '-' no lugar de ':'). Usado em todo tópico que o SERVIDOR inicia
+    (comandos) - sem o .lower(), um MAC cadastrado com alguma letra
+    maiúscula no banco monta um tópico diferente do que o dispositivo
+    está inscrito, e o comando é publicado com sucesso mas nunca chega
+    a lugar nenhum (MQTT é case-sensitive). Não usar para montar
+    tópicos de RESPOSTA a algo que o dispositivo acabou de publicar -
+    nesses casos o mac já vem no formato exato que ele está escutando."""
+    return mac.replace(':', '-').lower()
+
 try:
     import paho.mqtt.client as mqtt
     _PAHO_AVAILABLE = True
@@ -76,7 +89,7 @@ class MqttService:
         if not client:
             print(f'[MQTT] Broker {cerberos.broker_id} não conectado para {cerberos.mac}')
             return
-        mac_safe = cerberos.mac.replace(':', '-')
+        mac_safe = _mac_topic(cerberos.mac)
         topic = f'{PREFIX}/{cerberos.ambiente_id}/cerberos/{mac_safe}/command'
         client.publish(topic, json.dumps({'command': 'unlock'}), qos=1)
         self._log_mqtt_command(cerberos, topic)
@@ -93,7 +106,7 @@ class MqttService:
         if not client:
             print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
             return False
-        mac_safe = device.mac.replace(':', '-')
+        mac_safe = _mac_topic(device.mac)
         topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
         client.publish(topic, json.dumps({'command': 'check_update'}), qos=1)
         print(f'[MQTT] check_update → {tipo} {device.mac}')
@@ -109,10 +122,30 @@ class MqttService:
         if not client:
             print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
             return False
-        mac_safe = device.mac.replace(':', '-')
+        mac_safe = _mac_topic(device.mac)
         topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
         client.publish(topic, json.dumps({'command': 'reboot'}), qos=1)
         print(f'[MQTT] reboot → {tipo} {device.mac}')
+        return True
+
+    def notify_migrate(self, device, tipo):
+        """Publica {"command":"migrate"} no tópico de comando do dispositivo -
+        só tem efeito em um Caronte ainda rodando o firmware antigo (arquivo
+        único reaproveitado como migrador, Hardware/Autenticador/
+        CaronteESP32C3.py); em qualquer outro dispositivo é ignorado, já que
+        nenhum outro firmware reconhece esse comando. `tipo` é sempre
+        'caronte' aqui - os outros 3 firmwares ainda não têm essa migração."""
+        if not _PAHO_AVAILABLE or not device.broker_id:
+            return False
+        with self._lock:
+            client = self._clients.get(device.broker_id)
+        if not client:
+            print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
+            return False
+        mac_safe = _mac_topic(device.mac)
+        topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
+        client.publish(topic, json.dumps({'command': 'migrate'}), qos=1)
+        print(f'[MQTT] migrate → {tipo} {device.mac}')
         return True
 
     def request_config(self, device, tipo):
@@ -126,7 +159,7 @@ class MqttService:
         if not client:
             print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
             return False
-        mac_safe = device.mac.replace(':', '-')
+        mac_safe = _mac_topic(device.mac)
         topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
         client.publish(topic, json.dumps({'command': 'get_config'}), qos=1)
         print(f'[MQTT] get_config → {tipo} {device.mac}')
@@ -143,7 +176,7 @@ class MqttService:
         if not client:
             print(f'[MQTT] Broker {caronte.broker_id} não conectado para {caronte.mac}')
             return False
-        mac_safe = caronte.mac.replace(':', '-')
+        mac_safe = _mac_topic(caronte.mac)
         topic = f'{PREFIX}/{caronte.ambiente_id}/caronte/{mac_safe}/command'
         client.publish(topic, json.dumps({'command': 'set_tags', 'tags': tags}), qos=1)
         print(f'[MQTT] set_tags → {caronte.mac}: {len(tags)} tag(s)')
@@ -184,7 +217,7 @@ class MqttService:
         if not client:
             print(f'[MQTT] Broker {device.broker_id} não conectado para {device.mac}')
             return False
-        mac_safe = device.mac.replace(':', '-')
+        mac_safe = _mac_topic(device.mac)
         topic = f'{PREFIX}/{device.ambiente_id}/{tipo}/{mac_safe}/command'
         client.publish(topic, json.dumps({'command': 'set_config', 'params': params}), qos=1)
         print(f'[MQTT] set_config → {tipo} {device.mac}: {list(params.keys())}')
