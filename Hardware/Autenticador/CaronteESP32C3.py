@@ -1146,22 +1146,34 @@ def _migration_compile_check(path):
     """Validação de sintaxe via compile() - não executa o módulo, só
     confirma que o bytecode é válido. Mais forte que a checagem de
     tamanho/substring de _valida_payload(): pega um download truncado ou
-    corrompido no meio (queda de rede) que passaria por aquela checagem."""
+    corrompido no meio (queda de rede) que passaria por aquela checagem.
+    Só usada nos arquivos pequenos (accessng/bibliotecas/device_defaults/
+    boot.py) - compile() precisa de várias vezes o tamanho do arquivo em
+    RAM temporária, caro demais para o main.py (~40KB) nesta placa."""
+    gc.collect()
     try:
         with open(path) as f:
             source = f.read()
         compile(source, path, "exec")
         return True
     except Exception as e:
-        print("[Migração] Falha ao validar %s: %s" % (path, e))
+        print("[Migração] Erro de sintaxe em %s: %s" % (path, e))
         return False
 
 
-def _migration_download(repo_path, dest_path):
+def _migration_download(repo_path, dest_path, validate=_migration_compile_check):
+    """`validate` é chamado com dest_path e decide se o arquivo baixado é
+    aceito. Default é _migration_compile_check (checa sintaxe via
+    compile() - barato para os arquivos pequenos de accessng/bibliotecas).
+    Para o main.py definitivo (~40KB), compile() já se mostrou caro
+    demais na prática (MemoryError no ESP32-C3 com WiFi/MQTT/Wiegand já
+    ocupando heap) - _do_migration() passa _valida_payload() nesse caso,
+    que lê em blocos de 512 bytes em vez de carregar o arquivo inteiro."""
     _migration_mkdir(dest_path)
     print("[Migração] Baixando %s -> %s" % (repo_path, dest_path))
     status, _ = _http_request(OTA_HOST, "/access-ng/ota/" + repo_path,
                                dest_file=dest_path, timeout=20)
+    gc.collect()
     if status != 200:
         print("[Migração] Falha ao baixar %s (status=%s)" % (repo_path, status))
         try:
@@ -1169,7 +1181,8 @@ def _migration_download(repo_path, dest_path):
         except OSError:
             pass
         return False
-    if not _migration_compile_check(dest_path):
+    if not validate(dest_path):
+        print("[Migração] Falha ao validar %s" % dest_path)
         try:
             os.remove(dest_path)
         except OSError:
@@ -1200,7 +1213,12 @@ def _do_migration():
             return False
 
         main_repo, main_staged = _MIGRATION_MAIN_FILE
-        if not _migration_download(main_repo, main_staged):
+        # main.py definitivo é grande o bastante (~40KB) pra estourar
+        # memória no compile() (visto em campo) - validação por streaming
+        # (mesma usada pelo OTA de arquivo único de sempre) em vez de
+        # carregar o arquivo inteiro.
+        main_validator = lambda p: _valida_payload(p, FIRMWARE_VERSAO)
+        if not _migration_download(main_repo, main_staged, validate=main_validator):
             print("[Migração] Abortada")
             beep(400)
             return False
