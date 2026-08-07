@@ -39,6 +39,15 @@ _OTA_ALLOWED_FILES = {
     'Hardware/Autenticador/version.json',
     'Hardware/Autenticador/main.py',
 
+    # CaronteESP32C3.py voltou como MIGRADOR: dispositivos antigos (sem
+    # boot.py) só sabem buscar OTA nesse path exato (OTA_FIRMWARE_PATH é
+    # hardcoded no firmware antigo) - é o único jeito de levar um Caronte
+    # já em campo pro esquema novo 100% online, sem religar fisicamente.
+    # Ver docstring de Hardware/Autenticador/CaronteESP32C3.py. Depois
+    # que todos os dispositivos confirmarem a migração, este arquivo (e
+    # esta entrada) podem ser removidos.
+    'Hardware/Autenticador/CaronteESP32C3.py',
+
     # boot.py/accessng/bibliotecas - instalação manual (mpremote) por
     # enquanto, não verificados pelo loop de OTA do próprio dispositivo;
     # accessng.ota.ensure_dependencies() busca as bibliotecas listadas no
