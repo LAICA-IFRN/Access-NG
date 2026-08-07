@@ -33,10 +33,11 @@ para main.py).
      existentes no firmware antigo.
   2. Reinicia rodando ESTE arquivo como main.py - aplicação funciona
      normalmente (Wiegand/MQTT/heartbeat), device continua operacional.
-  3. Operador manda {"command":"migrate"} no tópico de comando (mesmo
-     usado por check_update/reboot/etc.) - ou, se quiser automatizar,
-     dá pra adaptar pra rodar sozinho X minutos após o primeiro
-     coldstart bem-sucedido.
+  3. Operador clica em "Migrar (boot.py)" na página do dispositivo no
+     painel admin (/admin/carontes/<id>) - publica {"command":"migrate"}
+     no mesmo tópico de comando usado por check_update/reboot/etc., sem
+     precisar de credencial de broker MQTT nem cliente externo (mesmo
+     caminho já usado pelos botões "Reiniciar"/"Verificar atualização").
   4. _do_migration() baixa accessng/*.py, bibliotecas/umqtt/*.py,
      device_defaults.py e boot.py (nomes temporários), MAIS o main.py
      definitivo (Hardware/Autenticador/main.py do repo, para
@@ -50,6 +51,21 @@ para main.py).
      (coldstart ok) -> migração concluída. Se não confirmar em 3 boots
      -> boot.py restaura este arquivo (migrador) via main.bak - volta a
      rodar exatamente como no passo 2, pronto pra uma nova tentativa.
+
+--- Como confirmar que deu certo (remotamente) ---------------------------
+
+  Migrador e main.py definitivo compartilham o mesmo FIRMWARE_VERSAO
+  ("1.4.0") de propósito (ver comentário acima de FIRMWARE_VERSAO) - ou
+  seja, o campo "Firmware" da página do dispositivo NÃO muda entre os
+  dois. O sinal a observar é outro: main.py definitivo reporta
+  HARDWARE_INFO = "Caronte ESP32-C3 (boot.py)" (este arquivo continua
+  reportando só "Caronte ESP32-C3", sem o sufixo) - esse valor vai
+  parar direto em Caronte.hardware no próximo coldstart e aparece no
+  campo "Hardware" da página do dispositivo no painel. "Contador de
+  Boots" também deve incrementar (soft-reset ao trocar de arquivo).
+  Se "Hardware" voltar a aparecer sem "(boot.py)" depois de mandar
+  migrar, foi um rollback - o dispositivo caiu de volta neste arquivo e
+  está pronto pra uma nova tentativa.
 
 --- Docstring original (Caronte antigo) ----------------------------------
 

@@ -251,7 +251,13 @@ BIBLIOTECAS = ["umqtt/simple.py", "umqtt/robust.py"]
 
 # --- DIAGNOSTICO -----------------------------------------------------------------
 
-HARDWARE_INFO         = "Caronte ESP32-C3"
+# O sufixo "(boot.py)" é um marcador deliberado: reportado no coldstart,
+# grava direto em Caronte.hardware e aparece no painel admin - é o jeito
+# mais simples de confirmar remotamente que a migração deu certo, já que
+# migrador e main.py definitivo compartilham o mesmo FIRMWARE_VERSAO
+# (ver docstring de CaronteESP32C3.py) e não dá pra distinguir os dois só
+# pela versão reportada.
+HARDWARE_INFO         = "Caronte ESP32-C3 (boot.py)"
 HEARTBEAT_DIAG_EVERY  = 10   # rssi/mem_free/cpu_temp/fs_free vao a cada N heartbeats
 
 
