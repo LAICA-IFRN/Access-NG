@@ -37,7 +37,37 @@ _OTA_ALLOWED_FILES = {
     'Hardware/Fechadura/CerberosESP32.py',
     'Hardware/Fechadura/CerberosESP32C3.py',
     'Hardware/Autenticador/version.json',
+    'Hardware/Autenticador/main.py',
+
+    # CaronteESP32C3.py voltou como MIGRADOR: dispositivos antigos (sem
+    # boot.py) só sabem buscar OTA nesse path exato (OTA_FIRMWARE_PATH é
+    # hardcoded no firmware antigo) - é o único jeito de levar um Caronte
+    # já em campo pro esquema novo 100% online, sem religar fisicamente.
+    # Ver docstring de Hardware/Autenticador/CaronteESP32C3.py. Depois
+    # que todos os dispositivos confirmarem a migração, este arquivo (e
+    # esta entrada) podem ser removidos.
     'Hardware/Autenticador/CaronteESP32C3.py',
+
+    # boot.py/accessng/bibliotecas - instalação manual (mpremote) por
+    # enquanto, não verificados pelo loop de OTA do próprio dispositivo;
+    # accessng.ota.ensure_dependencies() busca as bibliotecas listadas no
+    # version.json de cada firmware. Só o Caronte foi portado para o
+    # esquema boot.py/main.py nesta fase - os outros 3 firmwares (FECHO,
+    # Cerberos enxuto, BitDogLab) seguem no esquema antigo (arquivo único)
+    # até serem portados numa fase seguinte.
+    'Hardware/Autenticador/boot.py',
+    'Hardware/Autenticador/device_defaults.py',
+    'Hardware/accessng/__init__.py',
+    'Hardware/accessng/config.py',
+    'Hardware/accessng/wifi.py',
+    'Hardware/accessng/recovery.py',
+    'Hardware/accessng/provisioning.py',
+    'Hardware/accessng/ota.py',
+    'Hardware/bibliotecas/umqtt/__init__.py',
+    'Hardware/bibliotecas/umqtt/simple.py',
+    'Hardware/bibliotecas/umqtt/robust.py',
+    'Hardware/bibliotecas/sh1106.py',
+    'Hardware/bibliotecas/ssd1306.py',
 }
 
 
@@ -1349,7 +1379,7 @@ _ESP32C3_FECHO_CONFIG_FIELDS = [
     ('OTA_CHECK_INTERVAL', 'Intervalo checagem OTA (s)', 'int', False),
 ]
 
-# Caronte ESP32-C3 (CaronteESP32C3.py) — leitor Wiegand.
+# Caronte ESP32-C3 (Hardware/Autenticador/main.py) — leitor Wiegand.
 _CARONTE_CONFIG_FIELDS = [
     ('WIFI_SSID', 'SSID WiFi', 'str', False),
     ('WIFI_PASS', 'Senha WiFi', 'str', True),
