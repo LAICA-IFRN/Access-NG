@@ -234,6 +234,39 @@ import gc
 micropython.alloc_emergency_exception_buf(100)
 
 
+# --- WATCHDOG ------------------------------------------------------------
+#
+# Rede de segurança contra travamentos de verdade (não apenas exceções,
+# já tratadas nos próprios laços) - independente de accessng.watchdog
+# (que só existe no dispositivo DEPOIS da migração instalar accessng/);
+# este arquivo continua rodando sozinho, sem boot.py, então precisa da
+# própria versão autocontida. Timeout curto (8s) de propósito - mesmo
+# raciocínio de accessng/watchdog.py (RP2040 limita a ~8.3s no hardware,
+# então é melhor alimentar com frequência do que confiar num timeout
+# único longo).
+
+_wdt = None
+
+
+def _wdt_arm(timeout_ms=8000):
+    global _wdt
+    if _wdt is not None:
+        return
+    try:
+        _wdt = machine.WDT(timeout=timeout_ms)
+        print("[WDT] Armado (timeout=%dms)" % timeout_ms)
+    except Exception as e:
+        print("[WDT] Não foi possível armar:", e)
+
+
+def _wdt_feed():
+    if _wdt is not None:
+        try:
+            _wdt.feed()
+        except Exception:
+            pass
+
+
 # --- CONFIGURAÇÃO ------------------------------------------------------------
 
 _DEFAULTS = {
@@ -803,6 +836,7 @@ def connect_wifi():
         _wifi_reset_radio(wlan)
         return False
     for _ in range(30):
+        _wdt_feed()
         if wlan.isconnected():
             print("[WiFi] IP: %s" % wlan.ifconfig()[0])
             return True
@@ -924,6 +958,7 @@ def _http_request(host, path, dest_file=None, timeout=10):
         header_done = False
         try:
             while True:
+                _wdt_feed()
                 chunk = sock.read(1024)
                 if not chunk:
                     break
@@ -1562,6 +1597,8 @@ def main():
     print("  CARONTE ESP32-C3 - MQTT + WIEGAND")
     print("=" * 48)
 
+    _wdt_arm()
+
     BOOT_COUNT = _read_boot_count()
     _ota_boot_guard()
 
@@ -1576,10 +1613,12 @@ def main():
     print("[Device] MAC: %s" % DEVICE_MAC)
 
     while not connect_wifi():
+        _wdt_feed()
         beep(120)
         time.sleep(10)
 
     while True:
+        _wdt_feed()
         try:
             mqtt_connect()
             do_coldstart()
@@ -1616,6 +1655,7 @@ def main():
     last_uart_keepalive = time.time()
 
     while True:
+        _wdt_feed()
         try:
             if not network.WLAN(network.STA_IF).isconnected():
                 print("[WiFi] Reconectando...")
