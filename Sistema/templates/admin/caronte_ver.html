@@ -20,6 +20,11 @@
           onsubmit="return confirm('Reiniciar este dispositivo agora? Ele ficará offline por alguns segundos.')">
       <button class="btn btn-sm btn-outline-danger">Reiniciar</button>
     </form>
+    <form method="POST" action="{{ url_for('admin_caronte_migrar', id=c.id) }}" style="display:inline;"
+          title="Só tem efeito se este Caronte ainda estiver no firmware antigo (arquivo único) - dispositivos já migrados ignoram o comando"
+          onsubmit="return confirm('Migrar este dispositivo para o novo esquema boot.py/main.py? Só funciona se ele ainda estiver no firmware antigo. Acompanhe \'Contador de Boots\' e \'Hardware\' nesta página nos minutos seguintes.')">
+      <button class="btn btn-sm btn-outline-warning">Migrar (boot.py)</button>
+    </form>
     <form method="POST" action="{{ url_for('admin_caronte_tags_sincronizar', id=c.id) }}" style="display:inline;"
           title="Reenvia a whitelist local de TAGs (tags.json), usada no fallback offline via UART">
       <button class="btn btn-sm btn-outline-secondary">Sincronizar TAGs</button>

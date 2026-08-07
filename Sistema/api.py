@@ -2344,6 +2344,36 @@ def admin_caronte_reiniciar(id):
     return redirect(request.referrer or url_for('admin_carontes'))
 
 
+@app.route('/admin/carontes/<int:id>/migrar', methods=['POST'])
+@painel_required
+def admin_caronte_migrar(id):
+    """Publica {"command":"migrate"} - só tem efeito num Caronte ainda
+    rodando o firmware antigo (arquivo único reaproveitado como migrador,
+    ver Hardware/Autenticador/CaronteESP32C3.py). Dispositivos já
+    migrados (rodando main.py) ignoram esse comando silenciosamente -
+    nenhum handler o reconhece lá."""
+    usuario = _current_session_usuario()
+    c = db.query(Caronte).filter(Caronte.id == id).first()
+    if c is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, c.ambiente_id):
+        abort(403)
+    ok = _mqtt().notify_migrate(c, 'caronte')
+    _create_audit_log(
+        event_type='comando_migrar',
+        result='sucesso' if ok else 'falha',
+        message=f'Comando de migração (boot.py/main.py) enviado para {c.mac}' if ok else
+                f'Falha ao enviar comando de migração para {c.mac} — sem broker MQTT conectado',
+        mac=c.mac,
+        ambiente=c.ambiente,
+        usuario=usuario
+    )
+    flash('Comando de migração enviado — acompanhe "Contador de Boots" e "Hardware" nesta página.' if ok else
+          'Dispositivo sem broker MQTT conectado — não foi possível enviar.',
+          'success' if ok else 'warning')
+    return redirect(request.referrer or url_for('admin_carontes'))
+
+
 @app.route('/admin/carontes/<int:id>/debug', methods=['POST'])
 @painel_required
 def admin_caronte_debug_toggle(id):
