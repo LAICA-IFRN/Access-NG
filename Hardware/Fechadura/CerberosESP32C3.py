@@ -1,5 +1,53 @@
 """
-Cerberos ESP32-C3 (FECHO) - MicroPython MQTT + UART
+Cerberos ESP32-C3 (FECHO) - MIGRADOR para o esquema boot.py/main.py + accessng/
+
+*** ESTE ARQUIVO É TRANSITÓRIO ***
+
+Existe só para levar, 100% por OTA (sem religar fisicamente o
+dispositivo), um FECHO já em campo rodando a versão antiga (arquivo
+único, sem boot.py) até o novo esquema descrito em
+Hardware/Fechadura/main_esp32c3.py + Hardware/Fechadura/boot_esp32c3.py +
+Hardware/accessng/. Ele É a aplicação antiga (mesmo código de sempre -
+relé/LEDs/OLED, MQTT, UART-servidor para o Caronte, heartbeat, OTA)
+rodando normalmente, mais uma rotina de migração (_do_migration(),
+acionada por {"command":"migrate"} no tópico de comando) que baixa os
+arquivos novos, valida cada um (compile() - checagem de sintaxe, não só
+tamanho/substring) e só troca main.py/instala boot.py depois que TUDO
+validar. Depois de trocado, o boot.py novo (com seu próprio guard de
+crash-loop) passa a proteger o dispositivo: se o main.py novo não
+confirmar saúde em até 3 boots, o rollback automático restaura ESTE
+arquivo (migrador) como main.bak - não a aplicação truly-original -
+porque este arquivo já é auto-suficiente e sabe se confirmar saudável
+sozinho (ver o guarded confirm_boot_ok() perto do fim de main()).
+
+Mesmo padrão já usado para o Caronte (Hardware/Autenticador/
+CaronteESP32C3.py) - ver a docstring de lá para o desenho completo do
+mecanismo de migração; este arquivo só adapta os detalhes específicos do
+FECHO (relé/OLED/UART-servidor no lugar de Wiegand/UART-cliente).
+
+Depois que todos os dispositivos confirmarem a migração, este arquivo
+deixa de ser necessário e pode ser removido do repositório (a versão
+publicada em Hardware/Fechadura/version_esp32c3.json volta a apontar só
+para main_esp32c3.py).
+
+--- Como confirmar que deu certo (remotamente) ---------------------------
+
+  O campo "Firmware" da página do dispositivo pode não ser um bom sinal
+  aqui: migrador e main.py definitivo têm números de versão
+  independentes (a validação do main.py baixado durante a migração NÃO
+  exige um valor específico - ver _migration_validate_main), então não
+  dá pra garantir de antemão que vão sempre diferir visualmente. O sinal
+  confiável é outro: main.py definitivo reporta
+  HARDWARE_INFO = "Cerberos ESP32-C3 (FECHO) (boot.py)" (este arquivo
+  continua reportando só "Cerberos ESP32-C3 (FECHO)", sem o sufixo) -
+  esse valor vai parar direto em Cerberos.hardware no próximo coldstart e
+  aparece no campo "Hardware" da página do dispositivo no painel.
+  "Contador de Boots" também deve incrementar (soft-reset ao trocar de
+  arquivo). Se "Hardware" voltar a aparecer sem "(boot.py)" depois de
+  mandar migrar, foi um rollback - o dispositivo caiu de volta neste
+  arquivo e está pronto pra uma nova tentativa.
+
+--- Docstring original (FECHO antigo) -------------------------------------
 
 Firmware para o Cerberos ESP32-C3 dedicado a abrir a fechadura, apelidado de
 "FECHO" pela equipe de hardware. Roda na mesma placa ESP32-C3 do Caronte
@@ -85,11 +133,6 @@ abaixo.
   existe. Driver em sh1106.py (mesmo diretório) - precisa estar no
   dispositivo junto com o firmware.
 
-  Com o display presente, display_message(titulo, *linhas) é chamado nos
-  eventos principais (boot, WiFi, MQTT, coldstart, abertura/negação da
-  tranca, TAG recebida via UART, OTA) - mesmo padrão usado em
-  Cerberos_BitDogLab_MQTT.py.
-
 --- UART (comunicação com o Caronte) -------------------------------------------
 
   UART_ENABLED (bool, default false) liga o link serial com o Caronte. Requer
@@ -102,54 +145,20 @@ abaixo.
     CS fecha a soma de (LEN+CMD+dados+CS) em 0 mod 256 (complemento de 2).
 
     1. KEEP-ALIVE (Caronte -> FECHO)  : 7E 01 01 FE
-       FECHO responde com ACK se online; fica em silêncio caso contrário.
     2. ACK (FECHO -> Caronte)         : 7E 01 13 EC
     3. PERMITIDO (FECHO -> Caronte)   : 7E 01 02 FD
-       FECHO liberou a fechadura para a TAG recebida.
     4. NEGADO (FECHO -> Caronte)      : 7E 01 03 FC
-       FECHO recusou (ex.: RELAY_COOLDOWN_MS ainda não decorrido).
     5. ENVIO DE TAG (Caronte -> FECHO): 7E 06 04 [4B TAG] [0x1A ou 0x22] [CS]
-       O FECHO não valida a TAG contra lista alguma - quem decide se a TAG
-       pode acessar o ambiente é o Caronte (whitelist local, ver
-       CaronteESP32C3.py); o FECHO só tenta liberar a tranca e informa se
-       conseguiu (respeitando o cooldown de proteção da solenóide).
 
   Cada TAG recebida via UART também é publicada em
   access-ng/{amb_id}/cerberos/{mac}/uart_tag para auditoria no servidor.
 
---- Tópicos MQTT -------------------------------------------------------------
-
-  Publica:
-    access-ng/coldstart/{mac}                     -> boot do dispositivo
-    access-ng/heartbeat/{mac}                     -> presença periódica
-    access-ng/{amb_id}/cerberos/{mac}/uart_tag    -> TAG liberada via UART (auditoria)
-
-  Assina:
-    access-ng/coldstart/{mac}/result          -> resposta do coldstart
-    access-ng/{amb_id}/cerberos/{mac}/command -> comando de abertura/check_update
-
-  O MAC usa '-' no lugar de ':' nos tópicos.
-
 --- OTA (atualização remota) --------------------------------------------------
 
   Mesmo esquema dos demais firmwares deste projeto, com arquivo de versão
-  próprio (version_esp32c3.json, ao lado de version.json e version_esp32.json
-  dos outros firmwares deste diretório) para que os três tenham ciclos de
-  release independentes. Busca version_esp32c3.json em
-  http://{OTA_HOST}:{OTA_PORT}/ota/{OTA_VERSION_PATH} (HTTP puro, sem TLS - o
-  handshake RSA estoura a memória disponível no ESP32-C3; os arquivos de OTA
-  são públicos, sem segredo em trânsito), servido pelo próprio Access-NG. Se a
-  "versao" remota difere de FIRMWARE_VERSAO, baixa o .py em
-  OTA_FIRMWARE_PATH, valida, grava em main.new, troca com main.py (backup em
-  main.bak) e reinicia.
-
-  Checagem em três momentos: após o coldstart, a cada OTA_CHECK_INTERVAL
-  segundos, e imediatamente ao receber {"command":"check_update"} no tópico
-  de comando (mesmo tópico usado para "unlock").
-
-  Rede de segurança: se a versão nova não completar um coldstart em até 3
-  boots, o dispositivo restaura main.bak (versão anterior conhecida como boa)
-  e reinicia.
+  próprio (version_esp32c3.json). Rede de segurança: se a versão nova não
+  completar um coldstart em até 3 boots, o dispositivo restaura main.bak
+  (versão anterior conhecida como boa) e reinicia.
 """
 
 import machine
@@ -159,7 +168,41 @@ import time
 import json
 import os
 import ubinascii
+import micropython
 import gc
+
+micropython.alloc_emergency_exception_buf(100)
+
+
+# --- WATCHDOG ------------------------------------------------------------
+#
+# Rede de segurança contra travamentos de verdade (não apenas exceções, já
+# tratadas nos próprios laços) - independente de accessng.watchdog (que só
+# existe no dispositivo DEPOIS da migração instalar accessng/); este
+# arquivo continua rodando sozinho, sem boot.py, então precisa da própria
+# versão autocontida. Timeout curto (8s) de propósito - mesmo raciocínio
+# de accessng/watchdog.py.
+
+_wdt = None
+
+
+def _wdt_arm(timeout_ms=8000):
+    global _wdt
+    if _wdt is not None:
+        return
+    try:
+        _wdt = machine.WDT(timeout=timeout_ms)
+        print("[WDT] Armado (timeout=%dms)" % timeout_ms)
+    except Exception as e:
+        print("[WDT] Não foi possível armar:", e)
+
+
+def _wdt_feed():
+    if _wdt is not None:
+        try:
+            _wdt.feed()
+        except Exception:
+            pass
 
 
 # --- CONFIGURAÇÃO --------------------------------------------------------------
@@ -257,17 +300,16 @@ BOOT_COUNT  = None
 
 # --- OTA -----------------------------------------------------------------
 
-FIRMWARE_VERSAO   = "1.1.2"   # bump manual a cada release publicada
-# Arquivo próprio (nem version.json nem version_esp32.json dos outros
-# firmwares deste diretório) para que os três tenham ciclos de release
-# independentes.
+# IMPORTANTE: precisa ser EXATAMENTE igual ao "versao" em
+# Hardware/Fechadura/version_esp32c3.json - _valida_payload() confere que
+# esse número aparece como substring no arquivo baixado (auto-atualização
+# padrão do próprio migrador, igual qualquer OTA de sempre). NÃO precisa
+# bater com o FIRMWARE_VERSAO do main.py definitivo (main_esp32c3.py) - os
+# dois evoluem de forma independente, ver _migration_validate_main().
+FIRMWARE_VERSAO   = "1.1.3"   # bump manual a cada release publicada
 OTA_VERSION_PATH  = "Hardware/Fechadura/version_esp32c3.json"
 OTA_FIRMWARE_PATH = "Hardware/Fechadura/CerberosESP32C3.py"
 OTA_HOST          = "laica.ifrn.edu.br"
-# HTTP puro (sem TLS): o handshake TLS/RSA estoura a memória disponível no
-# ESP32-C3. Os arquivos de OTA são públicos (sem segredos), então HTTP puro é
-# aceitável aqui - mesma lógica de expor o broker MQTT em texto puro na
-# porta 1883.
 OTA_PORT          = 80
 
 # --- DIAGNÓSTICO -----------------------------------------------------------
@@ -280,9 +322,6 @@ _SOFT_RESET_FLAG = "soft_reset.flag"
 
 
 def _read_boot_count():
-    """Conta reinícios "soft" (machine.reset() chamado pelo próprio firmware:
-    OTA, comando de reboot, rollback). Um boot sem a flag de soft-reset é
-    tratado como reinício completo (energia caiu) e zera o contador."""
     try:
         with open(_SOFT_RESET_FLAG):
             is_soft = True
@@ -312,7 +351,6 @@ def _read_boot_count():
 
 
 def _soft_reset():
-    """Marca o próximo boot como soft-reset (mantém o contador) e reinicia."""
     try:
         with open(_SOFT_RESET_FLAG, "w") as f:
             f.write("1")
@@ -336,8 +374,6 @@ def _read_rssi():
 
 
 def _read_cpu_temp():
-    """Sensor interno de temperatura - não suportado em todos os builds do
-    ESP32-C3; retorna None quando indisponível."""
     try:
         import esp32
         return round((esp32.raw_temperature() - 32) * 5 / 9, 1)
@@ -346,20 +382,15 @@ def _read_cpu_temp():
 
 
 def _read_fs_stats():
-    """Espaço livre/total (bytes) do filesystem da placa - usado para saber
-    se cabe a próxima atualização OTA (baixa main.new antes de trocar com
-    main.py). (None, None) se indisponível."""
     try:
         s = os.statvfs('/')
         frsize = s[1]
-        return s[4] * frsize, s[2] * frsize  # (f_bavail, f_blocks) * f_frsize
+        return s[4] * frsize, s[2] * frsize
     except Exception:
         return None, None
 
 
 def _read_wifi_status():
-    """Código bruto de network.WLAN.status() - o valor numérico varia por
-    port/versão do MicroPython, por isso é reportado sem tentar traduzir."""
     try:
         return network.WLAN(network.STA_IF).status()
     except Exception:
@@ -374,9 +405,6 @@ def _read_wifi_channel():
 
 
 def _read_ap_bssid():
-    """MAC do rádio do Access Point atualmente associado. Tenta config('bssid')
-    e status('bssid') primeiro; como último recurso, escaneia e casa pelo
-    SSID atual (tira o rádio do canal associado por um instante)."""
     wlan = network.WLAN(network.STA_IF)
     for getter in (wlan.config, wlan.status):
         try:
@@ -395,9 +423,6 @@ def _read_ap_bssid():
     return None
 
 
-# Diagnóstico de reconexão WiFi: contagem e há quanto tempo desde a última,
-# além do código de status no momento em que a queda foi percebida. Zerado a
-# cada boot.
 _wifi_reconnects = 0
 _wifi_last_reconnect_s = None
 _wifi_last_disconnect_status = None
@@ -449,10 +474,6 @@ def feedback_negado():
 
 
 def unlock_door(source="remote"):
-    """Aciona o relé por RELAY_ACTIVE_MS (sempre limitado a 2000ms). Recusa o
-    acionamento se RELAY_COOLDOWN_MS ainda não decorreu desde o último
-    (proteção da solenóide contra acionamentos repetidos em sequência).
-    Retorna True se abriu, False se recusado por cooldown."""
     global _last_unlock_ms
     now = time.ticks_ms()
     if _last_unlock_ms is not None and time.ticks_diff(now, _last_unlock_ms) < RELAY_COOLDOWN_MS:
@@ -474,24 +495,13 @@ def unlock_door(source="remote"):
 # --- DISPLAY OLED --------------------------------------------------------------
 
 def init_display():
-    """Tenta inicializar o display SH1106 em OLED_SCL_PIN/OLED_SDA_PIN. Se não
-    houver display fisicamente presente (ou falhar por qualquer motivo), loga
-    e segue sem display - display_message() vira no-op em oled_ok=False,
-    então nenhum outro trecho do firmware precisa checar a presença dele."""
     global oled, oled_ok
     if not OLED_ENABLED:
         return False
     try:
         from machine import Pin, SoftI2C
         from sh1106 import SH1106_I2C
-        # timeout (us) limita quanto o bit-bang espera por clock-stretch/ACK
-        # antes de desistir com OSError - sem isso, um soluço no barramento
-        # I2C (ruído de RF da própria antena WiFi, display travado, etc.)
-        # emperra o driver para sempre dentro de display_message(), o que
-        # congelaria o firmware inteiro sem exceção nenhuma pra pegar.
         i2c = SoftI2C(scl=Pin(OLED_SCL_PIN), sda=Pin(OLED_SDA_PIN), timeout=50000)
-        # res=None: os módulos SH1106 128x64 mais comuns não expõem (ou não
-        # precisam de) um pino de reset separado no barramento I2C.
         oled = SH1106_I2C(OLED_WIDTH, OLED_HEIGHT, i2c, res=None, addr=OLED_ADDR)
         oled_ok = True
         display_message("ACCESS-NG", "FECHO", "Iniciando...")
@@ -552,9 +562,6 @@ def display_message(title, *lines):
 
 
 # --- UART / Protocolo FECHO ---------------------------------------------------
-#
-# Quadro: 7E LEN CMD [dados] CS - CS fecha a soma (LEN+CMD+dados+CS) em 0 mod
-# 256 (complemento de 2). Ver docstring do módulo para a tabela de comandos.
 
 _UART_STX            = 0x7E
 _UART_CMD_KEEPALIVE  = 0x01
@@ -578,8 +585,6 @@ def init_uart():
 
 
 def _uart_checksum(body):
-    """body = LEN+CMD+dados. CS = complemento de 2 da soma de body, de forma
-    que sum(body) + CS feche em 0 mod 256."""
     return (-sum(body)) & 0xFF
 
 
@@ -595,9 +600,6 @@ def _uart_send(cmd, data=b""):
 
 
 def _uart_read_frame():
-    """Consome o RX pendente e devolve o primeiro quadro completo e válido do
-    buffer, ou None se ainda não há um quadro inteiro disponível. Lixo antes
-    do STX e quadros com checksum inválido são descartados byte a byte."""
     global _uart_rx_buf
     if uart is None:
         return None
@@ -626,10 +628,6 @@ def _uart_read_frame():
 
 
 def uart_poll():
-    """Processa quadros pendentes do Caronte: responde KEEP-ALIVE com ACK e
-    TAG com PERMITIDO/NEGADO (após tentar abrir a porta). Chamado a cada
-    volta do loop principal quando UART_ENABLED. Publica a TAG recebida em
-    /uart_tag para auditoria (melhor esforço, não bloqueia a resposta)."""
     if not UART_ENABLED:
         return
     frame = _uart_read_frame()
@@ -657,10 +655,6 @@ def connect_wifi():
     global _wifi_reconnects, _wifi_last_reconnect_s, _wifi_last_disconnect_status
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
-    # Pequeno assentamento: no ESP32-C3, chamar connect() logo após active(True)
-    # (tipicamente no boot a frio) pode pegar o driver WiFi ainda inicializando,
-    # o que faz connect() levantar OSError("Wifi Internal State Error") em vez
-    # de simplesmente falhar depois de forma assíncrona.
     time.sleep_ms(100)
     if wlan.isconnected():
         print("[WiFi] IP: %s" % wlan.ifconfig()[0])
@@ -668,8 +662,6 @@ def connect_wifi():
         return True
 
     if _wifi_last_reconnect_s is not None:
-        # já tinha conectado antes nesse boot - isso é uma reconexão, não a
-        # conexão inicial. Guarda o status no momento da queda como motivo.
         _wifi_last_disconnect_status = _read_wifi_status()
         _wifi_reconnects += 1
     _wifi_last_reconnect_s = time.time()
@@ -679,15 +671,13 @@ def connect_wifi():
     try:
         wlan.connect(WIFI_SSID, WIFI_PASS)
     except OSError as e:
-        # Mesmo erro de estado interno pode ser lançado aqui em vez de na
-        # inicialização - trata como falha de conexão (o chamador já tem
-        # lógica de retry com espera) em vez de derrubar o firmware inteiro.
         print("[WiFi] Erro ao conectar: %s" % e)
         led_vd2.value(0)
         display_message("WIFI", "Erro ao conectar", "tentando de novo")
         _wifi_reset_radio(wlan)
         return False
     for _ in range(30):
+        _wdt_feed()
         if wlan.isconnected():
             print("[WiFi] IP: %s" % wlan.ifconfig()[0])
             display_message("WIFI", "Conectado", wlan.ifconfig()[0])
@@ -703,13 +693,6 @@ def connect_wifi():
 
 
 def _wifi_reset_radio(wlan):
-    """Depois de uma tentativa de conexão que falha ou expira, o driver WiFi
-    do ESP32-C3 pode ficar preso num estado interno inconsistente: toda
-    chamada seguinte de connect() passa a levantar OSError("Wifi Internal
-    State Error"), mesmo com rede e senha corretas (visto em campo - a
-    primeira tentativa só dá timeout, e todas as seguintes já saem direto
-    no erro). Um ciclo completo active(False)/active(True) reinicia a
-    máquina de estados do driver e evita esse travamento permanente."""
     try:
         wlan.active(False)
         time.sleep_ms(200)
@@ -722,10 +705,6 @@ def _wifi_reset_radio(wlan):
 # --- OTA -----------------------------------------------------------------
 
 def _ota_boot_guard():
-    """Roda antes de tudo no boot. Se há um update pendente que falhou em
-    completar um coldstart por 3 boots seguidos, restaura main.bak (versão
-    anterior conhecida como boa) e reinicia. Nunca levanta exceção - esse
-    código não pode travar o boot normal (sem update pendente, é um no-op)."""
     try:
         with open("ota_pending.txt"):
             pass
@@ -750,10 +729,8 @@ def _ota_boot_guard():
                     os.remove(fname)
                 except OSError:
                     pass
-            time.sleep(2)
             _soft_reset()
         else:
-            print("[OTA] Boot %d/3 com update pendente" % tentativas)
             with open("ota_boot_attempts.txt", "w") as f:
                 f.write(str(tentativas))
     except Exception as e:
@@ -761,28 +738,18 @@ def _ota_boot_guard():
 
 
 def _ota_confirmar_versao_boa():
-    """Chamado após o primeiro coldstart+heartbeat bem-sucedidos na versão
-    atual: remove os marcadores de update pendente (a versão é considerada
-    estável). main.bak permanece como rede de segurança até a próxima
-    atualização."""
     for fname in ("ota_pending.txt", "ota_boot_attempts.txt"):
         try:
             os.remove(fname)
-            print("[OTA] Versão", FIRMWARE_VERSAO, "confirmada como estável")
         except OSError:
             pass
 
 
 def _http_get(path, host=None, timeout=10):
-    """GET HTTP simples (sem TLS). Retorna (status_code, body_str) ou (None, None)."""
     return _http_request(host or OTA_HOST, path, timeout=timeout)
 
 
 def _http_request(host, path, dest_file=None, timeout=10):
-    """GET HTTP em host+path (sem TLS). Se dest_file for informado, grava o
-    corpo da resposta direto nesse arquivo (streaming) e retorna
-    (status, None); senão acumula o corpo em memória e retorna
-    (status, body_str). Retorna (None, None) em qualquer falha de rede."""
     sock = None
     t0 = time.time()
     gc.collect()
@@ -814,6 +781,7 @@ def _http_request(host, path, dest_file=None, timeout=10):
         header_done = False
         try:
             while True:
+                _wdt_feed()
                 chunk = sock.read(1024)
                 if not chunk:
                     break
@@ -883,8 +851,6 @@ def _http_request(host, path, dest_file=None, timeout=10):
 
 
 def _parse_versao(v):
-    """Converte "1.3.10" em (1, 3, 10) para comparação numérica. Comparar
-    como string quebra em versões de dois dígitos."""
     try:
         return tuple(int(p) for p in str(v).split("."))
     except (ValueError, AttributeError):
@@ -892,9 +858,6 @@ def _parse_versao(v):
 
 
 def check_for_update():
-    """Busca version_esp32c3.json no repo. Retorna o dict remoto se a versão
-    remota for numericamente MAIOR que a atual, ou None (sem update / qualquer
-    falha). Nunca reinstala uma versão igual ou mais antiga."""
     if not OTA_ENABLED:
         return None
     status, body = _http_get("/access-ng/ota/" + OTA_VERSION_PATH)
@@ -922,8 +885,6 @@ def check_for_update():
 
 
 def _valida_payload(path, versao):
-    """Checagem barata de sanidade do .py baixado antes de instalar. Lê em
-    blocos para não carregar o firmware inteiro na RAM."""
     try:
         if os.stat(path)[6] < 500:
             return False
@@ -952,8 +913,6 @@ def _valida_payload(path, versao):
 
 
 def apply_update(remote):
-    """Baixa o firmware, valida, troca main.py e reinicia. Nunca propaga
-    exceção - qualquer falha apenas aborta a atualização."""
     try:
         versao = remote.get("versao", "")
         path = "/access-ng/ota/" + OTA_FIRMWARE_PATH
@@ -993,10 +952,182 @@ def apply_update(remote):
 
 
 def ota_check_and_maybe_apply():
-    """Verifica e, se houver versão nova, aplica (reinicia em caso de sucesso)."""
     remote = check_for_update()
     if remote:
         apply_update(remote)
+
+
+# --- MIGRAÇÃO para boot.py/main.py + accessng/ -------------------------------
+#
+# Acionada por {"command":"migrate"} (ver _on_message). Baixa e valida TUDO
+# antes de tocar em qualquer coisa que já funciona - nenhum arquivo existente
+# é sobrescrito/trocado até o último já ter passado por download + compile().
+# Mesmo mecanismo do migrador do Caronte (Hardware/Autenticador/
+# CaronteESP32C3.py) - ver a docstring de lá para o desenho completo.
+
+_MIGRATION_SUPPORT_FILES = [
+    ("Hardware/accessng/__init__.py", "/accessng/__init__.py"),
+    ("Hardware/accessng/config.py", "/accessng/config.py"),
+    ("Hardware/accessng/wifi.py", "/accessng/wifi.py"),
+    ("Hardware/accessng/recovery.py", "/accessng/recovery.py"),
+    ("Hardware/accessng/provisioning.py", "/accessng/provisioning.py"),
+    ("Hardware/accessng/ota.py", "/accessng/ota.py"),
+    ("Hardware/accessng/watchdog.py", "/accessng/watchdog.py"),
+    ("Hardware/bibliotecas/umqtt/__init__.py", "/umqtt/__init__.py"),
+    ("Hardware/bibliotecas/umqtt/simple.py", "/umqtt/simple.py"),
+    ("Hardware/bibliotecas/umqtt/robust.py", "/umqtt/robust.py"),
+    ("Hardware/bibliotecas/sh1106.py", "/sh1106.py"),
+    ("Hardware/Fechadura/device_defaults_esp32c3.py", "/device_defaults.py"),
+]
+# boot.py baixado com nome provisório - só vira boot.py de verdade depois de
+# TODO o resto (inclusive o main.py novo) já ter validado.
+_MIGRATION_BOOT_FILE = ("Hardware/Fechadura/boot_esp32c3.py", "/boot.py.new", "/boot.py")
+_MIGRATION_MAIN_FILE = ("Hardware/Fechadura/main_esp32c3.py", "/main_target.new")
+
+
+def _migration_mkdir(path):
+    parts = path.split("/")[1:-1]
+    cur = ""
+    for p in parts:
+        cur += "/" + p
+        try:
+            os.mkdir(cur)
+        except OSError:
+            pass
+
+
+def _migration_compile_check(path):
+    gc.collect()
+    try:
+        with open(path) as f:
+            source = f.read()
+        compile(source, path, "exec")
+        return True
+    except Exception as e:
+        print("[Migração] Erro de sintaxe em %s: %s" % (path, e))
+        return False
+
+
+def _migration_validate_main(path):
+    """Validação leve (streaming, em blocos de 512 bytes) do main.py
+    definitivo: só confirma tamanho mínimo e a presença da assinatura
+    "FIRMWARE_VERSAO", sem exigir um número de versão específico -
+    mesmo raciocínio de _migration_validate_main no migrador do Caronte."""
+    try:
+        if os.stat(path)[6] < 500:
+            return False
+        needle = b"FIRMWARE_VERSAO"
+        tail = b""
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(512)
+                if not chunk:
+                    break
+                data = tail + chunk
+                if needle in data:
+                    return True
+                tail = data[-64:]
+        return False
+    except Exception as e:
+        print("[Migração] Erro ao validar main.py:", e)
+        return False
+
+
+def _migration_download(repo_path, dest_path, validate=_migration_compile_check):
+    _migration_mkdir(dest_path)
+    print("[Migração] Baixando %s -> %s" % (repo_path, dest_path))
+    status, _ = _http_request(OTA_HOST, "/access-ng/ota/" + repo_path,
+                               dest_file=dest_path, timeout=20)
+    gc.collect()
+    if status != 200:
+        print("[Migração] Falha ao baixar %s (status=%s)" % (repo_path, status))
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+        return False
+    if not validate(dest_path):
+        print("[Migração] Falha ao validar %s" % dest_path)
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+        return False
+    return True
+
+
+def _do_migration():
+    """Baixa e valida os arquivos do novo esquema (accessng/bibliotecas/
+    device_defaults.py/boot.py/main.py); só instala/troca algo se TODOS
+    tiverem passado. Nunca propaga exceção - qualquer falha só aborta a
+    migração (o dispositivo continua rodando normalmente com este
+    arquivo, pronto pra uma nova tentativa via {"command":"migrate"})."""
+    try:
+        print("[Migração] Iniciando...")
+        display_message("MIGRAÇÃO", "Iniciando...")
+        for repo_path, dest_path in _MIGRATION_SUPPORT_FILES:
+            if not _migration_download(repo_path, dest_path):
+                print("[Migração] Abortada")
+                display_message("MIGRAÇÃO", "Abortada", dest_path)
+                return False
+
+        boot_repo, boot_staged, boot_final = _MIGRATION_BOOT_FILE
+        if not _migration_download(boot_repo, boot_staged):
+            print("[Migração] Abortada")
+            display_message("MIGRAÇÃO", "Abortada", "boot.py")
+            return False
+
+        main_repo, main_staged = _MIGRATION_MAIN_FILE
+        # main.py definitivo é grande o bastante pra estourar memória no
+        # compile() (mesmo problema visto em campo no Caronte) - validação
+        # por streaming (não amarrada a nenhum número de versão específico).
+        if not _migration_download(main_repo, main_staged, validate=_migration_validate_main):
+            print("[Migração] Abortada")
+            display_message("MIGRAÇÃO", "Abortada", "main.py")
+            return False
+
+        print("[Migração] Todos os arquivos validados - instalando...")
+        display_message("MIGRAÇÃO", "Instalando...")
+
+        # accessng/bibliotecas/device_defaults.py já foram gravados direto
+        # nos nomes finais (são adições puras, nada existente é
+        # sobrescrito). Só falta promover boot.py e trocar main.py.
+        try:
+            os.remove(boot_final)
+        except OSError:
+            pass
+        os.rename(boot_staged, boot_final)
+
+        # Mesmo padrão já usado pelo OTA normal (main.py -> main.bak, novo
+        # -> main.py): se o main.py novo não confirmar saúde, o boot.py
+        # que acabou de ser instalado restaura ESTE arquivo (o migrador)
+        # via main.bak - não a aplicação original de antes da migração.
+        try:
+            os.remove("main.bak")
+        except OSError:
+            pass
+        os.rename("main.py", "main.bak")
+        os.rename(main_staged, "main.py")
+
+        # boot_state.json no formato novo - boot.py já existe a partir de
+        # agora, então é ele quem lê isso no próximo boot.
+        from accessng import config as _new_config
+        state = _new_config.load_state()
+        state["pending_update"] = True
+        state["previous_version"] = FIRMWARE_VERSAO
+        state["current_version"] = FIRMWARE_VERSAO
+        state["boot_count"] = 0
+        state["last_boot_ok"] = False
+        _new_config.save_state(state)
+
+        print("[Migração] Instalada - reiniciando para boot.py/main.py novos")
+        display_message("MIGRAÇÃO", "Instalada", "reiniciando...")
+        time.sleep(1)
+        _soft_reset()
+    except Exception as e:
+        print("[Migração] Erro inesperado:", e)
+        display_message("MIGRAÇÃO", "Erro", str(e)[:16])
+        return False
 
 
 # --- MQTT --------------------------------------------------------------------
@@ -1004,6 +1135,7 @@ def ota_check_and_maybe_apply():
 _client = None
 _coldstart_result = None
 _update_requested = False   # set pelo callback quando command=check_update chega
+_migration_requested = False   # set pelo callback quando command=migrate chega
 
 
 def _mac_safe():
@@ -1018,27 +1150,13 @@ def _topics():
         "heartbeat"       : "%s/heartbeat/%s" % (MQTT_PREFIX, mac),
     }
     if AMBIENTE_ID is not None:
-        topics["command"] = "%s/%s/cerberos/%s/command" % (
-            MQTT_PREFIX,
-            str(AMBIENTE_ID),
-            mac,
-        )
-        topics["uart_tag"] = "%s/%s/cerberos/%s/uart_tag" % (
-            MQTT_PREFIX,
-            str(AMBIENTE_ID),
-            mac,
-        )
-        topics["config_result"] = "%s/%s/cerberos/%s/config/result" % (
-            MQTT_PREFIX,
-            str(AMBIENTE_ID),
-            mac,
-        )
+        topics["command"] = "%s/%s/cerberos/%s/command" % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
+        topics["uart_tag"] = "%s/%s/cerberos/%s/uart_tag" % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
+        topics["config_result"] = "%s/%s/cerberos/%s/config/result" % (MQTT_PREFIX, str(AMBIENTE_ID), mac)
     return topics
 
 
 def publish_uart_tag(tag, tipo, allowed):
-    """Publica (melhor esforço) a TAG liberada via UART, para auditoria no
-    servidor - a decisão de acesso em si já foi tomada pelo Caronte."""
     topic = _topics().get("uart_tag")
     if topic is None or _client is None:
         return
@@ -1051,11 +1169,6 @@ def publish_uart_tag(tag, tipo, allowed):
 
 
 def _publish_config():
-    """Reporta o config efetivo atual: para cada chave de _DEFAULTS, o valor
-    em uso agora (globals(), reflete tanto config.json quanto uma eventual
-    sobrescrita de sessão via coldstart) e se ela está persistida no
-    config.json (True) ou vem só do default/sessão (False). Campos sensíveis
-    nunca têm o valor reportado, só a flag de persistência."""
     params = {}
     for key in _DEFAULTS:
         persistido = key in _cfg_file
@@ -1070,9 +1183,6 @@ def _publish_config():
 
 
 def _apply_set_config(params):
-    """Grava os parâmetros válidos em config.json e reinicia para aplicar de
-    forma limpa (vários parâmetros só têm efeito na inicialização do
-    hardware, ex. pinos)."""
     validos = {k: v for k, v in (params or {}).items() if k in _DEFAULTS}
     if not validos:
         print("[Config] set_config sem parametros validos, ignorando")
@@ -1092,8 +1202,6 @@ def _apply_set_config(params):
 
 
 def _apply_session_config(config_dict):
-    """Aplica em memória (sem tocar config.json) as chaves permitidas vindas
-    no coldstart_result - vale só até o próximo reboot."""
     if not isinstance(config_dict, dict):
         return
     for key, value in config_dict.items():
@@ -1107,7 +1215,7 @@ def _apply_session_config(config_dict):
 
 
 def _on_message(topic, payload):
-    global _coldstart_result, _update_requested
+    global _coldstart_result, _update_requested, _migration_requested
     topic_str = topic.decode("utf-8")
     status_pulse()
 
@@ -1142,17 +1250,13 @@ def _on_message(topic, payload):
             _publish_config()
         elif data.get("command") == "set_config":
             _apply_set_config(data.get("params"))
+        elif data.get("command") == "migrate":
+            print("[MQTT] Solicitação de migração para boot.py/main.py recebida")
+            _migration_requested = True
 
 
 def mqtt_connect():
     global _client
-    # umqtt.simple é preferida de propósito: publish()/check_msg() propagam
-    # OSError de verdade, o que aciona o except OSError do main() - que já
-    # faz a recuperação completa e correta (reconecta + do_coldstart() +
-    # reinscreve nos tópicos). A umqtt.robust captura OSError sozinha e fica
-    # tentando reconectar em loop silencioso dentro da própria chamada de
-    # publish()/check_msg(), travando o loop principal por tempo
-    # indeterminado. Só cai para robust se simple não estiver instalada.
     try:
         from umqtt.simple import MQTTClient
     except ImportError:
@@ -1238,9 +1342,6 @@ def _format_uptime(uptime_s):
     return "%dT%02d:%02d:%02d" % (days, hours, minutes, seconds)
 
 
-# time.time() em vez de time.ticks_ms(): ticks_ms() estoura (volta a zero)
-# depois de alguns dias de uptime contínuo, o que faria o campo "uptime" do
-# heartbeat saltar/zerar sozinho, parecendo um reboot que não aconteceu.
 _boot_time = time.time()
 
 _heartbeat_count = 0
@@ -1284,11 +1385,13 @@ def publish_heartbeat():
 # --- MAIN --------------------------------------------------------------------
 
 def main():
-    global DEVICE_MAC, BOOT_COUNT, _update_requested
+    global DEVICE_MAC, BOOT_COUNT, _update_requested, _migration_requested
 
     print("\n" + "=" * 48)
     print("  CERBEROS ESP32-C3 (FECHO) - MQTT + UART")
     print("=" * 48)
+
+    _wdt_arm()
 
     BOOT_COUNT = _read_boot_count()
     _ota_boot_guard()
@@ -1304,11 +1407,13 @@ def main():
     display_message("DISPOSITIVO", "MAC", DEVICE_MAC)
 
     while not connect_wifi():
+        _wdt_feed()
         _set_link(False)
         status_pulse(120)
         time.sleep(10)
 
     while True:
+        _wdt_feed()
         try:
             mqtt_connect()
             do_coldstart()
@@ -1321,6 +1426,23 @@ def main():
 
     last_heartbeat = time.time()
     _ota_confirmar_versao_boa()
+
+    # Se este arquivo estiver rodando como main.bak restaurado por boot.py
+    # (uma tentativa de migração anterior que não confirmou saúde a
+    # tempo), accessng já existe no dispositivo - confirma aqui pra zerar
+    # boot_count e o dispositivo não voltar a cair em recovery só por este
+    # arquivo (que não é o main.py final) nunca "confirmar" pelo caminho
+    # normal. Import tardio e guardado: em um dispositivo que ainda não
+    # passou por nenhuma tentativa de migração, accessng nem existe, e
+    # isso é um no-op silencioso.
+    try:
+        from accessng import config as _acc_config, ota as _acc_ota
+        _state = _acc_config.load_state()
+        _acc_ota.confirm_boot_ok(_state, FIRMWARE_VERSAO)
+        _acc_config.save_state(_state)
+    except ImportError:
+        pass
+
     print("[Main] Operacional\n")
     display_message("ACCESS-NG", "Operacional", "Ambiente %s" % AMBIENTE_ID)
 
@@ -1328,6 +1450,7 @@ def main():
     ota_check_and_maybe_apply()
 
     while True:
+        _wdt_feed()
         try:
             if not network.WLAN(network.STA_IF).isconnected():
                 print("[WiFi] Reconectando...")
@@ -1358,6 +1481,10 @@ def main():
                 _update_requested = False
                 ota_check_and_maybe_apply()
                 last_ota_check = time.time()
+
+            if _migration_requested:
+                _migration_requested = False
+                _do_migration()
 
             time.sleep_ms(20)
 
