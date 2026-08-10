@@ -2610,6 +2610,7 @@ def admin_logs():
         ('tentativa_tag', 'Tentativas por tag'),
         ('tentativa_web', 'Tentativas pelo portal'),
         ('comando_abertura', 'Comandos de abertura'),
+        ('uart_tag', 'Fallback offline via UART (Caronte-FECHO)'),
         ('login_admin', 'Login admin'),
         ('logout_admin', 'Logout admin'),
         ('login_caronte', 'Login Caronte'),
