@@ -1657,7 +1657,34 @@ def admin_ambiente_ver(id):
         usuarios_vinculados=usuarios_vinculados,
         pode_criar_usuarios=pode_criar_usuarios(usuario, id),
         pode_editar_usuarios=pode_editar_usuarios(usuario, id),
+        pode_gerenciar_dispositivos=pode_gerenciar_dispositivos(usuario, id),
     )
+
+
+@app.route('/admin/ambientes/<int:id>/tags/sincronizar', methods=['POST'])
+@painel_required
+def admin_ambiente_tags_sincronizar(id):
+    """Reenvia a whitelist local de TAGs (usada no fallback offline via
+    UART) para TODOS os Carontes deste ambiente de uma vez - equivalente
+    a clicar "Sincronizar TAGs" em cada Caronte individualmente. Isso já
+    acontece sozinho a cada coldstart e a cada mudança de TAG/
+    frequentador; este botão é só para confirmar/repetir na hora."""
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    if not pode_gerenciar_dispositivos(usuario, id):
+        abort(403)
+    enviados = _mqtt().sync_tags_ambiente(ambiente)
+    total = len(ambiente.carontes)
+    if total == 0:
+        flash('Este ambiente não tem Carontes cadastrados.', 'warning')
+    elif enviados == total:
+        flash('Whitelist reenviada para %d Caronte(s).' % enviados, 'success')
+    else:
+        flash('Whitelist reenviada para %d de %d Caronte(s) — os demais estão sem broker MQTT conectado.' %
+              (enviados, total), 'warning')
+    return redirect(request.referrer or url_for('admin_ambiente_ver', id=id))
 
 
 @app.route('/admin/ambientes/<int:id>/usuarios/adicionar')
