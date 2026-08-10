@@ -28,22 +28,56 @@ Access-NG/
 │       ├── admin/                     # Painel administrativo (Visão Geral com dashboard de estatísticas, CRUD de Brokers MQTT etc.)
 │       └── caronte/                   # Portal mobile do Caronte web
 └── Hardware/
+    ├── accessng/                      # Pacote MicroPython compartilhado pelos 4 firmwares MQTT — ver
+    │   │                              # [Arquitetura boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt)
+    │   ├── config.py                  # config.json / boot_state.json (leitura/escrita atômica)
+    │   ├── wifi.py                    # Conexão Wi-Fi (try_connect_once/connect_bounded)
+    │   ├── recovery.py                # Detecção de crash-loop + entrada em modo recovery
+    │   ├── provisioning.py            # AP + portal HTTP de configuração (modo recovery)
+    │   ├── ota.py                     # Download/validação/troca/rollback de firmware + ensure_dependencies()
+    │   └── watchdog.py                # Watchdog de hardware (machine.WDT), rede de segurança contra travamentos
+    ├── bibliotecas/                   # Bibliotecas MicroPython vendorizadas (servidas via /ota/ como qualquer firmware)
+    │   ├── umqtt/simple.py, robust.py # Cliente MQTT (de micropython-lib)
+    │   ├── sh1106.py                  # Driver do display OLED SH1106 (FECHO)
+    │   └── ssd1306.py                 # Driver do display OLED SSD1306 (BitDogLab)
     ├── Fechadura/
-    │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID
-    │   ├── Cerberos.ino               # Sketch alternativo/legado
-    │   ├── CerberosESP32.py           # Firmware MicroPython (ESP32) — Cerberos MQTT enxuto, com entrada física e OTA
-    │   ├── CerberosESP32C3.py         # Firmware MicroPython (ESP32-C3) — "FECHO": LEDs, relé, display OLED e UART com o Caronte
-    │   ├── sh1106.py                  # Driver MicroPython do display OLED SH1106 (usado pelo FECHO)
-    │   ├── Cerberos_BitDogLab.py      # Firmware MicroPython (Pico W) — modo REST
-    │   └── Cerberos_BitDogLab_MQTT.py # Firmware MicroPython (Pico W) — modo MQTT
+    │   ├── Cerberos_UART.ino          # ESP com Wi-Fi/API/relé e UART para leitor RFID (legado, sem OTA)
+    │   ├── Cerberos.ino               # Sketch alternativo/legado (sem OTA)
+    │   ├── Cerberos_BitDogLab.py      # Firmware MicroPython (Pico W) — modo REST (sem OTA)
+    │   │
+    │   ├── boot_esp32.py, device_defaults_esp32.py, main_esp32.py
+    │   │                              # Cerberos ESP32 enxuto — esquema boot.py/main.py atual
+    │   ├── CerberosESP32.py           # MIGRADOR do Cerberos enxuto (dispositivos antigos em campo) + version_esp32.json
+    │   ├── installer_esp32.py         # Bootstrap para um ESP32 com MicroPython zerado
+    │   │
+    │   ├── boot_esp32c3.py, device_defaults_esp32c3.py, main_esp32c3.py
+    │   │                              # "FECHO" (ESP32-C3): LEDs, relé, OLED SH1106, UART com o Caronte
+    │   ├── CerberosESP32C3.py         # MIGRADOR do FECHO + version_esp32c3.json
+    │   ├── installer_esp32c3.py       # Bootstrap para um ESP32-C3 (FECHO) com MicroPython zerado
+    │   │
+    │   ├── boot_bitdoglab.py, device_defaults_bitdoglab.py, main_bitdoglab.py
+    │   │                              # BitDogLab V6/Pico W: Cerberos + Caronte combinados, OLED SSD1306
+    │   ├── Cerberos_BitDogLab_MQTT.py # MIGRADOR da BitDogLab + version.json
+    │   └── installer_bitdoglab.py     # Bootstrap para uma BitDogLab com MicroPython zerado
     ├── Autenticador/
-    │   ├── Caronte_RFID.ino           # ESP leitor RFID via MFRC522, envia tag por UART ao Cerberos
-    │   └── CaronteESP32C3.py          # Firmware MicroPython (ESP32-C3) — Caronte com leitor Wiegand, MQTT, whitelist local de TAGs e UART com o FECHO
+    │   ├── Caronte_RFID.ino           # ESP leitor RFID via MFRC522, envia tag por UART ao Cerberos (legado, sem OTA)
+    │   ├── boot.py, device_defaults.py, main.py
+    │   │                              # Caronte com leitor Wiegand (ESP32-C3) — esquema boot.py/main.py atual
+    │   ├── CaronteESP32C3.py          # MIGRADOR do Caronte + version.json
+    │   └── installer.py               # Bootstrap para um ESP32-C3 (Caronte) com MicroPython zerado
     ├── Ambiente/
     │   └── TempHumi.ino               # Sensor de temperatura/umidade
     └── ModPotencia/
         └── Servo.ino                  # Módulo de potência/servo
 ```
+
+Os 4 firmwares MQTT (Caronte, FECHO, Cerberos enxuto, BitDogLab) passaram por um
+redesenho de boot/OTA: cada um agora é um trio `boot_*.py`/`device_defaults_*.py`/
+`main_*.py` (instalados no dispositivo sem sufixo, como `boot.py`/
+`device_defaults.py`/`main.py` — o sufixo no repositório só existe para os três
+arquivos de `Fechadura/` conviverem lado a lado, mesmo padrão já usado para
+`version_esp32.json` vs `version_esp32c3.json`), com o antigo arquivo único
+reaproveitado como **migrador** — ver a seção dedicada abaixo.
 
 ## Arquitetura
 
@@ -984,6 +1018,151 @@ pm2 restart access-ng-api             # restart forçado
 ```
 
 ## Firmware
+
+### Arquitetura boot.py/main.py/accessng/ dos firmwares MQTT
+
+Os 4 firmwares MQTT (Caronte, FECHO, Cerberos enxuto, BitDogLab) são
+divididos em três arquivos no dispositivo, mais um pacote compartilhado:
+
+- **`boot.py`** — supervisor mínimo (~40 linhas), roda antes de tudo.
+  Decide se o dispositivo está saudável o bastante para seguir para
+  `main.py` ou se precisa entrar em modo de recuperação: `config.json`
+  ausente/inválido, Wi-Fi não conecta em 3 tentativas, ou crash-loop
+  detectado (`boot_count` sem confirmar saúde por 3 boots seguidos).
+  Depende só de `accessng/` e `device_defaults.py` — nunca importa
+  `main.py`, exatamente porque a aplicação pode ser o que está travando.
+- **`device_defaults.py`** — só dados (`DEFAULTS`/`SENSITIVE_KEYS`), sem
+  nenhum import de `machine`/`network`. Existe porque tanto `boot.py`
+  quanto o portal de recovery (`accessng/provisioning.py`) precisam desses
+  valores sem depender de `main.py`.
+- **`main.py`** — a aplicação de sempre (Wiegand/UART/OLED/relé/MQTT/
+  heartbeat/OTA, conforme o dispositivo), agora usando `accessng.config`/
+  `wifi`/`ota`/`watchdog` em vez de reimplementar cada parte.
+- **`accessng/`** — pacote compartilhado pelos 4 firmwares (instalado uma
+  vez, não atualizado por OTA automático nesta fase):
+  - `config.py` — leitura/escrita atômica (write-tmp-then-rename) de
+    `config.json` e `boot_state.json`.
+  - `wifi.py` — conexão Wi-Fi; detecta automaticamente (via
+    `os.uname().machine`) se o hardware é um ESP32-C3, que tem um bug de
+    driver que deixa o rádio preso após uma falha de conexão
+    (`OSError("Wifi Internal State Error")` em toda tentativa seguinte) —
+    só nesse caso aplica o workaround de resetar o rádio.
+  - `recovery.py` — `is_crash_looping()` (generaliza a detecção pra
+    qualquer causa de boot ruim, não só update pendente) e `enter()`, que
+    sobe o portal de recuperação e nunca retorna.
+  - `provisioning.py` — Access Point (`AccessNG-<Tipo>-<sufixo do MAC>`,
+    sem senha, `192.168.4.1`) + servidor HTTP mínimo em socket cru
+    (sem framework): formulário **genérico**, guiado por
+    `DEFAULTS`/`SENSITIVE_KEYS` (tipo do campo por `type(default)` —
+    bool→select, int/float→number, str→text ou password se sensível;
+    campos do tipo lista, ex. `INPUT_PINS` do Cerberos enxuto, não são
+    editáveis por aqui, só direto no `config.json`/`mpremote`, já que o
+    formulário não sabe recompor uma lista a partir de um único campo de
+    texto). `POST /save` grava `config.json`, zera `boot_state.json` e
+    reinicia. Usa sockets **não-bloqueantes** (`setblocking(False)` +
+    polling) tanto no `accept()` quanto na leitura da requisição — não
+    `settimeout()`, que na prática não garantiu retorno a tempo de
+    alimentar o watchdog nesse hardware e já causou um crash-loop real em
+    campo (ver `watchdog.py` abaixo).
+  - `ota.py` — download/validação (`compile()` para arquivos pequenos,
+    checagem de tamanho+substring por streaming para o `main.py`,
+    grande demais pra `compile()` sem estourar memória)/troca (`main.py`
+    → `main.bak`, novo → `main.py`)/rollback, mais
+    `ensure_dependencies()` — busca em `Hardware/bibliotecas/` qualquer
+    biblioteca listada no `version*.json` daquele firmware (campo
+    `bibliotecas`) que ainda não exista localmente, sem exigir passo
+    manual de `mip.install()` (que dependeria do dispositivo já ter
+    internet — problema de bootstrapping justamente pro cenário que este
+    redesenho existe pra resolver).
+  - `watchdog.py` — `machine.WDT` armado logo no início de `boot.py`
+    (timeout de 8000ms — o RP2040/Pico W limita o watchdog de hardware a
+    ~8.3s, então o mesmo valor conservador vale pros 4 firmwares), com
+    `feed()` chamado nos laços principais e de conexão de `main.py`. Rede
+    de segurança contra travamentos de verdade (não só exceções, já
+    tratadas nos próprios `try`/`except`) — se `boot.py`/`accessng`
+    travar em vez de lançar exceção, o watchdog força um reset e
+    `boot_count` continua subindo até o limiar de crash-loop.
+
+`boot_state.json` substitui os quatro marcadores soltos que o esquema
+antigo usava (`ota_pending.txt`, `ota_boot_attempts.txt`, `boot_count.txt`,
+`soft_reset.flag`) por um único arquivo:
+
+```json
+{
+  "boot_count": 0,
+  "last_boot_ok": false,
+  "current_version": "1.3.12",
+  "previous_version": null,
+  "pending_update": false
+}
+```
+
+`boot_count` incrementa em **todo** boot (físico ou soft) e só zera quando
+`main.py` confirma saúde (`ota.confirm_boot_ok()`, logo após o primeiro
+coldstart bem-sucedido) — generaliza a antiga rede de segurança (que só
+disparava com update OTA pendente) para qualquer boot ruim repetido.
+
+#### Migração de dispositivos já em campo
+
+O arquivo antigo (`CaronteESP32C3.py`, `CerberosESP32C3.py`,
+`CerberosESP32.py`, `Cerberos_BitDogLab_MQTT.py`) não foi apagado — ele
+virou um **migrador**: continua sendo a aplicação de sempre (mesmo
+código, funcionando normalmente), mas ganhou uma rotina de migração
+(`_do_migration()`) acionada por `{"command":"migrate"}` no mesmo tópico
+MQTT de comando usado por `reboot`/`check_update`. Isso permite levar um
+dispositivo já em campo, rodando a versão antiga (sem `boot.py`), até o
+esquema novo **100% online**, sem religar fisicamente:
+
+1. O dispositivo antigo se atualiza para o migrador via OTA normal (bump
+   de versão no `version*.json`), continua operacional.
+2. No painel (`/admin/carontes/<id>` ou `/admin/cerberoses/<id>`), o botão
+   **"Migrar (boot.py)"** publica `{"command":"migrate"}`.
+3. O migrador baixa `accessng/*.py`, `bibliotecas/umqtt/*.py` (+ driver de
+   display específico), `device_defaults.py`, `boot.py` e o `main.py`
+   definitivo — **valida cada um com `compile()`** (checagem de sintaxe,
+   não só tamanho/substring) antes de tocar em qualquer coisa que já
+   funciona. Se qualquer download/validação falhar, aborta sem trocar
+   nada — o dispositivo continua rodando o migrador normalmente, pronto
+   pra uma nova tentativa.
+4. Só depois de TODOS validarem: instala `accessng`/bibliotecas/
+   `device_defaults.py` (adições puras), promove `boot.py`, troca
+   `main.py` (o migrador vira `main.bak`) pelo definitivo, grava
+   `boot_state.json` com `pending_update=True` e reinicia.
+5. Se o `main.py` novo confirmar saúde (coldstart ok), a migração está
+   concluída. Se não confirmar em 3 boots, `boot.py` restaura o migrador
+   via `main.bak` — volta ao estado do passo 1, pronto pra uma nova
+   tentativa de migração.
+
+**Como confirmar que deu certo remotamente**: o campo "Firmware" pode não
+ajudar (migrador e `main.py` definitivo têm `FIRMWARE_VERSAO`
+independentes — a validação do `main.py` baixado não exige nenhum valor
+específico). O sinal confiável é o campo **"Hardware"**: o `main.py`
+definitivo reporta um sufixo `(boot.py)` (ex.: `"Caronte ESP32-C3
+(boot.py)"`) que o migrador não reporta. "Contador de Boots" também deve
+incrementar (soft-reset ao trocar de arquivo); se "Hardware" voltar a
+aparecer sem `(boot.py)`, foi um rollback.
+
+#### Dispositivo novo (`installer_*.py`)
+
+Para um microcontrolador com MicroPython recém-gravado e nenhum arquivo de
+aplicação ainda, cada dispositivo tem um `installer_*.py`
+(`Hardware/Autenticador/installer.py`, `Hardware/Fechadura/
+installer_esp32c3.py`/`installer_esp32.py`/`installer_bitdoglab.py`) —
+autocontido (não depende de `accessng/` nem `device_defaults.py`, porque é
+exatamente isso que ainda não existe no dispositivo), com um dicionário
+`CONFIG` no topo pra editar com os dados reais (Wi-Fi, `MQTT_BROKER`,
+`DEVICE_KEY`) antes de rodar. Baixa todos os arquivos necessários via HTTP
+puro pela mesma rota `/ota/<filepath>`, valida cada um (mesmo critério do
+migrador) e só depois grava `config.json`/reinicia. `ERASE_ANTES=True`
+recupera um dispositivo preso num estado ruim, apagando a aplicação
+inteira antes de reinstalar do zero (preserva `config.json` por padrão).
+Uso: `mpremote connect <porta> cp installer_X.py :installer.py` seguido de
+`mpremote connect <porta> run installer.py`.
+
+**Nunca commitar o `installer_*.py` com credenciais reais preenchidas no
+`CONFIG`** — edite localmente só para rodar contra o dispositivo, sem
+subir esse arquivo alterado (o Git detecta a mudança porque o arquivo é
+versionado com placeholders).
 
 ### BitDogLab V6 (Raspberry Pi Pico W) — MicroPython
 
