@@ -363,7 +363,7 @@ BOOT_COUNT  = None
 # padrão do próprio migrador, igual qualquer OTA de sempre). NÃO precisa
 # bater com o FIRMWARE_VERSAO do main.py definitivo (main.py) - os dois
 # evoluem de forma independente, ver _migration_validate_main().
-FIRMWARE_VERSAO   = "1.4.2"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.4.3"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"

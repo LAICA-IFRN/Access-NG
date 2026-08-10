@@ -63,19 +63,24 @@ def start(device_type, mac_suffix, defaults, sensitive_keys):
         pass
     s.bind(("0.0.0.0", 80))
     s.listen(1)
-    # accept() com timeout curto: sem isso, bloqueia para sempre esperando
-    # alguém conectar, e o watchdog nunca seria alimentado enquanto o
-    # portal espera um técnico (o que pode levar minutos) - o timeout só
-    # existe para dar oportunidade de feed(), não é um limite de espera
-    # real (o loop below tenta de novo indefinidamente).
-    s.settimeout(3)
+    # Não-bloqueante + poll, e NÃO settimeout(): visto em campo que
+    # accept() com settimeout(3) ainda assim não devolvia o controle a
+    # tempo de alimentar o watchdog de 8s (accessng.watchdog) nesta placa
+    # - resultado foi um crash-loop real (ESP-IDF task_wdt abortando o
+    # processo) toda vez que o dispositivo entrava em modo recovery, já
+    # que "ninguém conectou ainda" é o estado NORMAL enquanto se espera
+    # um técnico, não uma falha. setblocking(False) garante que accept()
+    # sempre retorna na hora (com OSError se não há conexão pendente),
+    # sem depender do timeout do socket funcionar como esperado.
+    s.setblocking(False)
     print("[Provisioning] http://192.168.4.1/  (SSID: %s)" % ssid)
     while True:
         watchdog.feed()
         try:
             conn, addr = s.accept()
         except OSError:
-            continue  # timeout do accept() - só uma chance de alimentar o watchdog
+            time.sleep_ms(200)
+            continue
         try:
             _handle(conn, device_type, mac_suffix, defaults, sensitive_keys)
         except Exception as e:
@@ -89,13 +94,15 @@ def start(device_type, mac_suffix, defaults, sensitive_keys):
 
 
 def _handle(conn, device_type, mac_suffix, defaults, sensitive_keys):
-    # Timeout curto (não 10s como antes): cada leitura individual precisa
-    # caber com folga dentro da janela do watchdog (8s, ver accessng.
-    # watchdog) - o loop de _read_request tenta de novo e alimenta o
-    # watchdog a cada tentativa, então um cliente lento ainda funciona,
-    # só não trava um único read() por tempo demais.
-    conn.settimeout(3)
+    # Não-bloqueante durante a LEITURA da requisição, pelo mesmo motivo do
+    # accept() em start() - um cliente que demora pra mandar os dados não
+    # pode travar o watchdog. Volta pra bloqueante antes de escrever a
+    # resposta (conexão local de AP, poucos KB - sem risco real de travar
+    # por muito tempo, e write() em modo não-bloqueante corre o risco de
+    # mandar só parte dos dados).
+    conn.setblocking(False)
     method, path, headers, body = _read_request(conn)
+    conn.setblocking(True)
 
     if method == "GET":
         conn.write(_render_form(device_type, mac_suffix, defaults, sensitive_keys))
@@ -128,19 +135,31 @@ def _handle(conn, device_type, mac_suffix, defaults, sensitive_keys):
     conn.write(_HTTP_404)
 
 
-def _read_request(conn, max_head=2048):
-    """Leitura limitada com timeout - request-line + headers cabem em
-    max_head, e o corpo do POST é lido exatamente por Content-Length
-    (nunca "até fechar"), ao contrário do download confiável de
-    accessng.ota (aqui o cliente é um navegador arbitrário, não o
-    servidor Access-NG)."""
+def _read_request(conn, max_head=2048, timeout_ms=5000):
+    """Leitura não-bloqueante com prazo total (não settimeout() por
+    chamada - mesmo motivo do accept() em start(), ver comentário lá:
+    não dá pra confiar que o timeout do socket sozinho garanta retorno a
+    tempo de alimentar o watchdog). request-line + headers cabem em
+    max_head, corpo do POST lido exatamente por Content-Length (nunca
+    "até fechar"), ao contrário do download confiável de accessng.ota
+    (aqui o cliente é um navegador arbitrário, não o servidor Access-NG).
+    conn precisa já estar em modo não-bloqueante (setblocking(False))."""
+    deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
     buf = b""
     while b"\r\n\r\n" not in buf and len(buf) < max_head:
         watchdog.feed()
-        chunk = conn.read(512)
-        if not chunk:
-            break
-        buf += chunk
+        if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+            return None, None, {}, b""
+        try:
+            chunk = conn.read(512)
+        except OSError:
+            chunk = None  # nada disponível ainda (EAGAIN) - tenta de novo
+        if chunk:
+            buf += chunk
+        elif chunk == b"":
+            break  # conexão fechada pelo cliente
+        else:
+            time.sleep_ms(50)
     sep = buf.find(b"\r\n\r\n")
     if sep == -1:
         return None, None, {}, b""
@@ -165,10 +184,18 @@ def _read_request(conn, max_head=2048):
     body = buf[sep + 4:]
     while len(body) < content_length:
         watchdog.feed()
-        chunk = conn.read(min(512, content_length - len(body)))
-        if not chunk:
+        if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
             break
-        body += chunk
+        try:
+            chunk = conn.read(min(512, content_length - len(body)))
+        except OSError:
+            chunk = None
+        if chunk:
+            body += chunk
+        elif chunk == b"":
+            break
+        else:
+            time.sleep_ms(50)
 
     return method, path, headers, body
 
