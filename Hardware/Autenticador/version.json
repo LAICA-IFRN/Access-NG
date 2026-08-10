@@ -1,1 +1,1 @@
-{"versao": "1.4.1", "ref": "main", "bibliotecas": ["umqtt/simple.py", "umqtt/robust.py"]}
+{"versao": "1.4.2", "ref": "main", "bibliotecas": ["umqtt/simple.py", "umqtt/robust.py"]}

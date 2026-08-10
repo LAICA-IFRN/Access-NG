@@ -363,7 +363,7 @@ BOOT_COUNT  = None
 # padrão do próprio migrador, igual qualquer OTA de sempre). NÃO precisa
 # bater com o FIRMWARE_VERSAO do main.py definitivo (main.py) - os dois
 # evoluem de forma independente, ver _migration_validate_main().
-FIRMWARE_VERSAO   = "1.4.1"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.4.2"   # bump manual a cada release publicada
 # Servido pelo proprio Access-NG, nao pelo raw.githubusercontent.com (rede
 # da IFRN nao entrega arquivos maiores do CDN do GitHub de forma confiavel).
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
@@ -795,8 +795,10 @@ def fecho_send_tag(tag, wg_count, timeout_ms=1500):
         if frame is not None:
             cmd, _data = frame
             if cmd == _UART_CMD_PERMITIDO:
+                print("[UART] FECHO permitiu a TAG %s" % tag)
                 return True
             if cmd == _UART_CMD_NEGADO:
+                print("[UART] FECHO negou a TAG %s" % tag)
                 return False
         time.sleep_ms(10)
     print("[UART] FECHO não respondeu à TAG")

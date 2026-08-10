@@ -242,7 +242,7 @@ BOOT_COUNT  = None
 # dispositivo entende (incorretamente) que há uma versão nova de si
 # mesmo disponível e falha ao validar o download (o próprio arquivo,
 # sem mudança nenhuma, não contém a string da versão "nova").
-FIRMWARE_VERSAO   = "1.4.1"   # bump manual a cada release publicada
+FIRMWARE_VERSAO   = "1.4.2"   # bump manual a cada release publicada
 OTA_VERSION_PATH  = "Hardware/Autenticador/version.json"
 OTA_FIRMWARE_PATH = "Hardware/Autenticador/main.py"
 OTA_HOST          = "laica.ifrn.edu.br"
@@ -699,8 +699,10 @@ def fecho_send_tag(tag, wg_count, timeout_ms=1500):
         if frame is not None:
             cmd, _data = frame
             if cmd == _UART_CMD_PERMITIDO:
+                print("[UART] FECHO permitiu a TAG %s" % tag)
                 return True
             if cmd == _UART_CMD_NEGADO:
+                print("[UART] FECHO negou a TAG %s" % tag)
                 return False
         time.sleep_ms(10)
     print("[UART] FECHO não respondeu à TAG")
