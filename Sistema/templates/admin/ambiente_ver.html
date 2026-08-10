@@ -119,6 +119,45 @@
     </table>
   </div>
 </div>
+
+{% if ambiente.carontes %}
+{% set tags_whitelist = usuarios_vinculados | selectattr('tag') | sort(attribute='tag') %}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Whitelist local dos Carontes ({{ tags_whitelist | length }} tag(s))</span>
+    {% if pode_gerenciar_dispositivos %}
+    <form method="POST" action="{{ url_for('admin_ambiente_tags_sincronizar', id=ambiente.id) }}">
+      <button class="btn btn-sm btn-outline-secondary">Sincronizar todos os Carontes</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <p style="color:#888; font-size:.82rem;">
+      TAGs usadas pelos Carontes deste ambiente no fallback offline via UART
+      (quando o MQTT não responde a tempo) — calculadas a partir dos
+      frequentadores abaixo. O envio ao dispositivo é "dispara e esquece"
+      (sem confirmação de volta), então esta lista mostra o que <em>deveria</em>
+      estar sincronizado, não uma leitura do que está de fato gravado nele.
+    </p>
+    {% if tags_whitelist %}
+    <table class="table table-sm mb-0">
+      <thead><tr><th>TAG</th><th>Usuário</th></tr></thead>
+      <tbody>
+      {% for item in tags_whitelist %}
+      <tr>
+        <td style="font-family:monospace; color:#c9a227;">{{ item.tag }}</td>
+        <td>{{ item.usuario.nome }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-center mb-0" style="color:#555;">Nenhuma TAG cadastrada entre os frequentadores.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <style>.badge-online{background:#1e7e34}.badge-offline{background:#7e1e1e}.badge-unknown{background:#444}</style>
 {% endblock %}
 
