@@ -1257,6 +1257,12 @@ na importação escolhe a certa automaticamente.
   `except OSError` do `main()`, que já faz a recuperação correta (reconecta,
   repete o coldstart e reinscreve nos tópicos).
 
+`Cerberos_BitDogLab_MQTT.py` agora é o **migrador** para o esquema
+`boot.py`/`main.py`/`accessng/` — a aplicação de verdade vive em
+`boot_bitdoglab.py`/`device_defaults_bitdoglab.py`/`main_bitdoglab.py`
+(mesmo `config.json`/pinagem/tópicos MQTT documentados acima). Ver
+[Arquitetura boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt).
+
 ### ESP32 (MicroPython) — Cerberos enxuto
 
 `Hardware/Fechadura/CerberosESP32.py` é um firmware MQTT-only para um Cerberos
@@ -1307,6 +1313,11 @@ firmwares MicroPython, com campos próprios:
 - Recebe OTA como o `Cerberos_BitDogLab_MQTT.py`, mas com arquivo de versão
   próprio (`Hardware/Fechadura/version_esp32.json`) para ter ciclo de release
   independente — veja [OTA (atualização remota de firmware)](#ota-atualização-remota-de-firmware).
+
+`CerberosESP32.py` agora é o **migrador** para o esquema `boot.py`/
+`main.py`/`accessng/` — a aplicação de verdade vive em `boot_esp32.py`/
+`device_defaults_esp32.py`/`main_esp32.py`. Ver [Arquitetura
+boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt).
 
 ### ESP32-C3 (MicroPython) — Caronte com leitor Wiegand
 
@@ -1380,6 +1391,12 @@ publica via MQTT e, opcionalmente, fala com o FECHO por UART como fallback.
 - Segue o mesmo fluxo de coldstart/heartbeat MQTT dos demais firmwares e também
   requer `umqtt` instalado via `mip`.
 
+`CaronteESP32C3.py` agora é o **migrador** para o esquema `boot.py`/
+`main.py`/`accessng/` — a aplicação de verdade vive em `boot.py`/
+`device_defaults.py`/`main.py` (sem sufixo, único firmware em
+`Autenticador/`). Ver [Arquitetura
+boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt).
+
 ### ESP32-C3 (MicroPython) — FECHO (Cerberos com UART/OLED)
 
 `Hardware/Fechadura/CerberosESP32C3.py` é outro firmware para a fechadura,
@@ -1448,13 +1465,29 @@ aceitando comando remoto de abertura via MQTT normalmente.
   para ciclo de release independente dos outros dois firmwares do mesmo
   diretório.
 
+`CerberosESP32C3.py` agora é o **migrador** para o esquema `boot.py`/
+`main.py`/`accessng/` — a aplicação de verdade vive em `boot_esp32c3.py`/
+`device_defaults_esp32c3.py`/`main_esp32c3.py`. Ver [Arquitetura
+boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt).
+
 ## OTA (atualização remota de firmware)
 
-Os quatro firmwares MQTT em campo (`Cerberos_BitDogLab_MQTT.py`,
-`CerberosESP32.py`, `CerberosESP32C3.py`/FECHO e `CaronteESP32C3.py`)
-atualizam a si mesmos sem precisar reconectar via USB/Thonny. O firmware
-continua vivendo só no GitHub — não há upload pelo painel nem tabela no
-banco guardando o código.
+Os quatro firmwares MQTT em campo atualizam a si mesmos sem precisar
+reconectar via USB/Thonny. O firmware continua vivendo só no GitHub — não
+há upload pelo painel nem tabela no banco guardando o código.
+
+O mecanismo abaixo (whitelist, `version*.json`, comparação numérica,
+rollback em 3 boots) é o mesmo tanto para os quatro arquivos migradores
+(`Cerberos_BitDogLab_MQTT.py`, `CerberosESP32.py`, `CerberosESP32C3.py`/
+FECHO, `CaronteESP32C3.py`) quanto para os `main_*.py`/`main.py`
+definitivos do esquema novo — a diferença é só **quem** faz a checagem:
+nos migradores é código local (`check_for_update()`/`apply_update()`
+inline, mantidos por compatibilidade com dispositivos ainda não
+migrados); nos `main_*.py` é `accessng.ota.check_for_update()`/
+`apply_update()`. Ver [Arquitetura
+boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt)
+para o mecanismo de migração em si (`{"command":"migrate"}`) e para
+`ensure_dependencies()` (busca automática de bibliotecas vendorizadas).
 
 ### Como funciona
 
@@ -1466,8 +1499,19 @@ banco guardando o código.
    `Hardware/Autenticador/version.json` (`CaronteESP32C3.py`) — um arquivo por
    firmware, para que cada um tenha ciclo de release independente mesmo os
    três primeiros compartilhando o diretório `Fechadura/`. Formato:
-   `{"versao": "1.3.11", "ref": "main"}` (o campo `ref` não é mais usado pelo
-   firmware — ver observação abaixo).
+   `{"versao": "1.3.11", "ref": "main", "bibliotecas": ["umqtt/simple.py", ...]}`
+   (o campo `ref` não é mais usado pelo firmware — ver observação abaixo;
+   `bibliotecas` lista, com caminhos relativos a `Hardware/bibliotecas/`,
+   as bibliotecas vendorizadas que aquele firmware específico precisa —
+   usado só por `accessng.ota.ensure_dependencies()` no esquema novo, não
+   pelos migradores). **Importante**: a `versao` aqui precisa bater com o
+   `FIRMWARE_VERSAO` tanto do migrador quanto do `main_*.py` definitivo —
+   os dois comparam contra o mesmo `version*.json`, então se um dos dois
+   ficar desalinhado ele se vê como "desatualizado em relação a si mesmo"
+   e tenta se auto-substituir num loop (o número de versão de cada um é
+   independente do outro só no sentido de que a *validação* do arquivo
+   baixado não exige um valor específico — não que possam divergir do
+   `version*.json` compartilhado).
 3. Os arquivos de firmware e de versão são servidos pelo **próprio Sistema**,
    em `GET /ota/<filepath>` ([api.py](Sistema/api.py)), restrito a uma
    whitelist fixa (`_OTA_ALLOWED_FILES`) que nunca lê arquivo fora dessa
@@ -1518,6 +1562,12 @@ Se a versão nova não conseguir completar um coldstart com sucesso em até 3
 boots, o dispositivo restaura automaticamente `main.bak` (a versão anterior,
 conhecida como boa) e reinicia — sem isso, um firmware com bug exigiria
 reconectar a placa fisicamente, exatamente o que a OTA existe para evitar.
+
+Nos dispositivos já migrados para o esquema `boot.py`/`main.py`, essa
+proteção é generalizada por `boot.py`/`accessng/recovery.py`: não dispara
+só pra update OTA pendente, mas pra **qualquer** boot ruim repetido
+(config corrompida, bug não relacionado a OTA, etc.) — ver [Arquitetura
+boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt).
 
 ### Visibilidade da versão instalada
 
@@ -1662,6 +1712,12 @@ para abertura/OTA:
 O conjunto de campos editáveis muda conforme o firmware (BitDogLab,
 `CerberosESP32.py`, `CerberosESP32C3.py`/FECHO ou `CaronteESP32C3.py`),
 detectado pelo `hardware` reportado no coldstart.
+
+Os migradores aceitam ainda `{"command":"migrate"}` — leva o dispositivo
+ao esquema `boot.py`/`main.py`/`accessng/` sem religar fisicamente.
+Acionado pelo botão "Migrar (boot.py)" nas páginas de detalhe do
+dispositivo. Ver [Migração de dispositivos já em
+campo](#migração-de-dispositivos-já-em-campo).
 
 ### Fora de escopo desta versão
 
