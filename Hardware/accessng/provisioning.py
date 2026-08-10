@@ -257,6 +257,14 @@ def _html_escape(s):
 def _render_form(device_type, mac_suffix, defaults, sensitive_keys, error=None):
     rows = []
     for key, default in defaults.items():
+        if isinstance(default, list):
+            # Sem coerção de volta pra lista em _coerce() (só bool/int/
+            # float são tratados) - editar via um <input> de texto único
+            # gravaria uma string solta em config.json, corrompendo a
+            # config em vez de corrigi-la. Campos assim (ex.: INPUT_PINS
+            # do Cerberos enxuto) continuam só editáveis direto no
+            # config.json/mpremote, não pelo portal de recovery.
+            continue
         sensitive = key in sensitive_keys
         if isinstance(default, bool):
             sel_yes = " selected" if default else ""
