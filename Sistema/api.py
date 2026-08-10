@@ -63,6 +63,7 @@ _OTA_ALLOWED_FILES = {
     'Hardware/accessng/recovery.py',
     'Hardware/accessng/provisioning.py',
     'Hardware/accessng/ota.py',
+    'Hardware/accessng/watchdog.py',
     'Hardware/bibliotecas/umqtt/__init__.py',
     'Hardware/bibliotecas/umqtt/simple.py',
     'Hardware/bibliotecas/umqtt/robust.py',
