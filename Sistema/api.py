@@ -33,30 +33,39 @@ _OTA_ALLOWED_FILES = {
     'Hardware/Fechadura/version.json',
     'Hardware/Fechadura/version_esp32.json',
     'Hardware/Fechadura/version_esp32c3.json',
-    'Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py',
-    'Hardware/Fechadura/CerberosESP32.py',
-    'Hardware/Fechadura/CerberosESP32C3.py',
     'Hardware/Autenticador/version.json',
     'Hardware/Autenticador/main.py',
 
-    # CaronteESP32C3.py voltou como MIGRADOR: dispositivos antigos (sem
-    # boot.py) só sabem buscar OTA nesse path exato (OTA_FIRMWARE_PATH é
-    # hardcoded no firmware antigo) - é o único jeito de levar um Caronte
-    # já em campo pro esquema novo 100% online, sem religar fisicamente.
-    # Ver docstring de Hardware/Autenticador/CaronteESP32C3.py. Depois
-    # que todos os dispositivos confirmarem a migração, este arquivo (e
-    # esta entrada) podem ser removidos.
+    # CaronteESP32C3.py/CerberosESP32C3.py/CerberosESP32.py/
+    # Cerberos_BitDogLab_MQTT.py voltaram como MIGRADORES: dispositivos
+    # antigos (sem boot.py) só sabem buscar OTA nesses paths exatos
+    # (OTA_FIRMWARE_PATH é hardcoded no firmware antigo) - é o único jeito
+    # de levar um dispositivo já em campo pro esquema novo 100% online,
+    # sem religar fisicamente. Ver docstring de
+    # Hardware/Autenticador/CaronteESP32C3.py para o desenho completo do
+    # mecanismo (replicado nos outros três). Depois que todos os
+    # dispositivos confirmarem a migração, estes arquivos (e as
+    # respectivas entradas) podem ser removidos.
     'Hardware/Autenticador/CaronteESP32C3.py',
+    'Hardware/Fechadura/CerberosESP32C3.py',
+    'Hardware/Fechadura/CerberosESP32.py',
+    'Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py',
 
-    # boot.py/accessng/bibliotecas - instalação manual (mpremote) por
-    # enquanto, não verificados pelo loop de OTA do próprio dispositivo;
-    # accessng.ota.ensure_dependencies() busca as bibliotecas listadas no
-    # version.json de cada firmware. Só o Caronte foi portado para o
-    # esquema boot.py/main.py nesta fase - os outros 3 firmwares (FECHO,
-    # Cerberos enxuto, BitDogLab) seguem no esquema antigo (arquivo único)
-    # até serem portados numa fase seguinte.
+    # boot.py/device_defaults.py/accessng/bibliotecas - instalação manual
+    # (mpremote) por enquanto, não verificados pelo loop de OTA do
+    # próprio dispositivo; accessng.ota.ensure_dependencies() busca as
+    # bibliotecas listadas no version.json de cada firmware.
     'Hardware/Autenticador/boot.py',
     'Hardware/Autenticador/device_defaults.py',
+    'Hardware/Fechadura/boot_esp32c3.py',
+    'Hardware/Fechadura/device_defaults_esp32c3.py',
+    'Hardware/Fechadura/main_esp32c3.py',
+    'Hardware/Fechadura/boot_esp32.py',
+    'Hardware/Fechadura/device_defaults_esp32.py',
+    'Hardware/Fechadura/main_esp32.py',
+    'Hardware/Fechadura/boot_bitdoglab.py',
+    'Hardware/Fechadura/device_defaults_bitdoglab.py',
+    'Hardware/Fechadura/main_bitdoglab.py',
     'Hardware/accessng/__init__.py',
     'Hardware/accessng/config.py',
     'Hardware/accessng/wifi.py',
