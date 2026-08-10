@@ -209,14 +209,16 @@ def _http_download(repo_path, dest_path, timeout=20):
                 pass
 
 
-def _validate(path):
+def _validate(path, dest_path):
     """compile() para arquivos pequenos (accessng/bibliotecas/boot.py) -
     barato e pega download corrompido, incluindo __init__.py legitimamente
     vazio (compile("") é válido). main.py (~40KB) é grande demais pra
     isso (visto em campo: estoura memória) - só checa tamanho mínimo,
-    mesmo critério do OTA normal (_valida_payload)."""
+    mesmo critério do OTA normal (_valida_payload). dest_path (não path,
+    que é o nome do arquivo temporário "*.tmp") é o que decide qual
+    critério aplicar."""
     size = os.stat(path)[6]
-    if path == "/main.py":
+    if dest_path == "/main.py":
         return size > 500
     try:
         with open(path) as f:
@@ -257,7 +259,7 @@ def run():
         _mkdir(dest_path)
         tmp = dest_path + ".tmp"
         _http_download(repo_path, tmp)
-        if not _validate(tmp):
+        if not _validate(tmp, dest_path):
             os.remove(tmp)
             raise RuntimeError("Falha ao validar %s - instalação abortada, "
                                 "nada foi trocado além do que já baixou "
