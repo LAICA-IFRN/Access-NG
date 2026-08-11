@@ -713,18 +713,32 @@ def fecho_send_tag(tag, wg_count, timeout_ms=1500):
 
 def ota_check_and_maybe_apply(state):
     """Verifica e, se houver versão nova, aplica (reinicia em caso de
-    sucesso - o estado já fica persistido antes do reset)."""
+    sucesso - o estado já fica persistido antes do reset). Depois de
+    checar o firmware em si, também checa o pacote accessng/ (versionado
+    à parte - ver accessng/ota.py) - só chega lá se não havia (ou não
+    aplicou) update de firmware, já que um update de firmware bem
+    sucedido já reinicia e não devolve o controle pra esta função."""
     remote = ota.check_for_update(OTA_HOST, OTA_PORT, OTA_VERSION_PATH,
                                    FIRMWARE_VERSAO, OTA_ENABLED)
-    if not remote:
+    if remote:
+        beep(60)
+        if ota.apply_update(state, OTA_HOST, OTA_PORT, OTA_FIRMWARE_PATH, remote,
+                             target_file="main.py", backup_file="main.bak"):
+            config.save_state(state)
+            beep(60); time.sleep_ms(80); beep(60)
+            time.sleep(1)
+            _soft_reset()
         return
-    beep(60)
-    if ota.apply_update(state, OTA_HOST, OTA_PORT, OTA_FIRMWARE_PATH, remote,
-                         target_file="main.py", backup_file="main.bak"):
-        config.save_state(state)
-        beep(60); time.sleep_ms(80); beep(60)
-        time.sleep(1)
-        _soft_reset()
+
+    pkg_remote = ota.check_for_package_update(OTA_HOST, OTA_PORT,
+                                               state.get("accessng_version"), OTA_ENABLED)
+    if pkg_remote:
+        beep(60)
+        if ota.apply_package_update(state, OTA_HOST, OTA_PORT, pkg_remote, BIBLIOTECAS):
+            config.save_state(state)
+            beep(60); time.sleep_ms(80); beep(60)
+            time.sleep(1)
+            _soft_reset()
 
 
 # --- MQTT --------------------------------------------------------------------
