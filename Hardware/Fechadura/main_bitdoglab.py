@@ -522,19 +522,35 @@ def _diag_broker():
 # --- OTA -----------------------------------------------------------------
 
 def ota_check_and_maybe_apply(state):
+    """Verifica e aplica update do firmware em si; se não havia (ou não
+    aplicou), também checa o pacote accessng/ (versionado à parte - ver
+    accessng/ota.py). Um update de firmware bem sucedido já reinicia e
+    não devolve o controle pra esta função."""
     remote = ota.check_for_update(OTA_HOST, OTA_PORT, OTA_VERSION_PATH,
                                    FIRMWARE_VERSAO, OTA_ENABLED)
-    if not remote:
+    if remote:
+        display_message("OTA", "Baixando", remote.get("versao", "?"))
+        if ota.apply_update(state, OTA_HOST, OTA_PORT, OTA_FIRMWARE_PATH, remote,
+                             target_file="main.py", backup_file="main.bak"):
+            config.save_state(state)
+            display_message("OTA", "Atualizado", state.get("current_version", "?"))
+            time.sleep(1)
+            _soft_reset()
+        else:
+            display_message("OTA", "Falha download", "mantendo atual")
         return
-    display_message("OTA", "Baixando", remote.get("versao", "?"))
-    if ota.apply_update(state, OTA_HOST, OTA_PORT, OTA_FIRMWARE_PATH, remote,
-                         target_file="main.py", backup_file="main.bak"):
-        config.save_state(state)
-        display_message("OTA", "Atualizado", state.get("current_version", "?"))
-        time.sleep(1)
-        _soft_reset()
-    else:
-        display_message("OTA", "Falha download", "mantendo atual")
+
+    pkg_remote = ota.check_for_package_update(OTA_HOST, OTA_PORT,
+                                               state.get("accessng_version"), OTA_ENABLED)
+    if pkg_remote:
+        display_message("OTA", "Pacote accessng", pkg_remote.get("versao", "?"))
+        if ota.apply_package_update(state, OTA_HOST, OTA_PORT, pkg_remote, BIBLIOTECAS):
+            config.save_state(state)
+            display_message("OTA", "Pacote atualizado", state.get("accessng_version", "?"))
+            time.sleep(1)
+            _soft_reset()
+        else:
+            display_message("OTA", "Falha pacote", "mantendo atual")
 
 
 # --- MQTT --------------------------------------------------------------------
