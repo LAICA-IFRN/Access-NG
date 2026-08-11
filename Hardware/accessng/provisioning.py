@@ -11,6 +11,15 @@ Roda inteiramente dentro da fase de boot.py, antes de main.py (e
 portanto antes de MQTT/Wiegand/UART/driver de display) ser importado -
 o servidor tem a heap inteira do dispositivo disponível, sem
 concorrência com nenhum módulo de aplicação.
+
+Sem gatilho de saída além do portal, um dispositivo que caiu aqui por
+causa de uma rede Wi-Fi só temporariamente indisponível (router
+reiniciando, interferência, blip do provedor) ficaria preso servindo o
+AP para sempre, mesmo depois da rede voltar - até alguém aparecer
+fisicamente e reenviar o mesmo formulário só para forçar uma nova
+tentativa. Por isso start() também tenta reconectar à rede configurada
+em segundo plano, periodicamente, em paralelo ao AP - ver
+_maybe_recover_wifi().
 """
 
 import gc
@@ -19,7 +28,14 @@ import network
 import socket
 import time
 
-from accessng import config, watchdog
+from accessng import config, wifi, watchdog
+
+# Intervalo entre tentativas de reconexão em segundo plano enquanto o
+# portal está no ar. Bloqueia o laço de accept() por até ~10s durante
+# cada tentativa (accessng.wifi.try_connect_once) - um cliente tentando
+# abrir o portal nesse meio-tempo só fica com a conexão enfileirada
+# (backlog do listen()), não perdida.
+_WIFI_RETRY_INTERVAL_MS = 60000
 
 _HTTP_404 = b"HTTP/1.0 404 Not Found\r\nConnection: close\r\n\r\n"
 _HTTP_OK_HEADER = (
@@ -54,8 +70,14 @@ def _start_ap(device_type, mac_suffix):
 
 def start(device_type, mac_suffix, defaults, sensitive_keys):
     """Nunca retorna em operação normal - fica servindo o AP+portal até
-    um POST válido gravar config.json e reiniciar."""
+    um POST válido gravar config.json e reiniciar, OU até a reconexão
+    em segundo plano (_maybe_recover_wifi) confirmar que a rede
+    configurada voltou a funcionar."""
     _, ssid = _start_ap(device_type, mac_suffix)
+    cfg_file, _ = config.load()
+    sta = _init_sta_retry()
+    next_wifi_check = time.ticks_add(time.ticks_ms(), _WIFI_RETRY_INTERVAL_MS)
+
     s = socket.socket()
     try:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -76,6 +98,9 @@ def start(device_type, mac_suffix, defaults, sensitive_keys):
     print("[Provisioning] http://192.168.4.1/  (SSID: %s)" % ssid)
     while True:
         watchdog.feed()
+        if sta is not None and time.ticks_diff(time.ticks_ms(), next_wifi_check) >= 0:
+            next_wifi_check = time.ticks_add(time.ticks_ms(), _WIFI_RETRY_INTERVAL_MS)
+            _maybe_recover_wifi(cfg_file, defaults)
         try:
             conn, addr = s.accept()
         except OSError:
@@ -91,6 +116,57 @@ def start(device_type, mac_suffix, defaults, sensitive_keys):
             except Exception:
                 pass
             gc.collect()
+
+
+def _init_sta_retry():
+    """Ativa a interface STA em paralelo à AP para permitir a tentativa
+    periódica de reconexão em segundo plano (_maybe_recover_wifi). Em
+    boot.py, a STA_IF já foi ativada (e a conexão já falhou) antes de
+    chegar aqui - reativá-la é um no-op seguro. Em alguma placa/build
+    onde o modo AP+STA simultâneo não for suportado, isso falha e o
+    portal segue funcionando normalmente, só sem a reconexão automática
+    (mesmo comportamento de antes desta mudança)."""
+    try:
+        sta = network.WLAN(network.STA_IF)
+        sta.active(True)
+        return sta
+    except Exception as e:
+        print("[Provisioning] STA indisponível junto com AP (%s) - "
+              "sem reconexão automática em segundo plano" % e)
+        return None
+
+
+def _maybe_recover_wifi(cfg_file, defaults):
+    """Tenta reconectar à rede Wi-Fi configurada, em paralelo ao AP - a
+    STA_IF já foi deixada ativa por _init_sta_retry(), então
+    wifi.try_connect_once() (que sempre busca network.WLAN(STA_IF) por
+    conta própria) já tem o que precisa sem receber o objeto aqui. Se
+    conseguir, a causa mais provável de ter caído em recovery (rede fora
+    do ar, sinal fraco, blip temporário) já não existe mais - zera o
+    contador de crash-loop (mesmo efeito de reenviar o formulário com a
+    config atual) e reinicia direto para o boot normal, sem esperar
+    ninguém aparecer fisicamente. Nunca propaga exceção - uma falha
+    aqui não pode derrubar o portal."""
+    ssid = config.get(cfg_file, defaults, "WIFI_SSID")
+    senha = config.get(cfg_file, defaults, "WIFI_PASS")
+    if not ssid:
+        return
+    print("[Provisioning] Tentando reconectar a %s em segundo plano..." % ssid)
+    try:
+        ok = wifi.try_connect_once(ssid, senha, timeout_s=10)
+    except Exception as e:
+        print("[Provisioning] Falha ao tentar reconectar:", e)
+        return
+    if not ok:
+        return
+
+    print("[Provisioning] Rede recuperada - saindo do modo recovery")
+    state = config.load_state()
+    state["boot_count"] = 0
+    state["last_boot_ok"] = False
+    config.save_state(state)
+    time.sleep(1)
+    machine.reset()
 
 
 def _handle(conn, device_type, mac_suffix, defaults, sensitive_keys):
