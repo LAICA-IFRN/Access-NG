@@ -24,13 +24,24 @@ executa os dois em sequência no mesmo processo.
 _wdt = None
 
 
-def arm(timeout_ms=8000):
+def arm(timeout_ms=8000, existing=None):
     """Arma o watchdog. Uma vez armado, a maioria dos ports do
     MicroPython NÃO permite desarmar - é assim de propósito (senão um
     bug poderia simplesmente desligar a proteção). Chamar mais de uma
-    vez é seguro (não rearma, só reporta se já está ativo)."""
+    vez é seguro (não rearma, só reporta se já está ativo).
+
+    existing: um machine.WDT já criado por fora (boot.py arma um antes
+    de importar accessng - justamente pra cobrir o caso do próprio
+    pacote accessng não importar - e repassa aqui pra virar o singleton
+    deste módulo). Necessário porque a maioria dos ports não permite
+    criar um segundo machine.WDT() - chamar machine.WDT() de novo aqui
+    depois que boot.py já criou um levantaria erro."""
     global _wdt
     if _wdt is not None:
+        return _wdt
+    if existing is not None:
+        _wdt = existing
+        print("[WDT] Reaproveitando watchdog já armado por boot.py")
         return _wdt
     try:
         import machine
