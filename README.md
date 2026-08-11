@@ -1058,8 +1058,14 @@ divididos em três arquivos no dispositivo, mais um pacote compartilhado:
     campos do tipo lista, ex. `INPUT_PINS` do Cerberos enxuto, não são
     editáveis por aqui, só direto no `config.json`/`mpremote`, já que o
     formulário não sabe recompor uma lista a partir de um único campo de
-    texto). `POST /save` grava `config.json`, zera `boot_state.json` e
-    reinicia. Usa sockets **não-bloqueantes** (`setblocking(False)` +
+    texto). Campos não-sensíveis vêm pré-preenchidos com o `config.json`
+    atual do dispositivo (sensíveis nunca — só um aviso "já configurado"
+    quando já existe um valor gravado). `POST /save` faz **merge** no
+    `config.json` existente em vez de substituí-lo — deixar um campo em
+    branco significa "manter o valor atual", nunca "apagar" (mesmo pra
+    senha/chave); só um dispositivo sem `config.json` nenhum ainda exige
+    `WIFI_SSID` preenchido, já que não há valor anterior pra cair de
+    volta. Depois de salvar, zera `boot_state.json` e reinicia. Usa sockets **não-bloqueantes** (`setblocking(False)` +
     polling) tanto no `accept()` quanto na leitura da requisição — não
     `settimeout()`, que na prática não garantiu retorno a tempo de
     alimentar o watchdog nesse hardware e já causou um crash-loop real em
