@@ -1089,7 +1089,11 @@ divididos em três arquivos no dispositivo, mais um pacote compartilhado:
     `bibliotecas`) que ainda não exista localmente, sem exigir passo
     manual de `mip.install()` (que dependeria do dispositivo já ter
     internet — problema de bootstrapping justamente pro cenário que este
-    redesenho existe pra resolver).
+    redesenho existe pra resolver). Também tem
+    `check_for_package_update()`/`apply_package_update()`/
+    `rollback_package_if_pending()` — o mecanismo de atualização
+    automática do **pacote `accessng/` em si**, ver subseção própria
+    abaixo.
   - `watchdog.py` — `machine.WDT` armado logo no início de `boot.py`
     (timeout de 8000ms — o RP2040/Pico W limita o watchdog de hardware a
     ~8.3s, então o mesmo valor conservador vale pros 4 firmwares), com
@@ -1097,7 +1101,11 @@ divididos em três arquivos no dispositivo, mais um pacote compartilhado:
     de segurança contra travamentos de verdade (não só exceções, já
     tratadas nos próprios `try`/`except`) — se `boot.py`/`accessng`
     travar em vez de lançar exceção, o watchdog força um reset e
-    `boot_count` continua subindo até o limiar de crash-loop.
+    `boot_count` continua subindo até o limiar de crash-loop. `arm()`
+    aceita um `machine.WDT` já criado por fora (`existing=`) — necessário
+    porque `boot.py` agora arma o watchdog **antes** até de importar
+    `accessng` (ver subseção abaixo), e a maioria dos ports do
+    MicroPython não permite criar um segundo `machine.WDT()`.
 
 `boot_state.json` substitui os quatro marcadores soltos que o esquema
 antigo usava (`ota_pending.txt`, `ota_boot_attempts.txt`, `boot_count.txt`,
@@ -1117,6 +1125,57 @@ antigo usava (`ota_pending.txt`, `ota_boot_attempts.txt`, `boot_count.txt`,
 `main.py` confirma saúde (`ota.confirm_boot_ok()`, logo após o primeiro
 coldstart bem-sucedido) — generaliza a antiga rede de segurança (que só
 disparava com update OTA pendente) para qualquer boot ruim repetido.
+
+#### Atualização automática do pacote `accessng/`
+
+Motivação: um dispositivo já migrado que caiu em recovery por um bug em
+`accessng/` (ex.: a correção de reconexão em segundo plano descrita
+acima) não recebia esse tipo de correção sozinho — o OTA de `main.py`
+nunca tocava em `accessng/`, então cada dispositivo já em campo exigia
+`mpremote`/reinstalação física pra receber qualquer fix do pacote
+compartilhado. Cada `main_*.py`/`main.py` agora também verifica (na
+mesma chamada de `ota_check_and_maybe_apply()`, logo depois de checar o
+próprio firmware) se há uma versão nova de `Hardware/accessng/
+version.json` — um manifesto único, compartilhado pelos 4 firmwares
+(`{"versao": "1.0.0", "arquivos": [...]}`, já que `accessng/` em si é
+idêntico entre eles):
+
+1. Baixa e valida (`compile()`) **todos** os arquivos do pacote (mais as
+   bibliotecas que aquele firmware específico usa) antes de trocar
+   qualquer um.
+2. Só troca depois que **todos** validarem — cada arquivo trocado ganha
+   um backup individual (`<nome>.bak`).
+3. Grava `accessng_pending_update=True`/`accessng_version` em
+   `boot_state.json` e reinicia.
+
+**Risco reconhecido e mitigado em duas camadas**: diferente de `main.py`,
+`boot.py` importa `accessng/config.py`, `wifi.py`, `recovery.py` e
+`watchdog.py` **antes** de poder decidir se entra em recovery — um
+pacote corrompido poderia, em teoria, deixar o dispositivo preso
+falhando todo boot sem sequer conseguir mostrar o AP. Por isso:
+
+- Se o dispositivo confirma saúde normalmente mas depois entra em
+  crash-loop (`is_crash_looping()`), `boot.py` chama
+  `ota.rollback_package_if_pending()` **antes** do rollback de `main.py`
+  — restaura os `.bak` do pacote e reinicia, mesmo raciocínio do
+  rollback de firmware de sempre.
+- Se o próprio `from accessng import ...` falhar (o pacote não importa
+  de jeito nenhum), `boot.py` arma um `machine.WDT` **antes** dessa
+  linha (autocontido, sem depender de `accessng.watchdog` — é
+  exatamente o que pode estar quebrado) e, se o import falhar, chama
+  `_package_self_repair()`: lê `boot_state.json` na mão (sem usar
+  `accessng.config`) e restaura os mesmos `.bak`, sem depender de nada
+  em `accessng/`. Se não houver update de pacote pendente pra restaurar
+  (import falhou por outro motivo), a exceção original propaga como
+  sempre — o watchdog armado garante que, na pior hipótese, o
+  dispositivo reinicia sozinho em ~8s e tenta de novo, em vez de ficar
+  travado para sempre.
+
+Essa é a camada de defesa mais nova do projeto e a que mais pesa em
+brick físico se algo sair errado — qualquer mudança em
+`accessng/config.py`/`wifi.py`/`recovery.py`/`watchdog.py` merece
+atenção redobrada e, idealmente, teste ponta a ponta em hardware real
+antes de publicar.
 
 #### Migração de dispositivos já em campo
 
