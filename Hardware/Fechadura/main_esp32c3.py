@@ -893,6 +893,15 @@ def main():
 
     ota.ensure_dependencies(OTA_HOST, OTA_PORT, BIBLIOTECAS)
 
+    # Checagem de update ANTES do MQTT, usando só WiFi/HTTP (não depende
+    # de MQTT/TLS funcionar) - um bug que quebra a própria conexão MQTT
+    # (ex.: biblioteca vendorizada com um import que não existe nessa
+    # versão do MicroPython) nunca deixaria o dispositivo alcançar o
+    # ota_check_and_maybe_apply() de baixo, que só roda depois do
+    # primeiro coldstart bem-sucedido - preso num crash-loop sem nunca
+    # chegar na correção que resolveria justamente esse problema.
+    ota_check_and_maybe_apply(state)
+
     tentativas_mqtt = 0
     while True:
         watchdog.feed()
