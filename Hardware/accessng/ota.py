@@ -17,6 +17,22 @@ ensure_dependencies() é novo: busca em Hardware/bibliotecas/ qualquer
 biblioteca listada no manifesto (version.json) que ainda não exista
 localmente. Não é o mecanismo de update de main.py - só cria o que falta,
 sem comparar versão nem substituir nada que já funcione.
+
+check_for_package_update()/apply_package_update()/rollback_package_if_pending()
+são o mecanismo de update do PACOTE accessng/ em si (mais as bibliotecas
+que cada firmware usa) - versionado à parte de main.py, contra
+Hardware/accessng/version.json (um manifesto só, compartilhado pelos 4
+firmwares, já que accessng/ é idêntico entre eles). Risco reconhecido:
+boot.py importa accessng/config.py, wifi.py, recovery.py e watchdog.py
+ANTES de poder decidir se entra em recovery - um pacote corrompido
+poderia deixar o dispositivo preso falhando todo boot sem conseguir
+nem mostrar o AP. Duas camadas de proteção cobrem isso: (1) validação
+por compile() de TODO arquivo antes de trocar qualquer um (mesmo
+critério que os migradores já usam), com backup individual (*.bak) de
+cada arquivo trocado; (2) boot.py arma o watchdog de hardware ANTES de
+tentar importar accessng/ e, se o import falhar mesmo assim, restaura
+os *.bak sozinho (sem depender de nada em accessng/, que é exatamente o
+que pode estar quebrado) - ver a docstring de boot.py.
 """
 
 import gc
@@ -254,6 +270,131 @@ def confirm_boot_ok(state, version):
     state["boot_count"] = 0
     state["pending_update"] = False
     state["current_version"] = version
+
+
+# --- Atualização do pacote accessng/ (independente da versão de main.py) ---
+
+_ACCESSNG_MANIFEST_PATH = "Hardware/accessng/version.json"
+
+# Fixo e igual pros 4 firmwares - accessng/ em si não varia por
+# dispositivo (ao contrário de bibliotecas, que cada main_*.py passa
+# explicitamente pra apply_package_update()/tem sua própria lista pra
+# rollback_package_if_pending() verificar).
+_ACCESSNG_FILES = (
+    "__init__.py", "config.py", "wifi.py", "recovery.py",
+    "provisioning.py", "ota.py", "watchdog.py",
+)
+
+# Candidatos de rollback: os 7 arquivos fixos de accessng/ + a união das
+# bibliotecas usadas por QUALQUER um dos 4 firmwares - checar um .bak que
+# não existe é barato (só um os.stat() que falha), então não precisa
+# saber de antemão quais bibliotecas este dispositivo específico usa.
+_PACKAGE_ROLLBACK_CANDIDATES = tuple(
+    "/accessng/" + name for name in _ACCESSNG_FILES
+) + (
+    "/umqtt/__init__.py", "/umqtt/simple.py", "/umqtt/robust.py",
+    "/sh1106.py", "/ssd1306.py",
+)
+
+
+def compile_check(path):
+    """Validação de sintaxe via compile() - mesma checagem que os
+    migradores já usam pra validar accessng/bibliotecas antes de
+    instalar (não executa o módulo, só confirma que o bytecode é
+    válido). Mais forte que validate_payload() (tamanho+substring), mas
+    caro demais pra rodar no main.py (~40KB, estoura RAM) - só serve
+    pros arquivos pequenos de accessng/bibliotecas."""
+    gc.collect()
+    try:
+        with open(path) as f:
+            source = f.read()
+        compile(source, path, "exec")
+        return True
+    except Exception as e:
+        print("[OTA] Erro de sintaxe em %s: %s" % (path, e))
+        return False
+
+
+def check_for_package_update(host, port, current_version, enabled=True):
+    """Verifica se há uma versão nova do pacote accessng/ - mesmo
+    mecanismo de check_for_update(), contra o manifesto fixo
+    compartilhado pelos 4 firmwares (Hardware/accessng/version.json)."""
+    return check_for_update(host, port, _ACCESSNG_MANIFEST_PATH, current_version, enabled)
+
+
+def apply_package_update(state, host, port, remote, bibliotecas=()):
+    """Baixa e valida TODOS os arquivos de accessng/ (mais as
+    bibliotecas passadas) antes de trocar qualquer um - nenhum arquivo
+    que já funciona é sobrescrito até o último ter passado por
+    download + compile(). Backup individual de cada arquivo trocado
+    (<nome>.bak), restaurável por rollback_package_if_pending(). NÃO
+    reinicia - quem decide reiniciar (e persistir o state atualizado) é
+    o chamador. Retorna True se a troca foi aplicada."""
+    versao = remote.get("versao", "")
+    pairs = [("Hardware/accessng/" + name, "/accessng/" + name) for name in _ACCESSNG_FILES]
+    pairs += [("Hardware/bibliotecas/" + rel, "/" + rel) for rel in bibliotecas]
+
+    baixados = []
+    for repo_path, local_path in pairs:
+        tmp = local_path + ".new"
+        status, _ = http_request(host, "/access-ng/ota/" + repo_path, port=port,
+                                  dest_file=tmp, timeout=20)
+        if status != 200 or not compile_check(tmp):
+            print("[OTA] Falha ao baixar/validar %s - abortando atualização do pacote" % repo_path)
+            for _, local_ok in baixados:
+                try:
+                    os.remove(local_ok + ".new")
+                except OSError:
+                    pass
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return False
+        baixados.append((repo_path, local_path))
+
+    for _, local_path in baixados:
+        try:
+            os.remove(local_path + ".bak")
+        except OSError:
+            pass
+        try:
+            os.rename(local_path, local_path + ".bak")
+        except OSError:
+            pass  # arquivo pode não existir ainda (ex.: biblioteca nova)
+        os.rename(local_path + ".new", local_path)
+
+    state["accessng_pending_update"] = True
+    state["accessng_previous_version"] = state.get("accessng_version")
+    state["accessng_version"] = versao
+    print("[OTA] Pacote accessng/ atualizado para", versao)
+    return True
+
+
+def rollback_package_if_pending(state):
+    """Chamado por boot.py quando há crash-loop generalizado E há uma
+    atualização de PACOTE pendente: restaura o .bak de cada arquivo
+    trocado. Só se aplica UMA vez por update pendente - mesmo
+    raciocínio de rollback_if_pending() (a versão de main.py)."""
+    if not state.get("accessng_pending_update"):
+        return False
+    restored = False
+    for path in _PACKAGE_ROLLBACK_CANDIDATES:
+        bak = path + ".bak"
+        try:
+            os.stat(bak)
+        except OSError:
+            continue
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        os.rename(bak, path)
+        restored = True
+    state["accessng_pending_update"] = False
+    state["accessng_version"] = state.get("accessng_previous_version")
+    state["boot_count"] = 0
+    return restored
 
 
 def ensure_dependencies(host, port, bibliotecas):
