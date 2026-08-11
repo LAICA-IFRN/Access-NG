@@ -84,7 +84,7 @@ class MQTTClient:
             # parque de dispositivos deste projeto mistura os dois, então
             # não dá pra assumir qual vai existir num device específico.
             try:
-                import ussl as _ssl
+                import ssl as _ssl
             except ImportError:
                 import ssl as _ssl
             self.sock = _ssl.wrap_socket(self.sock, **self.ssl_params)
