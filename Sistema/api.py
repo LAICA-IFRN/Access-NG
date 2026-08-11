@@ -51,10 +51,9 @@ _OTA_ALLOWED_FILES = {
     'Hardware/Fechadura/CerberosESP32.py',
     'Hardware/Fechadura/Cerberos_BitDogLab_MQTT.py',
 
-    # boot.py/device_defaults.py/accessng/bibliotecas - instalação manual
-    # (mpremote) por enquanto, não verificados pelo loop de OTA do
-    # próprio dispositivo; accessng.ota.ensure_dependencies() busca as
-    # bibliotecas listadas no version.json de cada firmware.
+    # boot.py/device_defaults.py - continuam instalação manual (mpremote),
+    # boot.py nunca é atualizado remotamente (risco de deixar o
+    # dispositivo sem conseguir nem decidir se entra em recovery).
     'Hardware/Autenticador/boot.py',
     'Hardware/Autenticador/device_defaults.py',
     'Hardware/Fechadura/boot_esp32c3.py',
@@ -66,6 +65,16 @@ _OTA_ALLOWED_FILES = {
     'Hardware/Fechadura/boot_bitdoglab.py',
     'Hardware/Fechadura/device_defaults_bitdoglab.py',
     'Hardware/Fechadura/main_bitdoglab.py',
+
+    # accessng/ - versionado à parte (Hardware/accessng/version.json,
+    # campo "arquivos") e verificado automaticamente pelo próprio
+    # dispositivo (main_*.py chama accessng.ota.check_for_package_update()/
+    # apply_package_update() logo depois de checar o firmware em si - ver
+    # ota_check_and_maybe_apply() em cada main_*.py). Bibliotecas em
+    # bibliotecas/ acompanham o mesmo mecanismo (parâmetro `bibliotecas`
+    # de apply_package_update(), além do fetch avulso de
+    # ensure_dependencies() pra quem ainda não tem o arquivo).
+    'Hardware/accessng/version.json',
     'Hardware/accessng/__init__.py',
     'Hardware/accessng/config.py',
     'Hardware/accessng/wifi.py',
