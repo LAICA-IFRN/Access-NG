@@ -181,17 +181,25 @@ def _handle(conn, device_type, mac_suffix, defaults, sensitive_keys):
     conn.setblocking(True)
 
     if method == "GET":
-        conn.write(_render_form(device_type, mac_suffix, defaults, sensitive_keys))
+        cfg_file, _ = config.load()
+        conn.write(_render_form(device_type, mac_suffix, defaults, sensitive_keys, cfg_file))
         return
 
     if method == "POST" and path == "/save":
+        cfg_file, _ = config.load()
         params = _parse_form(body)
-        cfg = {}
+        # Começa do que já está gravado (não de um dict vazio) - um campo
+        # deixado em branco no formulário significa "manter o valor atual",
+        # nunca "apagar". Sem isso, reenviar o formulário só pra forçar uma
+        # nova tentativa de conexão (ex.: depois que a rede voltou) exigia
+        # redigitar TODOS os campos, inclusive os sensíveis, ou eles
+        # silenciosamente sumiam do config.json.
+        cfg = dict(cfg_file)
         for key, default in defaults.items():
             if key in params and params[key] != "":
                 cfg[key] = _coerce(default, params[key])
         if not cfg.get("WIFI_SSID"):
-            conn.write(_render_form(device_type, mac_suffix, defaults, sensitive_keys,
+            conn.write(_render_form(device_type, mac_suffix, defaults, sensitive_keys, cfg_file,
                                      error="WIFI_SSID é obrigatório"))
             return
 
@@ -330,7 +338,7 @@ def _html_escape(s):
              .replace(">", "&gt;").replace('"', "&quot;"))
 
 
-def _render_form(device_type, mac_suffix, defaults, sensitive_keys, error=None):
+def _render_form(device_type, mac_suffix, defaults, sensitive_keys, cfg_file, error=None):
     rows = []
     for key, default in defaults.items():
         if isinstance(default, list):
@@ -342,21 +350,36 @@ def _render_form(device_type, mac_suffix, defaults, sensitive_keys, error=None):
             # config.json/mpremote, não pelo portal de recovery.
             continue
         sensitive = key in sensitive_keys
+        # Pré-preenche com o que já está em config.json quando existir -
+        # sem isso, reenviar o formulário (ex.: só pra corrigir um campo)
+        # exigiria redigitar todos os outros também, já que _handle()
+        # trata "em branco" como "manter o valor atual" (não mais como
+        # "apagar" - ver comentário lá).
+        current = cfg_file.get(key, default)
         if isinstance(default, bool):
-            sel_yes = " selected" if default else ""
-            sel_no = "" if default else " selected"
+            atual = bool(current)
+            sel_yes = " selected" if atual else ""
+            sel_no = "" if atual else " selected"
             field = (
                 '<select name="%s"><option value="1"%s>Sim</option>'
                 '<option value="0"%s>Não</option></select>'
             ) % (key, sel_yes, sel_no)
         elif isinstance(default, int) or isinstance(default, float):
-            val = "" if sensitive else _html_escape(str(default))
+            val = "" if sensitive else _html_escape(str(current))
             field = '<input type="number" step="any" name="%s" value="%s">' % (key, val)
         else:
             if sensitive:
-                field = '<input type="password" name="%s" value="" autocomplete="off">' % key
+                # Nunca preenche o valor de verdade (senha/chave não pode
+                # ir pro HTML) - só sinaliza que já existe um, pra deixar
+                # claro que ficar em branco aqui MANTÉM o que já está
+                # gravado em vez de apagar.
+                placeholder = ("já configurado - deixe em branco para manter"
+                                if key in cfg_file else "")
+                field = ('<input type="password" name="%s" value="" '
+                         'placeholder="%s" autocomplete="off">'
+                         ) % (key, _html_escape(placeholder))
             else:
-                val = _html_escape(str(default))
+                val = _html_escape(str(current))
                 field = '<input type="text" name="%s" value="%s">' % (key, val)
         rows.append('<div class="row"><label>%s</label>%s</div>' % (key, field))
 
