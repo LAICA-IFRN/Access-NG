@@ -1063,7 +1063,17 @@ divididos em três arquivos no dispositivo, mais um pacote compartilhado:
     polling) tanto no `accept()` quanto na leitura da requisição — não
     `settimeout()`, que na prática não garantiu retorno a tempo de
     alimentar o watchdog nesse hardware e já causou um crash-loop real em
-    campo (ver `watchdog.py` abaixo).
+    campo (ver `watchdog.py` abaixo). Também ativa a `STA_IF` em paralelo
+    à AP e tenta reconectar à rede configurada a cada 60s em segundo
+    plano (`_maybe_recover_wifi()`) — sem isso, um dispositivo que caiu
+    em recovery por uma queda de rede só **temporária** (router
+    reiniciando, blip do provedor) ficaria preso servindo o AP para
+    sempre, mesmo depois da rede voltar, até alguém aparecer fisicamente
+    e reenviar o mesmo formulário só pra forçar uma nova tentativa. Se a
+    reconexão em segundo plano funcionar, zera `boot_count` e reinicia
+    direto pro boot normal, sem esperar ninguém. Se a placa/build não
+    suportar AP+STA simultâneo, falha graciosamente (portal continua
+    funcionando normalmente, só sem a reconexão automática).
   - `ota.py` — download/validação (`compile()` para arquivos pequenos,
     checagem de tamanho+substring por streaming para o `main.py`,
     grande demais pra `compile()` sem estourar memória)/troca (`main.py`
