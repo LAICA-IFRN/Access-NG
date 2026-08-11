@@ -339,15 +339,27 @@ def unlock_door(source="remote"):
 # --- OTA -----------------------------------------------------------------
 
 def ota_check_and_maybe_apply(state):
+    """Verifica e aplica update do firmware em si; se não havia (ou não
+    aplicou), também checa o pacote accessng/ (versionado à parte - ver
+    accessng/ota.py). Um update de firmware bem sucedido já reinicia e
+    não devolve o controle pra esta função."""
     remote = ota.check_for_update(OTA_HOST, OTA_PORT, OTA_VERSION_PATH,
                                    FIRMWARE_VERSAO, OTA_ENABLED)
-    if not remote:
+    if remote:
+        if ota.apply_update(state, OTA_HOST, OTA_PORT, OTA_FIRMWARE_PATH, remote,
+                             target_file="main.py", backup_file="main.bak"):
+            config.save_state(state)
+            time.sleep(1)
+            _soft_reset()
         return
-    if ota.apply_update(state, OTA_HOST, OTA_PORT, OTA_FIRMWARE_PATH, remote,
-                         target_file="main.py", backup_file="main.bak"):
-        config.save_state(state)
-        time.sleep(1)
-        _soft_reset()
+
+    pkg_remote = ota.check_for_package_update(OTA_HOST, OTA_PORT,
+                                               state.get("accessng_version"), OTA_ENABLED)
+    if pkg_remote:
+        if ota.apply_package_update(state, OTA_HOST, OTA_PORT, pkg_remote, BIBLIOTECAS):
+            config.save_state(state)
+            time.sleep(1)
+            _soft_reset()
 
 
 # --- MQTT --------------------------------------------------------------------
