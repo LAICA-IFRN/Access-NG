@@ -96,13 +96,30 @@ _ERASE_PATHS = [
 ]
 
 
-def _connect_wifi():
+def _load_existing_config():
+    """Se já existe um config.json no dispositivo (ex.: preservado por um
+    ERASE_ANTES=True anterior, ou de uma instalação parcial), seus
+    valores têm prioridade sobre CONFIG (topo deste arquivo) pra
+    conectar - sem isso, recuperar um dispositivo que já tinha Wi-Fi
+    configurado exigia redigitar as credenciais reais em CONFIG de novo,
+    mesmo o docstring de ERASE_ANTES prometendo que a config já gravada
+    seria reaproveitada."""
+    try:
+        with open("config.json") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _connect_wifi(existing_cfg):
+    ssid = existing_cfg.get("WIFI_SSID") or CONFIG["WIFI_SSID"]
+    senha = existing_cfg.get("WIFI_PASS") or CONFIG["WIFI_PASS"]
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     time.sleep_ms(100)
     if not wlan.isconnected():
-        print("[Installer] Conectando em %s..." % CONFIG["WIFI_SSID"])
-        wlan.connect(CONFIG["WIFI_SSID"], CONFIG["WIFI_PASS"])
+        print("[Installer] Conectando em %s..." % ssid)
+        wlan.connect(ssid, senha)
         for _ in range(30):
             if wlan.isconnected():
                 break
@@ -110,7 +127,8 @@ def _connect_wifi():
     if not wlan.isconnected():
         raise RuntimeError(
             "Não foi possível conectar ao Wi-Fi - confira "
-            "CONFIG['WIFI_SSID']/CONFIG['WIFI_PASS'] no topo deste arquivo")
+            "CONFIG['WIFI_SSID']/CONFIG['WIFI_PASS'] no topo deste arquivo"
+            + (" (ou o config.json já existente no dispositivo)" if existing_cfg.get("WIFI_SSID") else ""))
     print("[Installer] Wi-Fi OK, IP:", wlan.ifconfig()[0])
 
 
@@ -253,7 +271,7 @@ def run():
     if ERASE_ANTES:
         _erase()
 
-    _connect_wifi()
+    _connect_wifi(_load_existing_config())
 
     for repo_path, dest_path in _FILES:
         print("[Installer] Baixando %s -> %s ..." % (repo_path, dest_path))
