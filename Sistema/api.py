@@ -2919,6 +2919,22 @@ def admin_usuario_novo():
         ambientes_gerente_ids = {a.id for a in db.query(Ambiente).all()}
     if request.method == 'POST':
         f = request.form
+        numeros_tags = list(dict.fromkeys(
+            n.strip() for n in f.getlist('tags') if n and n.strip()))
+        conflitos = _tags_conflitantes(numeros_tags)
+        if conflitos:
+            valores = {
+                'nome': f.get('nome', ''), 'matricula': f.get('matricula', ''),
+                'tags': numeros_tags, 'admin': 'admin' in f,
+                'ambientes': {int(x) for x in request.form.getlist('ambientes')},
+                'papeis': {a.id: f.get(f'papel_{a.id}', '') for a in ambientes},
+                'papel': f.get('papel', ''), 'permitir_web': 'permitir_web' in f,
+            }
+            return render_template(
+                'admin/usuario_form.html', usuario=None, ambientes=ambientes,
+                papeis_atuais={}, pode_papel={a.id: a.id in ambientes_gerente_ids for a in ambientes},
+                from_ambiente=from_ambiente, valores=valores,
+                erro_tag='TAG(s) já cadastrada(s) para outro usuário: %s.' % ', '.join(conflitos))
         is_admin = usuario.admin and 'admin' in f
         senha_raw = f.get('senha', '').strip()
         u = Usuario(nome=f['nome'], matricula=f['matricula'],
@@ -2926,7 +2942,7 @@ def admin_usuario_novo():
                     senha=generate_password_hash(senha_raw) if senha_raw else None)
         db.add(u)
         db.flush()
-        _upsert_tag(u, f.get('tag', ''))
+        _sync_tags(u, numeros_tags)
         papeis_validos = ('gerente', 'colaborador', 'leitor') if usuario.admin else ('colaborador', 'leitor')
         if from_ambiente:
             amb_ids_form = {from_ambiente.id}
