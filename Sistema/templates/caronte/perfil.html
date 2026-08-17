@@ -67,10 +67,17 @@
           <input type="text" class="form-control" value="{{ usuario.matricula }}" readonly>
         </div>
         <div class="form-group">
-          <label>TAG RFID <small style="color:#555;">(deixe em branco para remover)</small></label>
-          <input name="tag" type="text" class="form-control"
-                 value="{{ usuario.tag.numero if usuario.tag else '' }}"
-                 placeholder="Ex: A3F2E1B0">
+          <label>TAG(s) RFID</label>
+          {% if usuario.tags %}
+          <ul class="mb-1" style="padding-left:1.1rem;">
+            {% for t in usuario.tags %}
+            <li style="font-family:monospace;">{{ t.numero }}</li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p style="color:#555; margin-bottom:.25rem;">Nenhuma TAG cadastrada.</p>
+          {% endif %}
+          <small style="color:#555;">Cadastro/troca de TAG é feito por um administrador do seu Tartaro.</small>
         </div>
         <div class="form-group">
           <label>Novo PIN <small style="color:#555;">(em branco = não altera)</small></label>
