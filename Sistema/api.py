@@ -1078,12 +1078,11 @@ def caronte_perfil():
                 flash('PIN deve ter 4 dígitos.', 'danger')
                 return redirect(url_for('caronte_perfil'))
             usuario.pin = pin
-        _upsert_tag(usuario, f.get('tag', ''))
         db.commit()
         _create_audit_log(
             event_type='perfil_atualizado',
             result='sucesso',
-            message='Usuário atualizou TAG/PIN no portal',
+            message='Usuário atualizou PIN no portal',
             usuario=usuario,
         )
         flash('Perfil atualizado.', 'success')
