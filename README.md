@@ -300,7 +300,7 @@ Tabela: `usuarios`
 - `pin`
 - `admin`
 - `aprovado` (padrão `true`; `false` só em cadastros auto-criados via SUAP, até um admin aprovar — ver [Login via SUAP (OAuth2)](#login-via-suap-oauth2))
-- relacionamento com `TAG`
+- relacionamento um-para-muitos com `TAG` (`Usuario.tags`, `cascade="all, delete-orphan"`) — um usuário pode ter várias TAGs RFID (ex: cartões emitidos em Tartaros diferentes); qualquer uma delas autentica em qualquer Tartaro onde o usuário já tem permissão de acesso. Não existe conceito de TAG "padrão" — todas são equivalentes.
 - relacionamento com `MAC`
 - relacionamento muitos-para-muitos com `Ambiente` via `usuarios_ambientes` (frequentadores/acesso físico)
 - relacionamento muitos-para-muitos com `Ambiente` via `usuarios_web` (quem pode usar o Caronte web em cada Tartaro — ver [Caronte web: quem pode usar](#caronte-web-quem-pode-usar))
@@ -314,7 +314,13 @@ Tabela: `tags`
 - `numero`
 - `usuario_id`
 
-Usada pelo Caronte RFID para autenticação física.
+Usada pelo Caronte RFID para autenticação física. `numero` é validado como único
+no sistema inteiro **na camada de aplicação** (`api.py`, ao criar/editar um
+usuário) — não há `UniqueConstraint` no banco, seguindo a mesma convenção
+homemade de migração do resto do projeto. Gerenciar as TAGs de um usuário
+(adicionar/remover) é uma ação exclusiva do painel admin
+(`/admin/usuarios/novo` e `/admin/usuarios/<id>/editar`); `/caronte/perfil` só
+exibe a lista, somente leitura.
 
 ### MAC
 
@@ -491,7 +497,7 @@ painel suporta papéis **por Tartaro**, atribuídos via `PapelAmbiente`:
 | **Gerente** | Cadastrar/editar/excluir usuários, Cerberoses e Carontes do seu Tartaro; nomear `colaborador`/`leitor` para gente do mesmo Tartaro; ler os logs do seu Tartaro. | Criar/editar Tartaros ou Brokers MQTT; conceder `admin` geral ou nomear outro `gerente`. |
 | **Colaborador** | Cadastrar novos usuários no seu Tartaro. | Editar/excluir usuários existentes, gerenciar Cerberoses/Carontes, ver logs, atribuir papéis. |
 | **Leitor** | Visualizar (somente leitura) os logs/eventos do seu Tartaro. | Qualquer ação de escrita no painel. |
-| **Usuário regular** (sem papel) | Acessar o portal Caronte (`/caronte`) e atualizar a própria TAG e PIN em `/caronte/perfil`. | Entrar no painel `/admin`. |
+| **Usuário regular** (sem papel) | Acessar o portal Caronte (`/caronte`) e atualizar o próprio PIN em `/caronte/perfil` (as TAGs RFID aparecem em modo somente leitura). | Entrar no painel `/admin`; adicionar/remover a própria TAG (só um admin faz isso). |
 
 Os papéis são hierárquicos dentro do mesmo Tartaro: `gerente` já cobre as
 capacidades de `colaborador` (cadastrar usuários) e `leitor` (ler logs), além
@@ -738,7 +744,7 @@ Formato da resposta:
 | `GET` | `/caronte/ambientes-proximos?lat=&lon=` | Retorna ambientes cujo raio contém as coordenadas. |
 | `POST` | `/caronte/solicitar` | Valida geolocalização e permissão, depois aciona Cerberoses. |
 | `GET` | `/caronte/meus-logs` | Histórico de acessos do próprio usuário (tentativas, autorizações, login/logout). |
-| `GET/POST` | `/caronte/perfil` | Autoatendimento: nome e matrícula somente leitura; atualiza a própria TAG RFID e o PIN. |
+| `GET/POST` | `/caronte/perfil` | Autoatendimento: nome, matrícula e TAG(s) RFID somente leitura; atualiza só o próprio PIN. |
 | `GET` | `/caronte/logout` | Encerra sessão. |
 
 Payload de `/caronte/solicitar`:
@@ -1444,7 +1450,9 @@ publica via MQTT e, opcionalmente, fala com o FECHO por UART como fallback.
   com tratamento dedicado para os formatos Wiegand de 26 e 34 bits (remoção dos
   bits de paridade) e fallback genérico para outros tamanhos. Cadastre a `TAG.numero`
   do usuário exatamente nesse formato hexadecimal, já que a comparação em
-  `Tartaro.autenticarTAGDetalhado()` é sensível a maiúsculas/minúsculas.
+  `Tartaro.autenticarTAGDetalhado()` é sensível a maiúsculas/minúsculas. Um
+  usuário pode ter mais de uma TAG cadastrada (ex: cartões emitidos em
+  Tartaros diferentes) — qualquer uma delas autentica normalmente.
 - Publica a TAG em `access-ng/{ambiente_id}/caronte/{mac}/tag` com `{"tag":...,"chave":...}`
   e aguarda o resultado em `access-ng/{ambiente_id}/caronte/{mac}/result` por até
   `AUTH_TIMEOUT_S` segundos, sinalizando o resultado com bipes/LEDs
@@ -1936,7 +1944,10 @@ python Sistema/api.py
 - Cadastre Tartaros com latitude, longitude e raio para habilitar o Caronte web.
 - Cadastre Cerberoses e Carontes com os mesmos MACs enviados pelo firmware.
 - Associe usuários aos Tartaros permitidos.
-- Para RFID, associe uma `TAG.numero` ao usuário.
+- Para RFID, associe uma ou mais `TAG.numero` ao usuário pelo painel admin
+  (`/admin/usuarios/novo` ou `/admin/usuarios/<id>/editar`) — qualquer uma
+  delas autentica onde o usuário já tem acesso. `/caronte/perfil` só exibe as
+  TAGs do próprio usuário, sem poder editá-las.
 - Mantenha heartbeats em intervalo menor que 30 segundos. O recomendado é cerca de 10 segundos.
 - Para delegar a gestão de um Tartaro sem dar acesso de administrador geral,
   cadastre um usuário com papel `gerente` nesse Tartaro pelo painel — ele
@@ -2101,3 +2112,10 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   sincronização por matrícula, cadastro automático pendente de aprovação
   para matrícula nova, tela de configuração em `/admin/integracao-suap` —
   veja [Login via SUAP (OAuth2)](#login-via-suap-oauth2).
+- Usuário pode ter múltiplas TAGs RFID (`Usuario.tags`, relacionamento 1:N,
+  sem conceito de TAG "padrão" — qualquer uma autentica onde o usuário já
+  tem acesso). `TAG.numero` passou a ser validado como único no sistema
+  inteiro ao salvar (só na aplicação, sem constraint de banco). Gerenciar
+  as TAGs de um usuário é ação exclusiva do painel admin; `/caronte/perfil`
+  agora só exibe a lista, somente leitura — veja [Modelo de
+  dados](#modelo-de-dados).
