@@ -2989,6 +2989,23 @@ def admin_usuario_editar(id):
     papeis_atuais = {p.ambiente_id: p.papel for p in u.papeis}
     if request.method == 'POST':
         f = request.form
+        numeros_tags = list(dict.fromkeys(
+            n.strip() for n in f.getlist('tags') if n and n.strip()))
+        conflitos = _tags_conflitantes(numeros_tags, excluir_usuario_id=u.id)
+        if conflitos:
+            valores = {
+                'nome': f.get('nome', ''), 'matricula': f.get('matricula', ''),
+                'tags': numeros_tags, 'admin': 'admin' in f,
+                'ambientes': {int(x) for x in request.form.getlist('ambientes')},
+                'papeis': {a.id: f.get(f'papel_{a.id}', '') for a in ambientes},
+            }
+            return render_template(
+                'admin/usuario_form.html', usuario=u, ambientes=ambientes,
+                papeis_atuais=papeis_atuais,
+                pode_papel={a.id: a.id in ambientes_gerente_ids for a in ambientes},
+                valores=valores,
+                erro_tag='TAG(s) já cadastrada(s) para outro usuário: %s.' % ', '.join(conflitos))
+
         amb_ids_antes = {a.id for a in u.ambientes}
         u.nome = f['nome']
         u.matricula = f['matricula']
@@ -2998,7 +3015,7 @@ def admin_usuario_editar(id):
             u.admin = 'admin' in f
         if f.get('senha'):
             u.senha = generate_password_hash(f['senha'])
-        _upsert_tag(u, f.get('tag', ''))
+        _sync_tags(u, numeros_tags)
 
         amb_ids_escopo = {a.id for a in ambientes}
         amb_ids_form = {int(x) for x in request.form.getlist('ambientes')} & amb_ids_escopo
