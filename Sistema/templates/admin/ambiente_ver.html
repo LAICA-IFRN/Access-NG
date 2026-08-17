@@ -73,6 +73,15 @@
     <a href="{{ url_for('admin_ambiente_usuario_adicionar', id=ambiente.id) }}" class="btn btn-sm btn-gold">+ Adicionar usuário</a>
     {% endif %}
   </div>
+  {% if pode_editar_usuarios %}
+  <div class="card-body pb-0 pt-2">
+    <p style="color:#888; font-size:.78rem; margin-bottom:0;">
+      Por padrão, qualquer TAG de um usuário vale em todos os Tartaros onde ele
+      tem acesso. "Tirar daqui" restringe uma TAG a valer só nos Tartaros
+      marcados; "Liberar aqui" libera de novo.
+    </p>
+  </div>
+  {% endif %}
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
       <thead><tr>
@@ -85,7 +94,29 @@
       <tr>
         <td>{{ item.usuario.nome }}</td>
         <td style="font-family:monospace; font-size:.85rem;">{{ item.usuario.matricula }}</td>
-        <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">{{ item.tags | join(', ') if item.tags else '—' }}</td>
+        <td style="font-size:.78rem;">
+          {% if item.tags %}
+          {% for t in item.tags %}
+          <div class="d-flex align-items-center mb-1" style="gap:.35rem;">
+            <span style="font-family:monospace; color:{{ '#c9a227' if t.vale_aqui else '#666' }};">{{ t.numero }}</span>
+            {% if not t.vale_aqui %}<small style="color:#888;">(não vale aqui)</small>{% endif %}
+            {% if pode_editar_usuarios %}
+            {% if t.vale_aqui and not t.restrita %}
+              {% set confirmacao = 'Isso vai restringir esta TAG só a este Tartaro — ela deixa de valer nos outros Tartaros onde este usuário tem acesso. Continuar?' %}
+            {% elif t.vale_aqui and t.restrita and t.total_escopos == 1 %}
+              {% set confirmacao = 'Isso remove a última restrição desta TAG — ela volta a valer em QUALQUER Tartaro onde este usuário tem acesso. Continuar?' %}
+            {% else %}
+              {% set confirmacao = None %}
+            {% endif %}
+            <form method="POST" action="{{ url_for('admin_ambiente_usuario_tag_escopo_toggle', id=ambiente.id, usuario_id=item.usuario.id, tag_id=t.id) }}"
+                  style="display:inline;" {% if confirmacao %}onsubmit="return confirm('{{ confirmacao }}')"{% endif %}>
+              <button class="btn btn-sm py-0 px-1" style="font-size:.68rem;">{{ 'Tirar daqui' if t.vale_aqui else 'Liberar aqui' }}</button>
+            </form>
+            {% endif %}
+          </div>
+          {% endfor %}
+          {% else %}—{% endif %}
+        </td>
         <td>
           {% if item.papel %}<span class="badge" style="background:#2d2d4e; color:#ccc;">{{ item.papel }}</span>{% else %}—{% endif %}
         </td>
