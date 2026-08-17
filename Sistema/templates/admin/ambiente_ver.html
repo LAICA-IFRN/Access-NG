@@ -110,7 +110,7 @@
             {% endif %}
             <form method="POST" action="{{ url_for('admin_ambiente_usuario_tag_escopo_toggle', id=ambiente.id, usuario_id=item.usuario.id, tag_id=t.id) }}"
                   style="display:inline;" {% if confirmacao %}onsubmit="return confirm('{{ confirmacao }}')"{% endif %}>
-              <button class="btn btn-sm py-0 px-1" style="font-size:.68rem;">{{ 'Tirar daqui' if t.vale_aqui else 'Liberar aqui' }}</button>
+              <button class="btn btn-sm py-0 px-1 {{ 'btn-outline-secondary' if t.vale_aqui else 'btn-outline-warning' }}" style="font-size:.68rem;">{{ 'Tirar daqui' if t.vale_aqui else 'Liberar aqui' }}</button>
             </form>
             {% endif %}
           </div>
