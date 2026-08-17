@@ -39,6 +39,17 @@ usuarios_web = Table(
     Column("ambiente_id", ForeignKey("ambientes.id"), primary_key=True),
 )
 
+# Escopo opcional de uma TAG: a quais Ambientes especificamente ela vale.
+# Uma TAG sem nenhuma linha aqui continua valendo em qualquer Ambiente onde
+# o dono já é frequentador (comportamento padrão/retrocompatível); assim
+# que ela ganha pelo menos um Ambiente aqui, passa a valer só nos listados.
+tags_ambientes = Table(
+    "tags_ambientes",
+    Base.metadata,
+    Column("tag_id", ForeignKey("tags.id"), primary_key=True),
+    Column("ambiente_id", ForeignKey("ambientes.id"), primary_key=True),
+)
+
 
 class Usuario(Base):
     __tablename__ = 'usuarios'
@@ -72,6 +83,8 @@ class TAG(Base):
     numero: Mapped[str] = mapped_column(String(50))
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     usuario: Mapped["Usuario"] = relationship(back_populates="tags")
+    # Vazio = vale em qualquer Ambiente do usuário. Não-vazio = só nesses.
+    ambientes: Mapped[List[Ambiente]] = relationship(secondary=tags_ambientes, back_populates="tags_escopo")
 
 
 class MAC(Base):
@@ -93,6 +106,7 @@ class Ambiente(Base):
     web_habilitado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     frequentadores: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes, back_populates="ambientes")
     usuarios_web: Mapped[List[Usuario]] = relationship(secondary=usuarios_web, back_populates="ambientes_web")
+    tags_escopo: Mapped[List["TAG"]] = relationship(secondary=tags_ambientes, back_populates="ambientes")
     papeis: Mapped[List["PapelAmbiente"]] = relationship(back_populates="ambiente", cascade="all, delete-orphan")
     cerberoses: Mapped[List[Cerberos]] = relationship(back_populates="ambiente")
     carontes: Mapped[List[Caronte]] = relationship(back_populates="ambiente")
