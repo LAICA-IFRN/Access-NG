@@ -1658,11 +1658,23 @@ def admin_ambiente_ver(id):
     web_ids = {u.id for u in ambiente.usuarios_web}
     usuarios_vinculados = sorted(
         (
-            {'usuario': u, 'papel': _papel_em(u, id), 'tag': u.tag.numero if u.tag else None,
+            {'usuario': u, 'papel': _papel_em(u, id),
+             'tags': [t.numero for t in u.tags if t.numero],
              'pode_web': u.id in web_ids}
             for u in ambiente.frequentadores
         ),
         key=lambda item: item['usuario'].nome,
+    )
+    # Uma entrada por (usuário, TAG) - não por usuário - já que agora um
+    # usuário pode ter mais de uma TAG na whitelist local dos Carontes.
+    tags_whitelist = sorted(
+        (
+            {'tag': t.numero, 'usuario': u}
+            for u in ambiente.frequentadores
+            for t in u.tags
+            if t.numero
+        ),
+        key=lambda item: item['tag'],
     )
 
     return render_template(
@@ -1673,6 +1685,7 @@ def admin_ambiente_ver(id):
         ate=ate.isoformat(),
         dispositivos=dispositivos,
         usuarios_vinculados=usuarios_vinculados,
+        tags_whitelist=tags_whitelist,
         pode_criar_usuarios=pode_criar_usuarios(usuario, id),
         pode_editar_usuarios=pode_editar_usuarios(usuario, id),
         pode_gerenciar_dispositivos=pode_gerenciar_dispositivos(usuario, id),
