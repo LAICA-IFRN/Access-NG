@@ -2760,16 +2760,36 @@ def admin_logs_limpar():
     return redirect(url_for('admin_logs'))
 
 
-def _upsert_tag(usuario, numero):
-    numero = (numero or '').strip()
-    existing = db.query(TAG).filter(TAG.usuario_id == usuario.id).first()
-    if numero:
-        if existing:
-            existing.numero = numero
-        else:
-            db.add(TAG(numero=numero, usuario_id=usuario.id))
-    elif existing:
-        db.delete(existing)
+def _tags_conflitantes(numeros, excluir_usuario_id=None):
+    """Números de `numeros` já cadastrados para OUTRO usuário - vazio
+    significa que todos estão livres pra uso. `numero` não é único a
+    nível de banco (migração homemade só faz ALTER TABLE ADD COLUMN, sem
+    suporte a adicionar constraint numa tabela existente), então essa
+    checagem na aplicação é a única coisa impedindo dois usuários com a
+    mesma TAG."""
+    if not numeros:
+        return []
+    q = db.query(TAG.numero).filter(TAG.numero.in_(numeros))
+    if excluir_usuario_id is not None:
+        q = q.filter(TAG.usuario_id != excluir_usuario_id)
+    return sorted({row[0] for row in q.distinct().all()})
+
+
+def _sync_tags(usuario, numeros):
+    """Substitui o conjunto de TAGs do usuário pelos números passados -
+    mantém as linhas cujo número não mudou, remove as que saíram, cria as
+    novas. Assume que `numeros` já passou por _tags_conflitantes() (não
+    valida unicidade de novo aqui). Duplicatas dentro de `numeros` são
+    silenciosamente ignoradas."""
+    numeros = list(dict.fromkeys(n.strip() for n in numeros if n and n.strip()))
+    existentes = db.query(TAG).filter(TAG.usuario_id == usuario.id).all()
+    por_numero = {t.numero: t for t in existentes}
+    for t in existentes:
+        if t.numero not in numeros:
+            db.delete(t)
+    for n in numeros:
+        if n not in por_numero:
+            db.add(TAG(numero=n, usuario_id=usuario.id))
 
 
 def _sync_tags_ambientes(ambiente_ids):
