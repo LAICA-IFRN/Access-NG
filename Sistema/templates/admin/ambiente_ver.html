@@ -77,8 +77,9 @@
   <div class="card-body pb-0 pt-2">
     <p style="color:#888; font-size:.78rem; margin-bottom:0;">
       Por padrão, qualquer TAG de um usuário vale em todos os Tartaros onde ele
-      tem acesso. "Tirar daqui" restringe uma TAG a valer só nos Tartaros
-      marcados; "Liberar aqui" libera de novo.
+      tem acesso. "Restringir a só este Tartaro" tira essa TAG de todos os
+      outros; com uma TAG já restrita, "Tirar daqui"/"Liberar aqui" ligam e
+      desligam este Tartaro específico no escopo dela.
     </p>
   </div>
   {% endif %}
@@ -101,16 +102,25 @@
             <span style="font-family:monospace; color:{{ '#c9a227' if t.vale_aqui else '#666' }};">{{ t.numero }}</span>
             {% if not t.vale_aqui %}<small style="color:#888;">(não vale aqui)</small>{% endif %}
             {% if pode_editar_usuarios %}
-            {% if t.vale_aqui and not t.restrita %}
+            {% if not t.restrita %}
+              {# universal hoje - marcar aqui restringe a TAG a valer SÓ neste Tartaro #}
+              {% set label = 'Restringir a só este Tartaro' %}
+              {% set btnclass = 'btn-outline-warning' %}
               {% set confirmacao = 'Isso vai restringir esta TAG só a este Tartaro — ela deixa de valer nos outros Tartaros onde este usuário tem acesso. Continuar?' %}
-            {% elif t.vale_aqui and t.restrita and t.total_escopos == 1 %}
-              {% set confirmacao = 'Isso remove a última restrição desta TAG — ela volta a valer em QUALQUER Tartaro onde este usuário tem acesso. Continuar?' %}
+            {% elif t.vale_aqui %}
+              {# já restrita e inclui este Tartaro - aqui sim é remoção de fato #}
+              {% set label = 'Tirar daqui' %}
+              {% set btnclass = 'btn-outline-secondary' %}
+              {% set confirmacao = 'Isso remove a última restrição desta TAG — ela volta a valer em QUALQUER Tartaro onde este usuário tem acesso. Continuar?' if t.total_escopos == 1 else None %}
             {% else %}
+              {# restrita a outro(s) Tartaro(s), não inclui este ainda #}
+              {% set label = 'Liberar aqui' %}
+              {% set btnclass = 'btn-outline-warning' %}
               {% set confirmacao = None %}
             {% endif %}
             <form method="POST" action="{{ url_for('admin_ambiente_usuario_tag_escopo_toggle', id=ambiente.id, usuario_id=item.usuario.id, tag_id=t.id) }}"
                   style="display:inline;" {% if confirmacao %}onsubmit="return confirm('{{ confirmacao }}')"{% endif %}>
-              <button class="btn btn-sm py-0 px-1 {{ 'btn-outline-secondary' if t.vale_aqui else 'btn-outline-warning' }}" style="font-size:.68rem;">{{ 'Tirar daqui' if t.vale_aqui else 'Liberar aqui' }}</button>
+              <button class="btn btn-sm py-0 px-1 {{ btnclass }}" style="font-size:.68rem;">{{ label }}</button>
             </form>
             {% endif %}
           </div>
