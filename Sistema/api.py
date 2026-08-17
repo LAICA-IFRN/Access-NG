@@ -1659,20 +1659,27 @@ def admin_ambiente_ver(id):
     usuarios_vinculados = sorted(
         (
             {'usuario': u, 'papel': _papel_em(u, id),
-             'tags': [t.numero for t in u.tags if t.numero],
+             'tags': [
+                 {'id': t.id, 'numero': t.numero, 'restrita': bool(t.ambientes),
+                  'total_escopos': len(t.ambientes),
+                  'vale_aqui': (not t.ambientes) or (ambiente in t.ambientes)}
+                 for t in u.tags if t.numero
+             ],
              'pode_web': u.id in web_ids}
             for u in ambiente.frequentadores
         ),
         key=lambda item: item['usuario'].nome,
     )
-    # Uma entrada por (usuário, TAG) - não por usuário - já que agora um
-    # usuário pode ter mais de uma TAG na whitelist local dos Carontes.
+    # Uma entrada por (usuário, TAG) que de fato vale neste Ambiente - não
+    # por usuário, já que agora um usuário pode ter mais de uma TAG, e uma
+    # TAG restrita a outro(s) Ambiente(s) não deve aparecer na whitelist
+    # local dos Carontes daqui.
     tags_whitelist = sorted(
         (
             {'tag': t.numero, 'usuario': u}
             for u in ambiente.frequentadores
             for t in u.tags
-            if t.numero
+            if t.numero and (not t.ambientes or ambiente in t.ambientes)
         ),
         key=lambda item: item['tag'],
     )
