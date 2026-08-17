@@ -39,7 +39,11 @@ class Tartaro():
         result['ambiente'] = caronte.ambiente
 
         for user in caronte.ambiente.frequentadores:
-            if tag in {t.numero for t in user.tags if t.numero}:
+            match = next((t for t in user.tags if t.numero == tag), None)
+            # TAG sem nenhum Ambiente associado vale em qualquer um onde o
+            # usuário tem acesso (padrão); com Ambiente(s) associado(s),
+            # só vale nesses.
+            if match and (not match.ambientes or caronte.ambiente in match.ambientes):
                 result['allow'] = True
                 result['usuario'] = user
                 break
