@@ -1728,6 +1728,11 @@ def admin_ambiente_usuario_adicionar(id):
                 Usuario.matricula.contains(search),
                 TAG.numero.contains(search),
             ))
+            # Um usuário com várias TAGs pode casar mais de uma vez no
+            # join acima - sem distinct() ele apareceria repetido (e
+            # ainda por cima "roubando" vagas do limit(20) de outros
+            # candidatos).
+            .distinct()
             .order_by(Usuario.nome)
             .limit(20)
             .all()
@@ -2828,7 +2833,7 @@ def admin_usuarios():
     else:
         query = db.query(Usuario)
         if ambiente_ids is not None:
-            query = query.join(Usuario.ambientes).filter(Ambiente.id.in_(ambiente_ids)).distinct()
+            query = query.join(Usuario.ambientes).filter(Ambiente.id.in_(ambiente_ids))
         if pendente_only:
             query = query.filter(Usuario.aprovado == False)
         if search:
@@ -2837,7 +2842,12 @@ def admin_usuarios():
                 Usuario.matricula.contains(search),
                 TAG.numero.contains(search),
             ))
-        query = query.order_by(Usuario.aprovado.asc(), Usuario.nome)
+        # distinct() aqui (não em cada join individualmente) cobre tanto o
+        # join de escopo por ambiente quanto o de busca por TAG - um
+        # usuário com várias TAGs/ambientes pode casar mais de uma vez em
+        # qualquer um dos dois, e sem isso tanto a listagem quanto o
+        # total/paginação abaixo contariam linhas duplicadas.
+        query = query.distinct().order_by(Usuario.aprovado.asc(), Usuario.nome)
         total = query.count()
         total_pages = max(1, -(-total // _USUARIOS_POR_PAGINA))  # ceil division
         page = min(page, total_pages)
