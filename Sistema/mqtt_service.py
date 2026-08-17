@@ -186,9 +186,13 @@ class MqttService:
         """TAGs de todos os frequentadores do ambiente (mesmo critério de
         acesso usado por Tartaro.autenticarTAGDetalhado): quem pode acessar
         localmente é quem pode acessar via MQTT. Um usuário pode ter mais
-        de uma TAG - cada uma vira uma entrada própria na whitelist."""
+        de uma TAG - cada uma vira uma entrada própria na whitelist. Uma
+        TAG associada a Ambiente(s) específico(s) só entra na whitelist
+        desses; sem associação nenhuma, vale em qualquer Ambiente do
+        usuário (e entra na whitelist de todos)."""
         return sorted({
-            t.numero for u in ambiente.frequentadores for t in u.tags if t.numero
+            t.numero for u in ambiente.frequentadores for t in u.tags
+            if t.numero and (not t.ambientes or ambiente in t.ambientes)
         })
 
     def sync_tags_caronte(self, caronte):
