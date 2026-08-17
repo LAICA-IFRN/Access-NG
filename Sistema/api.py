@@ -1853,6 +1853,40 @@ def admin_ambiente_usuario_web_toggle(id, usuario_id):
     return redirect(url_for('admin_ambiente_ver', id=id))
 
 
+@app.route('/admin/ambientes/<int:id>/usuarios/<int:usuario_id>/tags/<int:tag_id>/escopo', methods=['POST'])
+@painel_required
+def admin_ambiente_usuario_tag_escopo_toggle(id, usuario_id, tag_id):
+    """Liga/desliga se uma TAG específica de um usuário vale neste
+    Tartaro. Uma TAG sem nenhum Ambiente associado vale em todos onde o
+    usuário tem acesso; assim que ganha o primeiro Ambiente aqui, passa a
+    valer só nos que forem marcados - por isso o template pede confirmação
+    quando a ação for a primeira restrição ou a última remoção."""
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    if not pode_editar_usuarios(usuario, id):
+        abort(403)
+
+    alvo = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if alvo is None or alvo not in ambiente.frequentadores:
+        abort(404)
+
+    tag = db.query(TAG).filter(TAG.id == tag_id, TAG.usuario_id == alvo.id).first()
+    if tag is None:
+        abort(404)
+
+    if ambiente in tag.ambientes:
+        tag.ambientes.remove(ambiente)
+        flash(f'TAG {tag.numero} não vale mais neste Tartaro.', 'success')
+    else:
+        tag.ambientes.append(ambiente)
+        flash(f'TAG {tag.numero} agora vale neste Tartaro.', 'success')
+    db.commit()
+    _sync_tags_ambientes([a.id for a in alvo.ambientes])
+    return redirect(url_for('admin_ambiente_ver', id=id))
+
+
 @app.route('/admin/ambientes/novo', methods=['GET', 'POST'])
 @admin_required
 def admin_ambiente_novo():
