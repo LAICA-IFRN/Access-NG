@@ -53,7 +53,13 @@ class Usuario(Base):
     # OAuth e ainda não foi aprovado - fica sem acesso a nenhum Tartaro até
     # a aprovação, mesmo que a matrícula bata com um cadastro futuro.
     aprovado: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    tag: Mapped["TAG"] = relationship(back_populates="usuario")
+    # Um usuário pode ter várias TAGs (cartões físicos diferentes emitidos
+    # em Tartaros diferentes, por exemplo) - qualquer uma autentica onde
+    # ele já tem permissão de Ambiente, sem noção de TAG "default"/
+    # preferida. Unicidade de TAG.numero (nenhum outro usuário pode ter o
+    # mesmo número) é validada na aplicação (ver _tags_conflitantes em
+    # api.py), não como constraint de banco.
+    tags: Mapped[List["TAG"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
     mac: Mapped["MAC"] = relationship(back_populates="usuario")
     ambientes: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes, back_populates="frequentadores")
     ambientes_web: Mapped[List[Ambiente]] = relationship(secondary=usuarios_web, back_populates="usuarios_web")
@@ -65,7 +71,7 @@ class TAG(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     numero: Mapped[str] = mapped_column(String(50))
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
-    usuario: Mapped["Usuario"] = relationship(back_populates="tag")
+    usuario: Mapped["Usuario"] = relationship(back_populates="tags")
 
 
 class MAC(Base):
