@@ -12,12 +12,12 @@
         <div class="form-group col-md-8">
           <label>Nome</label>
           <input name="nome" type="text" class="form-control"
-                 value="{{ usuario.nome if usuario else '' }}" required>
+                 value="{{ valores.nome if valores is defined and valores else (usuario.nome if usuario else '') }}" required>
         </div>
         <div class="form-group col-md-4">
           <label>Matrícula</label>
           <input name="matricula" type="text" class="form-control"
-                 value="{{ usuario.matricula if usuario else '' }}" required>
+                 value="{{ valores.matricula if valores is defined and valores else (usuario.matricula if usuario else '') }}" required>
         </div>
       </div>
       <div class="form-row">
@@ -34,20 +34,25 @@
           <small style="color:#555;">Usada para acessar o painel administrativo.</small>
         </div>
       </div>
-      <div class="form-row" style="display:none;" id="dummy-row-placeholder"></div>
+      <div class="form-row">
         <div class="form-group col-md-6">
-          <label>TAG RFID <small style="color:#555;">(deixe em branco para remover)</small></label>
-          <input name="tag" type="text" class="form-control"
-                 value="{{ usuario.tag.numero if usuario and usuario.tag else '' }}"
-                 placeholder="Ex: A3F2E1B0">
-          <small style="color:#555;">Identificador do cartão ou tag virtual (ex: <code style="color:#888;">btn_local</code>)</small>
+          <label>TAGs RFID <small style="color:#555;">(apague o texto de uma TAG pra remover; use o botão pra adicionar outra)</small></label>
+          <div id="tags-wrapper">
+            {% for numero in (valores.tags if valores is defined and valores else (usuario.tags | map(attribute='numero') | list if usuario else [])) %}
+            <input name="tags" type="text" class="form-control mb-1" value="{{ numero }}" placeholder="Ex: A3F2E1B0">
+            {% endfor %}
+            <input name="tags" type="text" class="form-control mb-1" value="" placeholder="Ex: A3F2E1B0">
+          </div>
+          <button type="button" id="add-tag-btn" class="btn btn-sm btn-outline-secondary py-0 px-2">+ Adicionar outra TAG</button>
+          <small style="color:#555; display:block; margin-top:.25rem;">Identificador do cartão ou tag virtual (ex: <code style="color:#888;">btn_local</code>). Qualquer uma dessas TAGs autentica o usuário em qualquer Tartaro onde ele já tem permissão.</small>
+          {% if erro_tag %}<div class="text-danger" style="font-size:.85rem; margin-top:.25rem;">{{ erro_tag }}</div>{% endif %}
         </div>
       </div>
       {% if current_usuario.admin %}
       <div class="form-group">
         <div class="form-check">
           <input class="form-check-input" type="checkbox" name="admin" id="adminCheck"
-                 {% if usuario and usuario.admin %}checked{% endif %}>
+                 {% if (valores.admin if valores is defined and valores else (usuario and usuario.admin)) %}checked{% endif %}>
           <label class="form-check-label" for="adminCheck" style="color:#c9a227;">Administrador</label>
         </div>
       </div>
@@ -63,18 +68,20 @@
       {% if pode_papel.get(from_ambiente.id) %}
       <div class="form-group" style="max-width:220px;">
         <label>Papel neste Tartaro</label>
+        {% set papel_from_ambiente = valores.papel if valores is defined and valores else '' %}
         <select name="papel" class="form-control">
           <option value="">Sem papel</option>
-          <option value="colaborador">Colaborador</option>
-          <option value="leitor">Leitor</option>
-          {% if current_usuario.admin %}<option value="gerente">Gerente</option>{% endif %}
+          <option value="colaborador" {% if papel_from_ambiente == 'colaborador' %}selected{% endif %}>Colaborador</option>
+          <option value="leitor" {% if papel_from_ambiente == 'leitor' %}selected{% endif %}>Leitor</option>
+          {% if current_usuario.admin %}<option value="gerente" {% if papel_from_ambiente == 'gerente' %}selected{% endif %}>Gerente</option>{% endif %}
         </select>
       </div>
       {% endif %}
       {% if from_ambiente.web_habilitado %}
       <div class="form-group">
         <div class="form-check">
-          <input class="form-check-input" type="checkbox" name="permitir_web" id="permitirWebCheck">
+          <input class="form-check-input" type="checkbox" name="permitir_web" id="permitirWebCheck"
+                 {% if valores is defined and valores and valores.permitir_web %}checked{% endif %}>
           <label class="form-check-label" for="permitirWebCheck">Permitir Caronte Web neste Tartaro</label>
         </div>
       </div>
@@ -84,22 +91,24 @@
         <label>Acesso aos Tartaros</label>
         <div style="max-height:220px; overflow-y:auto; border:1px solid #2d2d4e; border-radius:4px; padding:.5rem;">
           {% for a in ambientes %}
+          {% set amb_marcado = (a.id in valores.ambientes) if (valores is defined and valores) else (usuario and a in usuario.ambientes) %}
           <div class="d-flex justify-content-between align-items-center mb-1">
             <div class="form-check">
               <input class="form-check-input" type="checkbox" name="ambientes"
                      value="{{ a.id }}" id="amb-{{ a.id }}"
-                     {% if usuario and a in usuario.ambientes %}checked{% endif %}>
+                     {% if amb_marcado %}checked{% endif %}>
               <label class="form-check-label" for="amb-{{ a.id }}" style="font-size:.9rem;">
                 {{ a.nome }} <small style="color:#666;">/ {{ a.local }}</small>
               </label>
             </div>
             {% if pode_papel.get(a.id) %}
+            {% set papel_atual = valores.papeis.get(a.id) if valores is defined and valores else papeis_atuais.get(a.id) %}
             <select name="papel_{{ a.id }}" class="form-control form-control-sm" style="width:auto;">
               <option value="">Sem papel</option>
-              <option value="colaborador" {% if papeis_atuais.get(a.id) == 'colaborador' %}selected{% endif %}>Colaborador</option>
-              <option value="leitor" {% if papeis_atuais.get(a.id) == 'leitor' %}selected{% endif %}>Leitor</option>
+              <option value="colaborador" {% if papel_atual == 'colaborador' %}selected{% endif %}>Colaborador</option>
+              <option value="leitor" {% if papel_atual == 'leitor' %}selected{% endif %}>Leitor</option>
               {% if current_usuario.admin %}
-              <option value="gerente" {% if papeis_atuais.get(a.id) == 'gerente' %}selected{% endif %}>Gerente</option>
+              <option value="gerente" {% if papel_atual == 'gerente' %}selected{% endif %}>Gerente</option>
               {% endif %}
             </select>
             {% endif %}
@@ -127,6 +136,20 @@
   }
   adminCheck.addEventListener('change', update);
   update();
+})();
+(function() {
+  var addTagBtn = document.getElementById('add-tag-btn');
+  var tagsWrapper = document.getElementById('tags-wrapper');
+  if (!addTagBtn) { return; }
+  addTagBtn.addEventListener('click', function() {
+    var input = document.createElement('input');
+    input.name = 'tags';
+    input.type = 'text';
+    input.className = 'form-control mb-1';
+    input.placeholder = 'Ex: A3F2E1B0';
+    tagsWrapper.appendChild(input);
+    input.focus();
+  });
 })();
 </script>
 {% endblock %}
