@@ -39,13 +39,10 @@ class Tartaro():
         result['ambiente'] = caronte.ambiente
 
         for user in caronte.ambiente.frequentadores:
-            try:
-                if user.tag.numero == tag and user.tag.numero is not None:
-                    result['allow'] = True
-                    result['usuario'] = user
-                    break
-            except AttributeError:
-                continue
+            if tag in {t.numero for t in user.tags if t.numero}:
+                result['allow'] = True
+                result['usuario'] = user
+                break
 
         if result['allow']:
             for c in caronte.ambiente.cerberoses:
