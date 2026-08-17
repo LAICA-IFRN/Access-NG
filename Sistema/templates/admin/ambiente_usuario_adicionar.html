@@ -28,7 +28,7 @@
         <tr>
           <td>{{ u.nome }}</td>
           <td style="font-family:monospace; font-size:.85rem;">{{ u.matricula }}</td>
-          <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">{{ u.tag.numero if u.tag else '—' }}</td>
+          <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">{{ u.tags | map(attribute='numero') | join(', ') if u.tags else '—' }}</td>
           <td colspan="2">
             <form method="POST" action="{{ url_for('admin_ambiente_usuario_vincular', id=ambiente.id) }}"
                   class="form-inline">

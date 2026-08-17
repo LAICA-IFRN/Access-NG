@@ -85,7 +85,7 @@
       <tr>
         <td>{{ item.usuario.nome }}</td>
         <td style="font-family:monospace; font-size:.85rem;">{{ item.usuario.matricula }}</td>
-        <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">{{ item.tag or '—' }}</td>
+        <td style="font-family:monospace; font-size:.82rem; color:#c9a227;">{{ item.tags | join(', ') if item.tags else '—' }}</td>
         <td>
           {% if item.papel %}<span class="badge" style="background:#2d2d4e; color:#ccc;">{{ item.papel }}</span>{% else %}—{% endif %}
         </td>
@@ -121,7 +121,6 @@
 </div>
 
 {% if ambiente.carontes %}
-{% set tags_whitelist = usuarios_vinculados | selectattr('tag') | sort(attribute='tag') %}
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center">
     <span>Whitelist local dos Carontes ({{ tags_whitelist | length }} tag(s))</span>
