@@ -322,6 +322,23 @@ homemade de migração do resto do projeto. Gerenciar as TAGs de um usuário
 (`/admin/usuarios/novo` e `/admin/usuarios/<id>/editar`); `/caronte/perfil` só
 exibe a lista, somente leitura.
 
+Cada TAG tem também um relacionamento muitos-para-muitos com `Ambiente` via a
+tabela `tags_ambientes` (`tag_id`, `ambiente_id`), opcional: **sem nenhuma
+linha associada, a TAG vale em qualquer Tartaro onde o usuário já é
+frequentador** (comportamento padrão/retrocompatível — toda TAG criada antes
+dessa mudança continua funcionando exatamente como antes). Assim que a TAG
+ganha pelo menos um Ambiente associado, ela passa a valer **só** nos Ambientes
+marcados, mesmo que o usuário tenha acesso a outros. Isso é configurado por
+Tartaro, na seção "Usuários" de `/admin/ambientes/<id>` — cada TAG do usuário
+aparece com um botão "Tirar daqui"/"Liberar aqui" que liga/desliga aquele
+Ambiente específico no escopo da TAG (`admin_ambiente_usuario_tag_escopo_toggle`
+em `api.py`). O toggle pede confirmação quando a ação é a primeira restrição
+de uma TAG até então universal, ou a remoção da última restrição (volta a
+valer em qualquer Tartaro) — as duas situações onde o efeito colateral é mais
+fácil de não perceber. `Tartaro.autenticarTAGDetalhado()` e
+`mqtt_service._tags_do_ambiente()` (whitelist local dos Carontes) respeitam
+esse escopo.
+
 ### MAC
 
 Tabela: `macs`
@@ -791,13 +808,14 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/` | Visão Geral: contagens de ambientes/Cerberoses/Carontes/usuários, uma lista "Ambientes (Tartaros)" com status agregado de cada um, card "Status dos Dispositivos" (online/offline/desconhecido, somando Cerberos e Caronte), gráficos de linha de latência média da API (24h) e de aberturas por dia (14 dias), e últimas atividades/tentativas de acesso. |
 | `GET` | `/admin/ambientes` | Lista Tartaros. |
 | `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
-| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias), a lista dos equipamentos daquele Tartaro com o SLA (24h) de cada um, e a seção "Usuários" (quem tem acesso, papel, TAG e, se `web_habilitado`, permissão de Caronte Web — com botão "+ Adicionar usuário"). |
+| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias), a lista dos equipamentos daquele Tartaro com o SLA (24h) de cada um, e a seção "Usuários" (quem tem acesso, papel, TAG(s) — com toggle "Tirar/Liberar daqui" pra restringir cada TAG a este Tartaro — e, se `web_habilitado`, permissão de Caronte Web — com botão "+ Adicionar usuário"). |
 | `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro, incluindo o checkbox "Permite Caronte Web" (`web_habilitado`). |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
 | `GET` | `/admin/ambientes/<id>/usuarios/adicionar` | Tela para vincular um usuário existente (busca por nome/matrícula/TAG) ou criar um novo já pré-vinculado a esse Tartaro (sem passar pelo checklist de todos os ambientes). |
 | `POST` | `/admin/ambientes/<id>/usuarios/vincular` | Vincula um usuário existente ao Tartaro, com papel opcional e permissão opcional de Caronte Web. |
 | `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/remover` | Desvincula o usuário do Tartaro (remove papel e permissão de Caronte Web também). |
 | `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/web` | Liga/desliga a permissão desse usuário usar o Caronte Web nesse Tartaro específico (`usuarios_web`). |
+| `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/tags/<tag_id>/escopo` | Liga/desliga se uma TAG específica do usuário vale neste Tartaro (ver [Modelo de dados](#modelo-de-dados)). |
 | `GET` | `/admin/cerberoses` | Lista Cerberoses. |
 | `POST` | `/admin/cerberoses/verificar-atualizacao` | Notifica via MQTT (`check_update`) todos os Cerberoses listados (escopados ao papel do usuário) para verificarem se há firmware novo agora. |
 | `GET/POST` | `/admin/cerberoses/novo` | Cria Cerberos. |
@@ -2119,3 +2137,9 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   as TAGs de um usuário é ação exclusiva do painel admin; `/caronte/perfil`
   agora só exibe a lista, somente leitura — veja [Modelo de
   dados](#modelo-de-dados).
+- Cada TAG pode opcionalmente ser restrita a um subconjunto dos Tartaros do
+  usuário (tabela N:N `tags_ambientes`) — sem restrição, continua valendo em
+  todos, como antes. Configurável na seção "Usuários" de
+  `/admin/ambientes/<id>`, com um toggle por TAG que avisa antes de
+  restringir uma TAG até então universal ou de remover a última restrição —
+  veja [Modelo de dados](#modelo-de-dados).
