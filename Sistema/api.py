@@ -2023,7 +2023,9 @@ def admin_cerberoses():
     q = db.query(Cerberos)
     if ambiente_ids is not None:
         q = q.filter(Cerberos.ambiente_id.in_(ambiente_ids))
-    return render_template('admin/cerberoses.html', cerberoses=q.all())
+    cerberoses = q.all()
+    versoes_map = {c.id: _status_versoes('cerberos', c) for c in cerberoses}
+    return render_template('admin/cerberoses.html', cerberoses=cerberoses, versoes_map=versoes_map)
 
 
 @app.route('/admin/cerberoses/verificar-atualizacao', methods=['POST'])
@@ -2072,6 +2074,7 @@ def admin_cerberos_ver(id):
         'admin/cerberos_ver.html', c=c, sla_24h=sla_24h, sla_serie=sla_serie,
         unidade=unidade, quantidade=quantidade,
         pode_editar=pode_gerenciar_dispositivos(usuario, c.ambiente_id),
+        versoes=_status_versoes('cerberos', c),
     )
 
 
@@ -2349,7 +2352,9 @@ def admin_carontes():
     q = db.query(Caronte)
     if ambiente_ids is not None:
         q = q.filter(Caronte.ambiente_id.in_(ambiente_ids))
-    return render_template('admin/carontes.html', carontes=q.all())
+    carontes = q.all()
+    versoes_map = {c.id: _status_versoes('caronte', c) for c in carontes}
+    return render_template('admin/carontes.html', carontes=carontes, versoes_map=versoes_map)
 
 
 @app.route('/admin/carontes/verificar-atualizacao', methods=['POST'])
@@ -2398,6 +2403,7 @@ def admin_caronte_ver(id):
         'admin/caronte_ver.html', c=c, sla_24h=sla_24h, sla_serie=sla_serie,
         unidade=unidade, quantidade=quantidade,
         pode_editar=pode_gerenciar_dispositivos(usuario, c.ambiente_id),
+        versoes=_status_versoes('caronte', c),
     )
 
 
