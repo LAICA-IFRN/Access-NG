@@ -391,6 +391,8 @@ class MqttService:
             device.status       = 'online'
             if payload.get('versao'):
                 device.versao_firmware = payload['versao']
+            if payload.get('accessng_versao'):
+                device.accessng_versao = payload['accessng_versao']
             if payload.get('boot_count') is not None:
                 device.boot_count = payload['boot_count']
             if payload.get('hardware'):
@@ -449,6 +451,8 @@ class MqttService:
                     device.status    = 'online'
                     if payload.get('versao'):
                         device.versao_firmware = payload['versao']
+                    if payload.get('accessng_versao'):
+                        device.accessng_versao = payload['accessng_versao']
                     if payload.get('ip'):
                         device.ip = payload['ip']
                     if payload.get('uptime'):
