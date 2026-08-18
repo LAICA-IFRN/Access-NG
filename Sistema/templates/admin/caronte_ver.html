@@ -8,7 +8,29 @@
     <small style="color:#888;">{{ c.ambiente.nome }}</small>
     <span class="badge badge-{{ c.status or 'unknown' }} ml-2">{{ c.status or 'unknown' }}</span>
     <br>
-    <small style="color:#888;">Firmware: v{{ c.versao_firmware or 'desconhecida' }}</small>
+    <small style="color:#888;">
+      Firmware: v{{ c.versao_firmware or 'desconhecida' }}
+      {% if versoes and versoes.firmware_ultima %}
+        {% if versoes.firmware_desatualizado %}
+        <span style="color:#e05;">(desatualizado — última: v{{ versoes.firmware_ultima }})</span>
+        {% else %}
+        <span style="color:#4e9;">(atualizado)</span>
+        {% endif %}
+      {% endif %}
+    </small>
+    {% if versoes %}
+    <br>
+    <small style="color:#888;">
+      accessng: v{{ versoes.accessng_atual or 'desconhecida' }}
+      {% if versoes.accessng_ultima %}
+        {% if versoes.accessng_desatualizado %}
+        <span style="color:#e05;">(desatualizado — última: v{{ versoes.accessng_ultima }})</span>
+        {% else %}
+        <span style="color:#4e9;">(atualizado)</span>
+        {% endif %}
+      {% endif %}
+    </small>
+    {% endif %}
   </div>
   <div>
     <a href="{{ url_for('admin_caronte_config', id=c.id) }}" class="btn btn-sm btn-outline-secondary">Configuração remota</a>
