@@ -10,24 +10,20 @@
     <br>
     <small style="color:#888;">
       Firmware: v{{ c.versao_firmware or 'desconhecida' }}
-      {% if versoes and versoes.firmware_ultima %}
-        {% if versoes.firmware_desatualizado %}
-        <span style="color:#e05;">(desatualizado — última: v{{ versoes.firmware_ultima }})</span>
-        {% else %}
-        <span style="color:#4e9;">(atualizado)</span>
-        {% endif %}
+      {% if versoes and versoes.firmware_status == 'desatualizado' %}
+      <span style="color:#e05;">(desatualizado — última: v{{ versoes.firmware_ultima }})</span>
+      {% elif versoes and versoes.firmware_status == 'atualizado' %}
+      <span style="color:#4e9;">(atualizado)</span>
       {% endif %}
     </small>
     {% if versoes %}
     <br>
     <small style="color:#888;">
       accessng: v{{ versoes.accessng_atual or 'desconhecida' }}
-      {% if versoes.accessng_ultima %}
-        {% if versoes.accessng_desatualizado %}
-        <span style="color:#e05;">(desatualizado — última: v{{ versoes.accessng_ultima }})</span>
-        {% else %}
-        <span style="color:#4e9;">(atualizado)</span>
-        {% endif %}
+      {% if versoes.accessng_status == 'desatualizado' %}
+      <span style="color:#e05;">(desatualizado — última: v{{ versoes.accessng_ultima }})</span>
+      {% elif versoes.accessng_status == 'atualizado' %}
+      <span style="color:#4e9;">(atualizado)</span>
       {% endif %}
     </small>
     {% endif %}
