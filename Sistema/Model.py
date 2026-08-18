@@ -150,6 +150,7 @@ class Cerberos(Base):
     broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
     broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="cerberoses")
     versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    accessng_versao: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     uptime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     boot_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -187,6 +188,7 @@ class Caronte(Base):
     broker_id: Mapped[Optional[int]] = mapped_column(ForeignKey("brokers_mqtt.id"), nullable=True)
     broker: Mapped[Optional["BrokerMQTT"]] = relationship(back_populates="carontes")
     versao_firmware: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    accessng_versao: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     uptime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     boot_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -344,3 +346,6 @@ _add_column_if_missing('usuarios', 'aprovado', 'BOOLEAN DEFAULT 1')
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'fs_free', 'INTEGER')
     _add_column_if_missing(_table, 'fs_total', 'INTEGER')
+
+for _table in ('cerberoses', 'carontes'):
+    _add_column_if_missing(_table, 'accessng_versao', 'VARCHAR(30)')
