@@ -414,6 +414,12 @@ Tabela: `cerberoses`
 - `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
 - `versao_firmware`, `ip`, `uptime`, `boot_count`, `hardware`, `mcu`, `ssid` — reportados
   no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
+- `accessng_versao` — versão do pacote `accessng/` atualmente instalado no
+  dispositivo (independente de `versao_firmware`, que é só o `main.py`),
+  reportada no coldstart/heartbeat só pelos firmwares MQTT (lida de
+  `state["accessng_version"]`/`boot_state.json`). `None` pra dispositivos
+  REST (firmware antigo, sem esse esquema de versionamento) — ver
+  [Versão disponível no painel](#versão-disponível-no-painel)
 - `rssi`, `mem_free`, `cpu_temp`, `fs_free` — diagnóstico reportado periodicamente
   no heartbeat, com histórico consultável em `/admin/cerberoses/<id>/historico/<metric>`
 - `mem_free_min` — menor valor de `mem_free` já visto desde o boot (equivalente ao
@@ -453,6 +459,12 @@ Tabela: `carontes`
 - `broker_id` (FK para `brokers_mqtt`, usado quando `protocolo=mqtt`)
 - `versao_firmware`, `ip`, `uptime`, `boot_count`, `hardware`, `mcu`, `ssid` — reportados
   no coldstart/heartbeat, exibidos na página de detalhe do dispositivo
+- `accessng_versao` — versão do pacote `accessng/` atualmente instalado no
+  dispositivo (independente de `versao_firmware`, que é só o `main.py`),
+  reportada no coldstart/heartbeat só pelos firmwares MQTT (lida de
+  `state["accessng_version"]`/`boot_state.json`). `None` pra dispositivos
+  REST (firmware antigo, sem esse esquema de versionamento) — ver
+  [Versão disponível no painel](#versão-disponível-no-painel)
 - `rssi`, `mem_free`, `cpu_temp`, `fs_free` — diagnóstico reportado periodicamente
   no heartbeat, com histórico consultável em `/admin/carontes/<id>/historico/<metric>`
 - `mem_free_min` — menor valor de `mem_free` já visto desde o boot (equivalente ao
@@ -1679,8 +1691,30 @@ boot.py/main.py/accessng/](#arquitetura-bootpymainpyaccessng-dos-firmwares-mqtt)
 
 Coldstart e heartbeat (REST e MQTT) podem incluir um campo opcional
 `versao`, gravado em `Cerberos.versao_firmware`/`Caronte.versao_firmware`.
-A versão reportada por último aparece nas páginas
-`/admin/cerberoses/<id>` e `/admin/carontes/<id>`.
+Os firmwares MQTT também reportam `accessng_versao` (versão do pacote
+`accessng/` instalado, independente do `main.py` — lida de
+`state["accessng_version"]`) em `Cerberos.accessng_versao`/
+`Caronte.accessng_versao`. A versão reportada por último aparece nas
+páginas `/admin/cerberoses/<id>` e `/admin/carontes/<id>`.
+
+#### Versão disponível no painel
+
+As páginas de detalhe (`/admin/cerberoses/<id>`, `/admin/carontes/<id>`) e
+as listagens (`/admin/cerberoses`, `/admin/carontes`) mostram, ao lado da
+versão reportada, se o dispositivo está **atualizado** ou **desatualizado**
+— comparando com a versão mais recente conhecida, lida diretamente dos
+`version*.json` do próprio repositório (`_status_versoes()`/
+`_latest_versao_firmware()`/`_latest_versao_accessng()` em `api.py`, os
+mesmos arquivos servidos via `/ota/<filepath>`). Cerberos tem três
+variantes de hardware (BitDogLab/ESP32/ESP32-C3-FECHO, cada uma com seu
+`version*.json` próprio) — a variante certa é escolhida pelo texto de
+`hardware` reportado no último coldstart; Caronte tem um único hardware
+suportado. **Isso é só leitura local, nunca uma requisição de rede** — o
+dispositivo decide sozinho quando de fato atualizar (ver
+`Hardware/accessng/ota.py`), o painel só mostra o que já se sabe. Um
+dispositivo REST (firmware antigo/Arduino) ou que ainda não reportou
+`hardware` nenhuma vez simplesmente não mostra a comparação (nunca marca
+como desatualizado por falta de dado).
 
 ### Diagnóstico e histórico
 
@@ -2148,3 +2182,12 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   `/admin/ambientes/<id>`, com um toggle por TAG que avisa antes de
   restringir uma TAG até então universal ou de remover a última restrição —
   veja [Modelo de dados](#modelo-de-dados).
+- Portal de recovery (`accessng/provisioning.py`) ganhou um segundo botão,
+  "Reiniciar sem salvar" (`POST /reboot`), que só chama `machine.reset()`
+  sem tocar em `config.json`/`boot_state.json` — força uma nova tentativa
+  de conexão na hora, sem esperar os 60s do `_maybe_recover_wifi()`
+  automático nem precisar passar pelo formulário de salvar.
+- Painel mostra "atualizado"/"desatualizado" para firmware e pacote
+  `accessng/` de cada Cerberos/Caronte MQTT, comparando com os
+  `version*.json` locais do repositório — veja [Versão disponível no
+  painel](#versão-disponível-no-painel).
