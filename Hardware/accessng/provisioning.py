@@ -216,6 +216,18 @@ def _handle(conn, device_type, mac_suffix, defaults, sensitive_keys):
         machine.reset()
         return
 
+    if method == "POST" and path == "/reboot":
+        # Só reinicia - não toca em config.json nem no estado de boot
+        # (boot_count/pending_update). Existe pra quem quer forçar uma
+        # nova tentativa de conexão na hora (ex.: acabou de arrumar o
+        # roteador) sem esperar o _maybe_recover_wifi periódico, e sem
+        # precisar passar pelo formulário de "salvar" só pra isso.
+        conn.write(_render_ack(mensagem="Reiniciando sem salvar alterações..."))
+        conn.close()
+        time.sleep(1)
+        machine.reset()
+        return
+
     conn.write(_HTTP_404)
 
 
@@ -396,17 +408,23 @@ def _render_form(device_type, mac_suffix, defaults, sensitive_keys, cfg_file, er
         "%s"
         "<form method='POST' action='/save'>%s"
         "<button type='submit'>Salvar e reiniciar</button>"
+        "</form>"
+        "<form method='POST' action='/reboot' style='margin-top:.5rem;'>"
+        "<button type='submit'>Reiniciar sem salvar</button>"
         "</form></body></html>"
     ) % (_PAGE_CSS, device_type, mac_suffix, versao, error_html, "".join(rows))
 
     return _HTTP_OK_HEADER + body.encode("utf-8")
 
 
-def _render_ack():
+def _render_ack(mensagem=None):
     body = (
         "<html><head><meta charset='utf-8'></head><body>"
-        "<h1>Configuração salva</h1>"
-        "<p>O dispositivo vai reiniciar e tentar conectar à rede informada.</p>"
+        "<h1>%s</h1>"
+        "<p>%s</p>"
         "</body></html>"
+    ) % (
+        "Configuração salva" if mensagem is None else "Reiniciando",
+        mensagem or "O dispositivo vai reiniciar e tentar conectar à rede informada.",
     )
     return _HTTP_OK_HEADER + body.encode("utf-8")
