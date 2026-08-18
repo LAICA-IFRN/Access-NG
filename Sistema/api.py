@@ -133,16 +133,23 @@ def _parse_versao_tupla(v):
         return None
 
 
-def _versao_desatualizada(atual, ultima):
-    """True só quando dá pra concluir que a atual é mais antiga - nunca
-    sinaliza desatualizado por falta de dado (dispositivo REST, hardware
-    ainda não reportado, etc.)."""
-    if not atual or not ultima or atual == ultima:
-        return False
+def _versao_status(atual, ultima):
+    """'desatualizado' | 'atualizado' | 'desconhecido' - 'desconhecido'
+    sempre que falta dado (dispositivo REST, hardware ainda não
+    reportado, accessng_versao de um firmware que ainda não foi
+    atualizado pra reportar esse campo, etc.). Nunca deve ser tratado
+    como "tá tudo bem" - é um terceiro estado, não um sinônimo de
+    'atualizado' (ver o bug que isso causou nos templates antes desta
+    função existir: dispositivo sem dado nenhum aparecia como
+    "atualizado" só porque não dava pra provar que estava desatualizado)."""
+    if not atual or not ultima:
+        return 'desconhecido'
+    if atual == ultima:
+        return 'atualizado'
     a, u = _parse_versao_tupla(atual), _parse_versao_tupla(ultima)
     if a is None or u is None:
-        return True  # já sabemos que são diferentes (checado acima)
-    return a < u
+        return 'desatualizado'  # já sabemos que são diferentes (checado acima)
+    return 'desatualizado' if a < u else 'atualizado'
 
 
 def _status_versoes(device_type, device):
@@ -157,10 +164,10 @@ def _status_versoes(device_type, device):
     return {
         'firmware_atual': device.versao_firmware,
         'firmware_ultima': latest_fw,
-        'firmware_desatualizado': _versao_desatualizada(device.versao_firmware, latest_fw),
+        'firmware_status': _versao_status(device.versao_firmware, latest_fw),
         'accessng_atual': device.accessng_versao,
         'accessng_ultima': latest_acc,
-        'accessng_desatualizado': _versao_desatualizada(device.accessng_versao, latest_acc),
+        'accessng_status': _versao_status(device.accessng_versao, latest_acc),
     }
 
 
