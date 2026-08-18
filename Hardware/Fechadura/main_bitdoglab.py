@@ -142,6 +142,11 @@ MQTT_PREFIX = "access-ng"
 DEVICE_MAC  = None
 AMBIENTE_ID = None
 BOOT_COUNT  = None
+# Versão do pacote accessng/ (independente de FIRMWARE_VERSAO) - lida uma
+# vez de boot_state.json no início de main() e só reportada a partir daí;
+# nunca muda no meio de um boot (qualquer atualização do pacote reinicia
+# o dispositivo antes de devolver o controle - ver ota_check_and_maybe_apply).
+ACCESSNG_VERSAO = None
 
 # --- OTA -----------------------------------------------------------------
 
@@ -704,6 +709,7 @@ def do_coldstart():
             _client.publish(_t()["coldstart"],
                              json.dumps({"mac": DEVICE_MAC, "chave": DEVICE_KEY,
                                          "versao": FIRMWARE_VERSAO,
+                                         "accessng_versao": ACCESSNG_VERSAO,
                                          "boot_count": BOOT_COUNT, "hardware": HARDWARE_INFO,
                                          "mcu": _read_mcu(), "ssid": WIFI_SSID}),
                              qos=1)
@@ -766,6 +772,7 @@ def publish_heartbeat():
         "uptime": _format_uptime(uptime_s),
         "ip": network.WLAN(network.STA_IF).ifconfig()[0],
         "versao": FIRMWARE_VERSAO,
+        "accessng_versao": ACCESSNG_VERSAO,
     }
     _heartbeat_count += 1
     if _heartbeat_count % HEARTBEAT_DIAG_EVERY == 1:
@@ -803,13 +810,14 @@ def publish_tag():
 # --- MAIN --------------------------------------------------------------------
 
 def main():
-    global DEVICE_MAC, BOOT_COUNT, _btn_flag, _unlock_flag, _update_requested
+    global DEVICE_MAC, BOOT_COUNT, ACCESSNG_VERSAO, _btn_flag, _unlock_flag, _update_requested
 
     print("\n" + "=" * 48)
     print("  CERBEROS + CARONTE - BitDogLab V6 (MQTT)")
     print("=" * 48)
 
     state = config.load_state()
+    ACCESSNG_VERSAO = state.get("accessng_version")
     BOOT_COUNT = _read_boot_count()
     # init_display() ANTES de init_gpio(): a checagem de conflito
     # RELAY_PIN/OLED_SCL_PIN/OLED_SDA_PIN em init_gpio() depende de
