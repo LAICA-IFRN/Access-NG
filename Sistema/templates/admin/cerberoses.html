@@ -15,10 +15,11 @@
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
       <thead><tr>
-        <th>Nome</th><th>MAC</th><th>Chave</th><th>Tartaro</th><th>Protocolo</th><th>Status</th><th></th>
+        <th>Nome</th><th>MAC</th><th>Chave</th><th>Tartaro</th><th>Protocolo</th><th>Status</th><th>Versão</th><th></th>
       </tr></thead>
       <tbody>
       {% for c in cerberoses %}
+      {% set versoes = versoes_map.get(c.id) %}
       <tr>
         <td>{{ c.nome }}</td>
         <td style="font-family:monospace; font-size:.8rem;">{{ c.mac }}</td>
@@ -33,6 +34,15 @@
           {% endif %}
         </td>
         <td><span class="badge badge-{{ c.status or 'unknown' }}">{{ c.status or 'unknown' }}</span></td>
+        <td style="font-size:.72rem;">
+          {% if versoes and (versoes.firmware_desatualizado or versoes.accessng_desatualizado) %}
+          <span style="color:#e05;" title="Firmware v{{ c.versao_firmware or '?' }} (última: v{{ versoes.firmware_ultima or '?' }}) · accessng v{{ versoes.accessng_atual or '?' }} (última: v{{ versoes.accessng_ultima or '?' }})">desatualizado</span>
+          {% elif versoes %}
+          <span style="color:#4e9;">atualizado</span>
+          {% else %}
+          <span style="color:#555;">—</span>
+          {% endif %}
+        </td>
         <td class="text-right">
           <form method="POST" action="{{ url_for('admin_cerberos_abrir', id=c.id) }}" style="display:inline;">
             <button class="btn btn-sm btn-gold py-0 px-2">Abrir</button>
@@ -49,7 +59,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-center" style="color:#555;">Nenhum cerberos cadastrado.</td></tr>
+      <tr><td colspan="8" class="text-center" style="color:#555;">Nenhum cerberos cadastrado.</td></tr>
       {% endfor %}
       </tbody>
     </table>
