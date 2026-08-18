@@ -90,6 +90,80 @@ _OTA_ALLOWED_FILES = {
 }
 
 
+# ── Versão disponível (painel) ───────────────────────────────────────────────
+#
+# Só informativo: lê os mesmos version*.json servidos via /ota/<filepath>,
+# nunca faz uma requisição de rede. O dispositivo decide sozinho quando
+# atualizar (ver Hardware/accessng/ota.py) - isto nunca aciona nada, só
+# mostra "última versão conhecida" ao lado do que o dispositivo reportou.
+
+def _read_local_versao(relpath):
+    try:
+        with open(os.path.join(_REPO_ROOT, relpath)) as f:
+            return json.load(f).get('versao')
+    except Exception:
+        return None
+
+
+def _latest_versao_firmware(device_type, hardware):
+    """Escolhe o version*.json certo pelo texto de `hardware` reportado no
+    último coldstart - só existe mais de uma variante para Cerberos (3
+    placas diferentes); Caronte tem um único hardware suportado. None se
+    a variante ainda é desconhecida (nunca reportou `hardware`)."""
+    if device_type == 'caronte':
+        return _read_local_versao('Hardware/Autenticador/version.json')
+    hw = (hardware or '').lower()
+    if 'bitdoglab' in hw:
+        return _read_local_versao('Hardware/Fechadura/version.json')
+    if 'esp32-c3' in hw or 'fecho' in hw:
+        return _read_local_versao('Hardware/Fechadura/version_esp32c3.json')
+    if 'esp32' in hw:
+        return _read_local_versao('Hardware/Fechadura/version_esp32.json')
+    return None
+
+
+def _latest_versao_accessng():
+    return _read_local_versao('Hardware/accessng/version.json')
+
+
+def _parse_versao_tupla(v):
+    try:
+        return tuple(int(p) for p in str(v).split('.'))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _versao_desatualizada(atual, ultima):
+    """True só quando dá pra concluir que a atual é mais antiga - nunca
+    sinaliza desatualizado por falta de dado (dispositivo REST, hardware
+    ainda não reportado, etc.)."""
+    if not atual or not ultima or atual == ultima:
+        return False
+    a, u = _parse_versao_tupla(atual), _parse_versao_tupla(ultima)
+    if a is None or u is None:
+        return True  # já sabemos que são diferentes (checado acima)
+    return a < u
+
+
+def _status_versoes(device_type, device):
+    """Dict de comparação de versão (firmware + pacote accessng/) pra um
+    dispositivo - usado tanto na página de detalhe quanto nas listagens.
+    None para dispositivos REST (firmware antigo/Arduino, sem esse
+    esquema de versionamento - comparar seria sem sentido)."""
+    if device.protocolo != 'mqtt':
+        return None
+    latest_fw = _latest_versao_firmware(device_type, device.hardware)
+    latest_acc = _latest_versao_accessng()
+    return {
+        'firmware_atual': device.versao_firmware,
+        'firmware_ultima': latest_fw,
+        'firmware_desatualizado': _versao_desatualizada(device.versao_firmware, latest_fw),
+        'accessng_atual': device.accessng_versao,
+        'accessng_ultima': latest_acc,
+        'accessng_desatualizado': _versao_desatualizada(device.accessng_versao, latest_acc),
+    }
+
+
 def _serialize_payload():
     """Retorna o payload da requisição para fins de log."""
     payload = None
