@@ -35,10 +35,12 @@
         </td>
         <td><span class="badge badge-{{ c.status or 'unknown' }}">{{ c.status or 'unknown' }}</span></td>
         <td style="font-size:.72rem;">
-          {% if versoes and (versoes.firmware_desatualizado or versoes.accessng_desatualizado) %}
+          {% if versoes and (versoes.firmware_status == 'desatualizado' or versoes.accessng_status == 'desatualizado') %}
           <span style="color:#e05;" title="Firmware v{{ c.versao_firmware or '?' }} (última: v{{ versoes.firmware_ultima or '?' }}) · accessng v{{ versoes.accessng_atual or '?' }} (última: v{{ versoes.accessng_ultima or '?' }})">desatualizado</span>
-          {% elif versoes %}
+          {% elif versoes and versoes.firmware_status == 'atualizado' and versoes.accessng_status == 'atualizado' %}
           <span style="color:#4e9;">atualizado</span>
+          {% elif versoes %}
+          <span style="color:#555;" title="Dispositivo ainda não reportou dado suficiente pra comparar">desconhecido</span>
           {% else %}
           <span style="color:#555;">—</span>
           {% endif %}
