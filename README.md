@@ -1103,7 +1103,12 @@ divididos em três arquivos no dispositivo, mais um pacote compartilhado:
     reconexão em segundo plano funcionar, zera `boot_count` e reinicia
     direto pro boot normal, sem esperar ninguém. Se a placa/build não
     suportar AP+STA simultâneo, falha graciosamente (portal continua
-    funcionando normalmente, só sem a reconexão automática).
+    funcionando normalmente, só sem a reconexão automática). O formulário
+    também tem um segundo botão, "Reiniciar sem salvar" (`POST /reboot`),
+    que só chama `machine.reset()` — não grava `config.json` nem mexe em
+    `boot_state.json` — pra forçar uma nova tentativa de conexão na hora
+    (ex.: acabou de arrumar o roteador) sem esperar os 60s do
+    `_maybe_recover_wifi()` automático.
   - `ota.py` — download/validação (`compile()` para arquivos pequenos,
     checagem de tamanho+substring por streaming para o `main.py`,
     grande demais pra `compile()` sem estourar memória)/troca (`main.py`
