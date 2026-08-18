@@ -1701,20 +1701,23 @@ páginas `/admin/cerberoses/<id>` e `/admin/carontes/<id>`.
 
 As páginas de detalhe (`/admin/cerberoses/<id>`, `/admin/carontes/<id>`) e
 as listagens (`/admin/cerberoses`, `/admin/carontes`) mostram, ao lado da
-versão reportada, se o dispositivo está **atualizado** ou **desatualizado**
-— comparando com a versão mais recente conhecida, lida diretamente dos
-`version*.json` do próprio repositório (`_status_versoes()`/
-`_latest_versao_firmware()`/`_latest_versao_accessng()` em `api.py`, os
-mesmos arquivos servidos via `/ota/<filepath>`). Cerberos tem três
-variantes de hardware (BitDogLab/ESP32/ESP32-C3-FECHO, cada uma com seu
-`version*.json` próprio) — a variante certa é escolhida pelo texto de
-`hardware` reportado no último coldstart; Caronte tem um único hardware
-suportado. **Isso é só leitura local, nunca uma requisição de rede** — o
-dispositivo decide sozinho quando de fato atualizar (ver
-`Hardware/accessng/ota.py`), o painel só mostra o que já se sabe. Um
-dispositivo REST (firmware antigo/Arduino) ou que ainda não reportou
-`hardware` nenhuma vez simplesmente não mostra a comparação (nunca marca
-como desatualizado por falta de dado).
+versão reportada, um de três estados — **atualizado**, **desatualizado**
+ou **desconhecido** (`_versao_status()` em `api.py`) — comparando com a
+versão mais recente conhecida, lida diretamente dos `version*.json` do
+próprio repositório (`_status_versoes()`/`_latest_versao_firmware()`/
+`_latest_versao_accessng()`, os mesmos arquivos servidos via
+`/ota/<filepath>`). Cerberos tem três variantes de hardware (BitDogLab/
+ESP32/ESP32-C3-FECHO, cada uma com seu `version*.json` próprio) — a
+variante certa é escolhida pelo texto de `hardware` reportado no último
+coldstart; Caronte tem um único hardware suportado. **Isso é só leitura
+local, nunca uma requisição de rede** — o dispositivo decide sozinho
+quando de fato atualizar (ver `Hardware/accessng/ota.py`), o painel só
+mostra o que já se sabe. "Desconhecido" é um terceiro estado, não um
+sinônimo de "atualizado" — aparece pra um dispositivo REST (firmware
+antigo/Arduino, sem comparação), que ainda não reportou `hardware`, ou
+cujo firmware é antigo demais pra reportar `accessng_versao`; a página
+de detalhe simplesmente omite o `(atualizado)`/`(desatualizado)` nesse
+caso, e a listagem mostra "desconhecido" em vez de "atualizado".
 
 ### Diagnóstico e histórico
 
@@ -2187,7 +2190,7 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   sem tocar em `config.json`/`boot_state.json` — força uma nova tentativa
   de conexão na hora, sem esperar os 60s do `_maybe_recover_wifi()`
   automático nem precisar passar pelo formulário de salvar.
-- Painel mostra "atualizado"/"desatualizado" para firmware e pacote
-  `accessng/` de cada Cerberos/Caronte MQTT, comparando com os
+- Painel mostra "atualizado"/"desatualizado"/"desconhecido" para firmware
+  e pacote `accessng/` de cada Cerberos/Caronte MQTT, comparando com os
   `version*.json` locais do repositório — veja [Versão disponível no
   painel](#versão-disponível-no-painel).
