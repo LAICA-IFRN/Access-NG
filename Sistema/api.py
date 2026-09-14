@@ -1835,6 +1835,11 @@ def admin_ambiente_ver(id):
     )
 
     web_ids = {u.id for u in ambiente.usuarios_web}
+    fuso = _fuso_ambiente(ambiente)
+    validades_map = {
+        v.usuario_id: v for v in
+        db.query(ValidadeAcesso).filter(ValidadeAcesso.ambiente_id == id).all()
+    }
     usuarios_vinculados = sorted(
         (
             {'usuario': u, 'papel': _papel_em(u, id),
@@ -1844,7 +1849,8 @@ def admin_ambiente_ver(id):
                   'vale_aqui': (not t.ambientes) or (ambiente in t.ambientes)}
                  for t in u.tags if t.numero
              ],
-             'pode_web': u.id in web_ids}
+             'pode_web': u.id in web_ids,
+             'validade': _validade_info(validades_map.get(u.id), fuso, now)}
             for u in ambiente.frequentadores
         ),
         key=lambda item: item['usuario'].nome,
@@ -1875,6 +1881,7 @@ def admin_ambiente_ver(id):
         pode_criar_usuarios=pode_criar_usuarios(usuario, id),
         pode_editar_usuarios=pode_editar_usuarios(usuario, id),
         pode_gerenciar_dispositivos=pode_gerenciar_dispositivos(usuario, id),
+        fuso_atual=ambiente.fuso_horario or _FUSO_PADRAO,
     )
 
 
