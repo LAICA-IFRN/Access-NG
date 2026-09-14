@@ -15,6 +15,7 @@ import os
 import json
 import secrets
 import requests
+from zoneinfo import ZoneInfo
 from mqtt_service import get_service as _mqtt
 
 app = Flask(__name__, template_folder="templates")
@@ -365,6 +366,103 @@ def _papel_em(usuario, ambiente_id):
         PapelAmbiente.ambiente_id == ambiente_id,
     ).first()
     return pa.papel if pa else None
+
+
+# ── Validade de acesso por Tartaro (fuso horário) ────────────────────────────
+#
+# ValidadeAcesso guarda valido_desde/valido_ate em UTC naive (mesma
+# convenção do resto do projeto). A conversão pro fuso local do Tartaro
+# acontece só aqui, na borda com o formulário admin - a checagem de
+# autorização em si (Tartaro._acesso_valido) nunca lida com fuso nenhum.
+
+_FUSO_PADRAO = 'America/Sao_Paulo'
+
+# Curada, não exaustiva - zoneinfo.available_timezones() tem milhares de
+# entradas, a maioria irrelevante aqui. Cobre os fusos usados no Brasil.
+_FUSOS_HORARIOS = [
+    ('America/Noronha', 'Fernando de Noronha (UTC-2)'),
+    ('America/Recife', 'Recife / Nordeste (UTC-3)'),
+    ('America/Maceio', 'Maceió (UTC-3)'),
+    ('America/Bahia', 'Salvador (UTC-3)'),
+    ('America/Sao_Paulo', 'São Paulo / Brasília (UTC-3)'),
+    ('America/Belem', 'Belém (UTC-3)'),
+    ('America/Fortaleza', 'Fortaleza (UTC-3)'),
+    ('America/Araguaina', 'Araguaína (UTC-3)'),
+    ('America/Santarem', 'Santarém (UTC-3)'),
+    ('America/Campo_Grande', 'Campo Grande (UTC-4)'),
+    ('America/Cuiaba', 'Cuiabá (UTC-4)'),
+    ('America/Porto_Velho', 'Porto Velho (UTC-4)'),
+    ('America/Boa_Vista', 'Boa Vista (UTC-4)'),
+    ('America/Manaus', 'Manaus (UTC-4)'),
+    ('America/Eirunepe', 'Eirunepé (UTC-5)'),
+    ('America/Rio_Branco', 'Rio Branco (UTC-5)'),
+]
+
+
+def _fuso_ambiente(ambiente):
+    try:
+        return ZoneInfo(ambiente.fuso_horario or _FUSO_PADRAO)
+    except Exception:
+        return ZoneInfo(_FUSO_PADRAO)
+
+
+def _fuso_valido(valor):
+    """None se `valor` não for um nome IANA reconhecido (select adulterado,
+    campo vazio) - gravar None é seguro, cai no fallback _FUSO_PADRAO."""
+    if not valor:
+        return None
+    try:
+        ZoneInfo(valor)
+        return valor
+    except Exception:
+        return None
+
+
+def _local_str_para_utc(valor, fuso):
+    """`valor` é o texto de um <input type="datetime-local">
+    ("AAAA-MM-DDTHH:MM", sem timezone) - interpretado no fuso local do
+    Tartaro e convertido pra UTC naive antes de gravar. Vazio/inválido
+    vira None (sem restrição nesse extremo)."""
+    if not valor:
+        return None
+    try:
+        naive = datetime.datetime.strptime(valor, '%Y-%m-%dT%H:%M')
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=fuso).astimezone(datetime.timezone.utc).replace(tzinfo=None)
+
+
+def _utc_para_local_str(valor, fuso):
+    """Inverso de _local_str_para_utc - usado pra pré-preencher o
+    formulário com o valor já salvo, no fuso do Tartaro em vez de UTC cru."""
+    if valor is None:
+        return ''
+    aware = valor.replace(tzinfo=datetime.timezone.utc).astimezone(fuso)
+    return aware.strftime('%Y-%m-%dT%H:%M')
+
+
+def _validade_info(validade, fuso, agora):
+    """Monta o que o template precisa pra exibir/editar a validade de um
+    usuário num Tartaro: os campos já convertidos pro fuso local (pra
+    pré-preencher o formulário) e um estado só pra exibição -
+    'sem_restricao' (comportamento padrão, sem linha em ValidadeAcesso),
+    'agendado' (valido_desde ainda não chegou), 'expirado' (valido_ate já
+    passou) ou 'ativo' (dentro da janela, ou sem uma das duas pontas)."""
+    desde = validade.valido_desde if validade else None
+    ate = validade.valido_ate if validade else None
+    if desde is None and ate is None:
+        estado = 'sem_restricao'
+    elif desde is not None and agora < desde:
+        estado = 'agendado'
+    elif ate is not None and agora > ate:
+        estado = 'expirado'
+    else:
+        estado = 'ativo'
+    return {
+        'desde_str': _utc_para_local_str(desde, fuso),
+        'ate_str': _utc_para_local_str(ate, fuso),
+        'estado': estado,
+    }
 
 
 def _ambientes_com_papel(usuario, papeis):
