@@ -2130,12 +2130,14 @@ def admin_ambiente_novo():
             longitude=float(f['longitude']) if f.get('longitude') else None,
             raio_metros=int(f['raio_metros']) if f.get('raio_metros') else 50,
             web_habilitado='web_habilitado' in f,
+            fuso_horario=_fuso_valido(f.get('fuso_horario')),
         )
         db.add(amb)
         db.commit()
         flash('Ambiente criado.', 'success')
         return redirect(url_for('admin_ambientes'))
-    return render_template('admin/ambiente_form.html', ambiente=None)
+    return render_template('admin/ambiente_form.html', ambiente=None,
+                            fusos_horarios=_FUSOS_HORARIOS, fuso_padrao=_FUSO_PADRAO)
 
 
 @app.route('/admin/ambientes/<int:id>/editar', methods=['GET', 'POST'])
@@ -2152,10 +2154,12 @@ def admin_ambiente_editar(id):
         amb.longitude = float(f['longitude']) if f.get('longitude') else None
         amb.raio_metros = int(f['raio_metros']) if f.get('raio_metros') else 50
         amb.web_habilitado = 'web_habilitado' in f
+        amb.fuso_horario = _fuso_valido(f.get('fuso_horario'))
         db.commit()
         flash('Ambiente atualizado.', 'success')
         return redirect(url_for('admin_ambientes'))
-    return render_template('admin/ambiente_form.html', ambiente=amb)
+    return render_template('admin/ambiente_form.html', ambiente=amb,
+                            fusos_horarios=_FUSOS_HORARIOS, fuso_padrao=_FUSO_PADRAO)
 
 
 @app.route('/admin/ambientes/<int:id>/excluir', methods=['POST'])
