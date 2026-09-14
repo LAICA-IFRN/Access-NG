@@ -75,6 +75,7 @@ class Usuario(Base):
     ambientes: Mapped[List[Ambiente]] = relationship(secondary=usuarios_ambientes, back_populates="frequentadores")
     ambientes_web: Mapped[List[Ambiente]] = relationship(secondary=usuarios_web, back_populates="usuarios_web")
     papeis: Mapped[List["PapelAmbiente"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
+    validades_acesso: Mapped[List["ValidadeAcesso"]] = relationship(back_populates="usuario", cascade="all, delete-orphan")
 
 
 class TAG(Base):
@@ -104,10 +105,16 @@ class Ambiente(Base):
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     raio_metros: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     web_habilitado: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Nome IANA (ex.: "America/Sao_Paulo") - usado só para interpretar/exibir
+    # os campos valido_desde/valido_ate de ValidadeAcesso no fuso local do
+    # Tartaro, nunca no do servidor. None cai no fallback _FUSO_PADRAO (ver
+    # api.py). Comparação de validade em si é sempre feita em UTC.
+    fuso_horario: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     frequentadores: Mapped[List[Usuario]] = relationship(secondary=usuarios_ambientes, back_populates="ambientes")
     usuarios_web: Mapped[List[Usuario]] = relationship(secondary=usuarios_web, back_populates="ambientes_web")
     tags_escopo: Mapped[List["TAG"]] = relationship(secondary=tags_ambientes, back_populates="ambientes")
     papeis: Mapped[List["PapelAmbiente"]] = relationship(back_populates="ambiente", cascade="all, delete-orphan")
+    validades_acesso: Mapped[List["ValidadeAcesso"]] = relationship(back_populates="ambiente", cascade="all, delete-orphan")
     cerberoses: Mapped[List[Cerberos]] = relationship(back_populates="ambiente")
     carontes: Mapped[List[Caronte]] = relationship(back_populates="ambiente")
 
@@ -119,6 +126,29 @@ class PapelAmbiente(Base):
     papel: Mapped[str] = mapped_column(String(20))  # 'gerente' | 'colaborador' | 'leitor'
     usuario: Mapped["Usuario"] = relationship(back_populates="papeis")
     ambiente: Mapped["Ambiente"] = relationship(back_populates="papeis")
+
+
+class ValidadeAcesso(Base):
+    """Janela opcional de validade do acesso físico/web de um usuário a um
+    Tartaro - tabela separada de usuarios_ambientes de propósito (não uma
+    coluna nova nela): a ausência de uma linha aqui significa "sem
+    restrição" (o padrão de sempre, acesso vale desde já e para sempre),
+    então isso é puramente aditivo. Convertê-la numa entidade própria e só
+    então adicionar campos quebraria todo código que hoje trata
+    Usuario.ambientes/Ambiente.frequentadores como lista direta. Mesmo
+    padrão já usado para tags_ambientes (escopo de TAG por Tartaro).
+
+    valido_desde/valido_ate são armazenados em UTC naive (como todo o
+    resto do projeto) - a conversão de/para o fuso local do Tartaro
+    (Ambiente.fuso_horario) acontece só na borda (formulário admin), nunca
+    na checagem de autorização em si."""
+    __tablename__ = 'validades_acesso'
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), primary_key=True)
+    ambiente_id: Mapped[int] = mapped_column(ForeignKey("ambientes.id"), primary_key=True)
+    valido_desde: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    valido_ate: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, nullable=True)
+    usuario: Mapped["Usuario"] = relationship(back_populates="validades_acesso")
+    ambiente: Mapped["Ambiente"] = relationship(back_populates="validades_acesso")
 
 
 class BrokerMQTT(Base):
@@ -349,3 +379,5 @@ for _table in ('cerberoses', 'carontes'):
 
 for _table in ('cerberoses', 'carontes'):
     _add_column_if_missing(_table, 'accessng_versao', 'VARCHAR(30)')
+
+_add_column_if_missing('ambientes', 'fuso_horario', 'VARCHAR(50)')
