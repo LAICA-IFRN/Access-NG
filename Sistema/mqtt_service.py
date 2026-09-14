@@ -189,10 +189,30 @@ class MqttService:
         de uma TAG - cada uma vira uma entrada própria na whitelist. Uma
         TAG associada a Ambiente(s) específico(s) só entra na whitelist
         desses; sem associação nenhuma, vale em qualquer Ambiente do
-        usuário (e entra na whitelist de todos)."""
+        usuário (e entra na whitelist de todos). Um usuário com acesso
+        expirado (ValidadeAcesso) pra este ambiente específico não entra -
+        busca em lote (uma query pro ambiente inteiro, não uma por
+        frequentador) pra não custar N queries a cada recálculo."""
+        from Model import ValidadeAcesso, db
+        agora = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        validades = {
+            v.usuario_id: v for v in
+            db.query(ValidadeAcesso).filter(ValidadeAcesso.ambiente_id == ambiente.id).all()
+        }
+
+        def _valido(usuario_id):
+            v = validades.get(usuario_id)
+            if v is None:
+                return True
+            if v.valido_desde is not None and agora < v.valido_desde:
+                return False
+            if v.valido_ate is not None and agora > v.valido_ate:
+                return False
+            return True
+
         return sorted({
             t.numero for u in ambiente.frequentadores for t in u.tags
-            if t.numero and (not t.ambientes or ambiente in t.ambientes)
+            if t.numero and (not t.ambientes or ambiente in t.ambientes) and _valido(u.id)
         })
 
     def sync_tags_caronte(self, caronte):
