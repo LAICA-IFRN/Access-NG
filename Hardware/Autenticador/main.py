@@ -880,9 +880,26 @@ def mqtt_connect():
         kwargs["password"] = MQTT_PASS
     if MQTT_TLS:
         kwargs["ssl"] = True
+        # Pula a verificação da cadeia de certificado do broker - é
+        # exatamente essa conta de RSA que estoura a memória disponível
+        # no ESP32-C3 (MBEDTLS_ERR_RSA_PUBLIC_FAILED+
+        # MBEDTLS_ERR_MPI_ALLOC_FAILED, visto em campo), mesmo problema
+        # documentado pro OTA (por isso ele usa HTTP puro). O canal
+        # continua criptografado, só sem autenticar quem está do outro
+        # lado - aceitável pelo mesmo motivo do broker em texto puro na
+        # 1883: nenhum segredo em trânsito depende de autenticar o
+        # servidor. gc.collect() logo abaixo maximiza a memória
+        # contígua livre no momento exato do handshake.
+        try:
+            import ussl as _sslmod
+        except ImportError:
+            import ssl as _sslmod
+        kwargs["ssl_params"] = {"cert_reqs": _sslmod.CERT_NONE}
 
     client = MQTTClient("caronte-%s" % _mac_safe(), MQTT_BROKER, **kwargs)
     client.set_callback(_on_message)
+    if MQTT_TLS:
+        gc.collect()
     client.connect()
     client.subscribe(_topics()["coldstart_result"])
     _client = client
