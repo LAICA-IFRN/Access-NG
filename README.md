@@ -2126,6 +2126,32 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   segmentadas (ex: VLAN de IoT separada da VLAN do broker) costumam derrubar a
   conexão mesmo com DNS funcionando.
 
+### MQTT com TLS falha no ESP32/ESP32-C3 (`MBEDTLS_ERR_RSA_PUBLIC_FAILED`)
+
+`[MQTT] Falha na conexão: (-17040, 'MBEDTLS_ERR_RSA_PUBLIC_FAILED+MBEDTLS_ERR_MPI_ALLOC_FAILED')`
+é o mesmo limite de memória já documentado pro OTA (por isso ele usa HTTP puro,
+não HTTPS, nesse hardware): sem PSRAM, a conta de RSA do handshake TLS não cabe
+na memória livre. Duas mitigações no firmware (`mqtt_connect()` nos quatro
+`main_*.py`, quando `MQTT_TLS=true`):
+
+- `gc.collect()` imediatamente antes do handshake, maximizando a memória
+  contígua livre no momento exato em que ela é mais necessária.
+- `ssl_params={"cert_reqs": CERT_NONE}` — pula a validação da cadeia de
+  certificado do broker (canal continua criptografado, só sem autenticar quem
+  está do outro lado, mesma lógica do broker em texto puro na 1883: nenhum
+  segredo em trânsito depende de autenticar o servidor).
+
+**Isso não é garantia de resolver o problema** — `cert_reqs=CERT_NONE` evita a
+verificação da cadeia (que soma memória), mas não elimina a operação de RSA em
+si se a suíte de cifra negociada pelo broker usar troca de chave RSA (em vez de
+ECDHE): nesse caso, o cliente ainda precisa fazer a conta de RSA pra criptografar
+o pre-master secret com a chave pública do servidor, verificação de certificado
+ligada ou não. Se o erro persistir mesmo com essas duas mitigações, o fix mais
+confiável está do lado do broker, não do firmware: trocar o certificado TLS para
+ECDSA (curva elíptica) reduz drasticamente a memória necessária pro handshake —
+ou, na prática, manter `MQTT_TLS=false` (porta 1883) nesse hardware, mesmo
+raciocínio já aceito pro OTA.
+
 ## Estado atual importante
 
 - O backend do Sistema já possui endpoints novos de coldstart, heartbeat e status.
@@ -2260,3 +2286,8 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   local com o fuso do servidor. Sem restrição definida, continua valendo
   para sempre, como antes — veja [Validade de acesso por
   Tartaro](#validade-de-acesso-por-tartaro).
+- MQTT com `MQTT_TLS=true` nos quatro firmwares tenta mitigar
+  `MBEDTLS_ERR_RSA_PUBLIC_FAILED` (falta de memória no handshake TLS em
+  placas sem PSRAM) com `gc.collect()` antes de conectar e
+  `cert_reqs=CERT_NONE` — sem garantia de resolver de vez, ver
+  [MQTT com TLS falha no ESP32/ESP32-C3](#mqtt-com-tls-falha-no-esp32esp32-c3-mbedtls_err_rsa_public_failed).
