@@ -358,9 +358,15 @@ Tabela: `ambientes`
 - `longitude`
 - `raio_metros`
 - `web_habilitado` (padrão `false` — Tartaro precisa disso ligado para aparecer no Caronte web, além de cada usuário precisar estar em `usuarios_web`)
+- `fuso_horario` — nome IANA (ex.: `America/Sao_Paulo`), opcional. Usado só para
+  interpretar/exibir as datas de `ValidadeAcesso` deste Tartaro no fuso local
+  correto — vazio cai no fallback fixo `America/Sao_Paulo`. A checagem de
+  autorização em si sempre compara em UTC, nunca lida com fuso — veja
+  [Validade de acesso por Tartaro](#validade-de-acesso-por-tartaro).
 - `frequentadores`
 - `usuarios_web` (subconjunto de `frequentadores` autorizado a usar o Caronte web neste Tartaro)
 - `papeis` (usuários com papel `gerente`/`colaborador`/`leitor` neste Tartaro)
+- `validades_acesso` (janela opcional de validade do acesso físico/web por usuário — ver abaixo)
 - `cerberoses`
 - `carontes`
 
@@ -379,7 +385,26 @@ Tabela: `papeis_ambiente`
 Associa um usuário a um papel administrativo num Tartaro específico. A chave
 primária composta (`usuario_id` + `ambiente_id`) garante um único papel por
 par usuário/Tartaro. Veja a seção [Papéis e permissões](#papéis-e-permissões)
-para o que cada papel pode fazer.
+para o que cada papel pode fazer. **Papéis não expiram** — `ValidadeAcesso`
+(abaixo) é sobre acesso físico/web, uma preocupação separada.
+
+### ValidadeAcesso
+
+Tabela: `validades_acesso`
+
+- `usuario_id` (FK, parte da chave primária composta)
+- `ambiente_id` (FK, parte da chave primária composta)
+- `valido_desde` (DATETIME, opcional) — acesso só passa a valer a partir daqui
+- `valido_ate` (DATETIME, opcional) — acesso deixa de valer depois daqui
+
+Janela opcional de validade do acesso físico (TAG) e do Caronte web de um
+usuário a um Tartaro específico. **A ausência de uma linha aqui significa
+"sem restrição"** — o padrão de sempre, acesso vale desde já e para sempre;
+isso é puramente aditivo sobre `usuarios_ambientes`, não uma coluna nova
+nela (ver [Validade de acesso por Tartaro](#validade-de-acesso-por-tartaro)
+para o porquê). `valido_desde`/`valido_ate` são gravados em **UTC naive**
+(mesma convenção do resto do projeto) — a conversão para/do fuso local do
+Tartaro (`Ambiente.fuso_horario`) acontece só no formulário admin.
 
 ### BrokerMQTT
 
@@ -537,6 +562,39 @@ Qualquer usuário com `admin=True` ou com pelo menos um papel pode entrar em
 `/admin/login`; o menu lateral e o conteúdo das telas se ajustam
 automaticamente ao que aquele usuário pode ver/fazer. Tartaros, Brokers MQTT
 e a exclusão/limpeza de logs continuam exclusivos do administrador geral.
+
+## Validade de acesso por Tartaro
+
+Por padrão, o acesso físico (TAG) e o Caronte web de um usuário a um Tartaro
+não expiram — mesmo comportamento de sempre. Opcionalmente, um admin/gerente
+pode definir uma janela de validade (início e/ou fim, os dois opcionais)
+por par usuário+Tartaro, em `/admin/ambientes/<id>`, seção "Usuários".
+
+- **Onde mora**: tabela `validades_acesso` (`ValidadeAcesso` em `Model.py`),
+  separada de `usuarios_ambientes` de propósito — convertê-la numa entidade
+  própria e só então adicionar campos quebraria todo código que hoje trata
+  `Usuario.ambientes`/`Ambiente.frequentadores` como lista direta (dezenas
+  de lugares em `api.py`/`Tartaro.py`/`mqtt_service.py`/templates). Uma
+  tabela à parte, onde a ausência de linha já significa "sem restrição", é
+  puramente aditiva — mesma estratégia usada para o escopo de TAG por
+  Tartaro (`tags_ambientes`).
+- **Fuso horário**: as datas são digitadas/exibidas no fuso local do
+  Tartaro (`Ambiente.fuso_horario`, um nome IANA como `America/Sao_Paulo`;
+  sem esse campo definido, cai no fallback fixo `America/Sao_Paulo`) e
+  convertidas para **UTC naive** antes de gravar (`zoneinfo` da biblioteca
+  padrão do Python, sem dependência nova). A checagem de autorização em si
+  (`Tartaro._acesso_valido()`) sempre compara em UTC puro — nenhum fuso
+  entra no caminho quente da autenticação, só na borda do formulário admin.
+- **O que é checado**: `Tartaro.autenticarTAGDetalhado()` (acesso físico),
+  `Tartaro.autenticarWeb()` (Caronte web) e `Tartaro.ambientesProximos()`
+  (deixa de listar um Tartaro cujo acesso já expirou) usam o mesmo
+  `_acesso_valido(usuario_id, ambiente_id)`. A whitelist local dos Carontes
+  (`mqtt_service._tags_do_ambiente()`, usada só no fallback offline via
+  UART) também exclui TAGs de quem está fora da janela — busca em lote (uma
+  query por Tartaro, não uma por frequentador).
+- **Fora de escopo**: papéis (`PapelAmbiente` — gerente/colaborador/leitor)
+  não expiram; isso é permissão administrativa do painel, uma preocupação
+  separada do acesso físico/web.
 
 ## Login via SUAP (OAuth2)
 
@@ -819,15 +877,16 @@ só vê/gerencia os Tartaros onde tem papel.
 | `GET` | `/admin/logout` | Logout administrativo. |
 | `GET` | `/admin/` | Visão Geral: contagens de ambientes/Cerberoses/Carontes/usuários, uma lista "Ambientes (Tartaros)" com status agregado de cada um, card "Status dos Dispositivos" (online/offline/desconhecido, somando Cerberos e Caronte), gráficos de linha de latência média da API (24h) e de aberturas por dia (14 dias), e últimas atividades/tentativas de acesso. |
 | `GET` | `/admin/ambientes` | Lista Tartaros. |
-| `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro. |
-| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias), a lista dos equipamentos daquele Tartaro com o SLA (24h) de cada um, e a seção "Usuários" (quem tem acesso, papel, TAG(s) — com toggle "Tirar/Liberar daqui" pra restringir cada TAG a este Tartaro — e, se `web_habilitado`, permissão de Caronte Web — com botão "+ Adicionar usuário"). |
-| `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro, incluindo o checkbox "Permite Caronte Web" (`web_habilitado`). |
+| `GET/POST` | `/admin/ambientes/novo` | Cria Tartaro, incluindo o fuso horário (`fuso_horario`) usado para interpretar datas de validade de acesso. |
+| `GET` | `/admin/ambientes/<id>` | Visão do Tartaro: gráfico de linha de aberturas por dia com período personalizável (`?desde=AAAA-MM-DD&ate=AAAA-MM-DD`, padrão últimos 14 dias), a lista dos equipamentos daquele Tartaro com o SLA (24h) de cada um, e a seção "Usuários" (quem tem acesso, papel, TAG(s) — com toggle "Tirar/Liberar daqui" pra restringir cada TAG a este Tartaro —, validade de acesso opcional, e, se `web_habilitado`, permissão de Caronte Web — com botão "+ Adicionar usuário"). |
+| `GET/POST` | `/admin/ambientes/<id>/editar` | Edita Tartaro, incluindo o checkbox "Permite Caronte Web" (`web_habilitado`) e o fuso horário. |
 | `POST` | `/admin/ambientes/<id>/excluir` | Remove Tartaro. |
 | `GET` | `/admin/ambientes/<id>/usuarios/adicionar` | Tela para vincular um usuário existente (busca por nome/matrícula/TAG) ou criar um novo já pré-vinculado a esse Tartaro (sem passar pelo checklist de todos os ambientes). |
 | `POST` | `/admin/ambientes/<id>/usuarios/vincular` | Vincula um usuário existente ao Tartaro, com papel opcional e permissão opcional de Caronte Web. |
 | `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/remover` | Desvincula o usuário do Tartaro (remove papel e permissão de Caronte Web também). |
 | `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/web` | Liga/desliga a permissão desse usuário usar o Caronte Web nesse Tartaro específico (`usuarios_web`). |
 | `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/tags/<tag_id>/escopo` | Liga/desliga se uma TAG específica do usuário vale neste Tartaro (ver [Modelo de dados](#modelo-de-dados)). |
+| `POST` | `/admin/ambientes/<id>/usuarios/<usuario_id>/validade` | Define ou remove a janela de validade (início/fim opcionais) do acesso desse usuário a este Tartaro (ver [Validade de acesso por Tartaro](#validade-de-acesso-por-tartaro)). |
 | `GET` | `/admin/cerberoses` | Lista Cerberoses. |
 | `POST` | `/admin/cerberoses/verificar-atualizacao` | Notifica via MQTT (`check_update`) todos os Cerberoses listados (escopados ao papel do usuário) para verificarem se há firmware novo agora. |
 | `GET/POST` | `/admin/cerberoses/novo` | Cria Cerberos. |
@@ -2194,3 +2253,10 @@ antes do handshake MQTT — geralmente não é erro de configuração. Verifique
   e pacote `accessng/` de cada Cerberos/Caronte MQTT, comparando com os
   `version*.json` locais do repositório — veja [Versão disponível no
   painel](#versão-disponível-no-painel).
+- Acesso de um usuário a um Tartaro (físico e Caronte web) pode ter uma
+  janela de validade opcional (início e/ou fim, `ValidadeAcesso`) —
+  configurável em `/admin/ambientes/<id>`, interpretada no fuso horário do
+  próprio Tartaro (`Ambiente.fuso_horario`) para não comparar um horário
+  local com o fuso do servidor. Sem restrição definida, continua valendo
+  para sempre, como antes — veja [Validade de acesso por
+  Tartaro](#validade-de-acesso-por-tartaro).
