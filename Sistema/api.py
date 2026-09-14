@@ -2073,6 +2073,51 @@ def admin_ambiente_usuario_tag_escopo_toggle(id, usuario_id, tag_id):
     return redirect(url_for('admin_ambiente_ver', id=id))
 
 
+@app.route('/admin/ambientes/<int:id>/usuarios/<int:usuario_id>/validade', methods=['POST'])
+@painel_required
+def admin_ambiente_usuario_validade(id, usuario_id):
+    """Define (ou remove) a janela de validade do acesso físico/web de um
+    usuário a este Tartaro. Datas digitadas no fuso local do Tartaro
+    (Ambiente.fuso_horario), convertidas pra UTC antes de gravar. Campo
+    vazio = sem restrição naquele extremo; os dois vazios juntos removem
+    a linha inteira - ausência de ValidadeAcesso já significa "sem
+    restrição" (comportamento padrão), então não há razão pra manter uma
+    linha com os dois campos nulos."""
+    usuario = _current_session_usuario()
+    ambiente = db.query(Ambiente).filter(Ambiente.id == id).first()
+    if ambiente is None:
+        abort(404)
+    if not pode_editar_usuarios(usuario, id):
+        abort(403)
+
+    alvo = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if alvo is None or alvo not in ambiente.frequentadores:
+        abort(404)
+
+    fuso = _fuso_ambiente(ambiente)
+    novo_desde = _local_str_para_utc(request.form.get('valido_desde', ''), fuso)
+    novo_ate = _local_str_para_utc(request.form.get('valido_ate', ''), fuso)
+    if novo_desde is not None and novo_ate is not None and novo_desde > novo_ate:
+        flash('A data de início não pode ser depois da data de fim.', 'danger')
+        return redirect(url_for('admin_ambiente_ver', id=id))
+
+    validade = db.query(ValidadeAcesso).filter_by(usuario_id=alvo.id, ambiente_id=id).first()
+    if novo_desde is None and novo_ate is None:
+        if validade is not None:
+            db.delete(validade)
+            flash(f'Validade de acesso removida para {alvo.nome} - acesso volta a valer sem restrição.', 'success')
+    else:
+        if validade is None:
+            validade = ValidadeAcesso(usuario_id=alvo.id, ambiente_id=id)
+            db.add(validade)
+        validade.valido_desde = novo_desde
+        validade.valido_ate = novo_ate
+        flash(f'Validade de acesso atualizada para {alvo.nome}.', 'success')
+    db.commit()
+    _sync_tags_ambientes([id])
+    return redirect(url_for('admin_ambiente_ver', id=id))
+
+
 @app.route('/admin/ambientes/novo', methods=['GET', 'POST'])
 @admin_required
 def admin_ambiente_novo():
